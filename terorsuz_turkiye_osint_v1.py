@@ -13044,6 +13044,319 @@ def _v21_engine_call(engine,query,mode,timespan,hours,cache_snapshot):
 # /V21 TARAMA
 # ============================================================
 
+# ============================================================
+# V22 — ÇOK HIZLI İLK TARAMA + DOYGUN KAYNAK TOPLAMA
+#
+# Hedef:
+# - İlk "soğuk" taramayı ciddi biçimde kısaltmak.
+# - Yerli / yabancı / think tank / Kürt / PKK-KCK / sosyal katmanları
+#   sırayla değil TEK ORTAK PARALEL HAVUZDA çalıştırmak.
+# - Yüzlerce tekil site sorgusu yerine geniş sorgular + 6-8 domainlik
+#   site grupları kullanmak.
+# - V17 tarih filtresi, V16 bilgi notu, V20 Aynı Olay-Farklı Bakış korunur.
+# ============================================================
+
+import threading as _v22_threading
+
+V22_WORKERS = 34
+V22_POOL_RETENTION_HOURS = 192  # 8 gün
+V19_POOL_RETENTION_HOURS = V22_POOL_RETENTION_HOURS
+
+# Motor bazlı eşzamanlılık: yüksek DDGS eşzamanlılığı rate-limit ve boş sonuç üretmesin.
+_V22_LIMITS = {
+    'Google News TR': 8,
+    'Google News US': 8,
+    'Google News GB': 6,
+    'Google News DE': 4,
+    'Google News FR': 4,
+    'Google News AR': 4,
+    'Bing News TR': 6,
+    'Bing News US': 6,
+    'Bing Web': 7,
+    'DDGS': 8,
+    'DDGS Local': 6,
+    'GDELT': 4,
+    'Reddit Public': 3,
+    'Bluesky Public': 3
+}
+_V22_SEM = {
+    k:_v22_threading.BoundedSemaphore(max(1,int(v)))
+    for k,v in _V22_LIMITS.items()
+}
+
+def _v22_group_sites(domains,size=7):
+    vals=[]
+    seen=set()
+    for x in domains or []:
+        d=_tt_norm_domain(x)
+        if d and d not in seen:
+            seen.add(d); vals.append(d)
+    return [
+        '('+' OR '.join('site:'+d for d in vals[i:i+size])+')'
+        for i in range(0,len(vals),size)
+        if vals[i:i+size]
+    ]
+
+def _v22_turkish_queries():
+    # Az sayıda geniş sorgu; her biri çoklu motordan yüksek hacim toplar.
+    return [
+        '"Terörsüz Türkiye"',
+        '(PKK OR KCK) (silahsızlanma OR "silah bırakma" OR fesih OR tasfiye)',
+        '(Öcalan OR Ocalan OR İmralı) (çağrı OR mesaj OR görüşme OR heyet OR süreç)',
+        '(DEM Parti OR MHP OR AK Parti OR TBMM) (PKK OR Öcalan OR "Terörsüz Türkiye")',
+        '(Suriye OR SDG OR SDF OR YPG) (PKK OR Öcalan OR Türkiye)',
+        '(Irak OR IKBY OR Kandil OR Erbil) (PKK OR silahsızlanma OR fesih)',
+        '("barış süreci" OR "çözüm süreci" OR "toplumsal bütünleşme") (PKK OR Öcalan)',
+        '(kamuoyu OR "şehit aileleri" OR gaziler OR toplum) ("Terörsüz Türkiye" OR PKK)'
+    ]
+
+def _v22_foreign_queries():
+    q=[
+        '"Turkey PKK peace process"',
+        '"PKK disarmament" Turkey',
+        '"PKK dissolution" Turkey',
+        'Ocalan Turkey Kurdish peace process',
+        'Turkey SDF YPG PKK Syria',
+        'Turkey PKK Iraq Kurdistan Qandil',
+        'Turkey PKK legal framework parliament',
+        'Türkei PKK Friedensprozess Öcalan',
+        'Turquie PKK processus de paix Öcalan',
+        'تركيا حزب العمال الكردستاني أوجلان عملية السلام'
+    ]
+    domains=list(dict.fromkeys(
+        list(TT_FOREIGN_V9) +
+        ['reuters.com','apnews.com','bbc.com','ft.com','theguardian.com',
+         'dw.com','france24.com','euronews.com','aljazeera.com','al-monitor.com',
+         'middleeasteye.net','aawsat.com','arabnews.com','jpost.com',
+         'timesofisrael.com','haaretz.com','ekathimerini.com','rferl.org']
+    ))
+    for sites in _v22_group_sites(domains,8):
+        q.append(f'("Turkey PKK" OR Ocalan OR "PKK disarmament" OR "Kurdish peace") {sites}')
+    return q
+
+def _v22_thinktank_queries():
+    q=[
+        '"Turkey PKK peace process" analysis',
+        '"PKK disarmament" Turkey policy',
+        'Ocalan Turkey Kurdish issue analysis',
+        'Turkey SDF YPG PKK policy',
+        'Turkey Kurdish peace process policy brief'
+    ]
+    domains=list(dict.fromkeys(list(TT_THINK_TANK_V9)+list(TT_THINK_TANK)))
+    for sites in _v22_group_sites(domains,7):
+        q.append(f'("Turkey PKK" OR Ocalan OR "PKK disarmament" OR "Kurdish peace") {sites}')
+    return q
+
+def _v22_kurdish_queries():
+    q=[
+        'Turkey PKK Ocalan peace process Kurdish',
+        '"PKK disarmament" Kurdistan Turkey',
+        'SDF YPG Turkey Kurdish peace'
+    ]
+    for sites in _v22_group_sites(TT_KURDISH_REGIONAL_V9,6):
+        q.append(f'(PKK OR Ocalan OR Öcalan OR SDF OR YPG OR "peace process") {sites}')
+    return q
+
+def _v22_movement_queries():
+    q=[
+        '"Peace and Democratic Society" Ocalan PKK',
+        '"Barış ve Demokratik Toplum" Öcalan',
+        'PKK KCK Ocalan peace democratic society',
+        'Cemil Bayik Murat Karayilan Ocalan peace process',
+        'PKK disarmament KCK statement'
+    ]
+    for sites in _v22_group_sites(TT_MOVEMENT_V9,7):
+        q.append(f'(PKK OR KCK OR Ocalan OR Öcalan OR "peace process" OR disarmament) {sites}')
+    return q
+
+def _v22_commentary_queries():
+    return [
+        '("Terörsüz Türkiye" OR PKK OR Öcalan) (yazar OR yorum OR görüş OR analiz OR "köşe yazısı")',
+        '("Terörsüz Türkiye" OR PKK OR Öcalan) (söyleşi OR röportaj OR değerlendirme)',
+        '("Turkey PKK peace process" OR "PKK disarmament") (opinion OR commentary OR editorial)',
+        '(Ocalan Turkey Kurdish issue) (analysis OR opinion OR interview OR perspective)'
+    ]
+
+def _v22_social_queries():
+    # Exact platform aramaları + site filtresiz keşif.
+    return [
+        '"Terörsüz Türkiye" (site:x.com OR site:twitter.com)',
+        '(PKK OR KCK OR Öcalan OR Ocalan) Türkiye (site:x.com OR site:twitter.com)',
+        '("Turkey PKK peace process" OR "PKK disarmament") (site:x.com OR site:twitter.com)',
+        '("Terörsüz Türkiye" OR PKK OR Öcalan) site:instagram.com',
+        '("Terörsüz Türkiye" OR PKK OR Öcalan) site:facebook.com',
+        '("Terörsüz Türkiye" OR PKK OR Öcalan) site:tiktok.com',
+        '("Terörsüz Türkiye" OR PKK OR Öcalan OR Ocalan) site:youtube.com',
+        '("Turkey PKK peace process" OR Ocalan OR "PKK disarmament") site:reddit.com',
+        '("Terörsüz Türkiye" OR PKK OR KCK OR Öcalan) (site:t.me OR site:telegram.me)',
+        '(PKK OR Öcalan OR Ocalan OR "Turkey peace process") (site:threads.net OR site:bsky.app)',
+        '("Terörsüz Türkiye" OR "Turkey PKK peace process" OR Ocalan) (site:linkedin.com OR site:mastodon.social OR site:vk.com)',
+        '"Terörsüz Türkiye" sosyal medya',
+        '("Turkey PKK peace process" OR "PKK disarmament") social media'
+    ]
+
+def _v22_query_lang(q):
+    q=str(q or '')
+    if re.search(r'[\u0600-\u06FF]',q):
+        return 'ar'
+    n=norm(q)
+    if any(x in n for x in ['turkei','friedensprozess','entwaffnung']):
+        return 'de'
+    if any(x in n for x in ['turquie','processus de paix','desarmement']):
+        return 'fr'
+    return 'en'
+
+def _v22_engines(mode,q):
+    site_q=_v9_is_site_query(q)
+    if mode=='turkish':
+        return ['Google News TR','DDGS Local','Bing News TR']
+    if mode=='foreign':
+        lang=_v22_query_lang(q)
+        if site_q:
+            return ['DDGS','Google News US','Bing Web']
+        if lang=='ar':
+            return ['Google News AR','DDGS','GDELT']
+        if lang=='de':
+            return ['Google News DE','DDGS','GDELT']
+        if lang=='fr':
+            return ['Google News FR','DDGS','GDELT']
+        return ['Google News US','Google News GB','Bing News US','DDGS','GDELT']
+    if mode=='thinktank':
+        return ['DDGS','Bing Web'] if site_q else ['DDGS','Google News US','Bing News US']
+    if mode in {'kurdish','movement'}:
+        return ['DDGS','Bing Web'] if site_q else ['DDGS','Google News US','Bing News US']
+    if mode=='commentary':
+        return ['DDGS','Google News US','Bing Web']
+    if mode=='social':
+        engines=['DDGS','Bing Web']
+        ql=str(q or '').lower()
+        if 'reddit.com' in ql or 'reddit' in ql:
+            engines.append('Reddit Public')
+        if 'bsky.app' in ql or 'bluesky' in ql:
+            engines.append('Bluesky Public')
+        return list(dict.fromkeys(engines))
+    return ['DDGS']
+
+def _v22_engine_call(engine,q,mode,timespan,hours,cache_snapshot):
+    # V21/V20 motor fonksiyonlarını tekrar kullan; yalnız semaforla sınırla.
+    if engine in {'Google News TR','DDGS Local','Bing News TR'}:
+        sem=_V22_SEM.get(engine)
+        if sem:
+            with sem:
+                return _v21_local_engine_call(engine,q,hours,cache_snapshot)
+        return _v21_local_engine_call(engine,q,hours,cache_snapshot)
+
+    sem=_V22_SEM.get(engine)
+    if sem:
+        with sem:
+            return _v20_engine_call(engine,q,mode,timespan,hours,cache_snapshot)
+    return _v20_engine_call(engine,q,mode,timespan,hours,cache_snapshot)
+
+# V22 sosyal normalize:
+# site-hedefli sosyal aramadan gelen sonuçlarda snippet kısa/boş olsa bile
+# arama sorgusunun kendisi konu filtresi olduğundan gerçek sosyal domain sonucu korunur.
+_V22_BASE_NORMALIZE = normalize_rows
+
+def normalize_rows(raw,cutoff,mode,user_query):
+    if mode!='social':
+        return _V22_BASE_NORMALIZE(raw,cutoff,mode,user_query)
+
+    out=[]
+    reasons={'zaman':0,'konu':0,'kaynak':0,'yunan':0,'gecersiz':0}
+    cutoff_utc=_v17_cutoff_utc(cutoff)
+
+    for r in raw:
+        url=str(r.get('url') or r.get('link') or '').strip()
+        title=html.unescape(str(r.get('title') or '').strip())
+        if not url or not title:
+            reasons['gecersiz']+=1
+            continue
+
+        src=r.get('source') or ''
+        d=infer_source(src,r.get('source_url',''),url)
+        d=_tt_norm_domain(d or url)
+        if not _tt_is_social_domain(d):
+            reasons['kaynak']+=1
+            continue
+
+        dt=parse_dt(r.get('date') or r.get('publishedAt') or r.get('seendate'))
+        if dt:
+            try:
+                if dt.tzinfo is None:
+                    dt=dt.replace(tzinfo=timezone.utc)
+                else:
+                    dt=dt.astimezone(timezone.utc)
+            except Exception:
+                dt=None
+
+        if not dt:
+            inferred,_src=_v17_extract_explicit_date(
+                title,
+                r.get('snippet') or r.get('body') or r.get('description') or '',
+                url
+            )
+            dt=inferred
+
+        if dt and cutoff_utc and dt<cutoff_utc:
+            reasons['zaman']+=1
+            continue
+
+        snippet=html.unescape(str(
+            r.get('snippet') or r.get('body') or r.get('description') or ''
+        ).strip())
+        origin=str(r.get('_origin_query') or '')
+        text=f'{title} {snippet}'
+
+        # Konu sinyali başlık/snippet'te veya hedeflenmiş origin query'de bulunmalı.
+        topical=relevant(text,user_query)
+        if not topical:
+            oq=norm(origin)
+            topical=any(x in oq for x in [
+                'terorsuz turkiye','pkk','ocalan','öcalan','kck',
+                'peace process','disarmament','sdf','ypg'
+            ])
+        if not topical:
+            reasons['konu']+=1
+            continue
+
+        sentiment,score,status,neg,risk,cat,risk_reasons=classify(title,snippet,d)
+
+        out.append({
+            'Tarih_dt':dt,
+            'Tarih':fmt_dt(dt),
+            'Başlık':title,
+            'İçerik_Özeti':snippet or title,
+            'URL':url,
+            'RSS_URL':url,
+            'Kaynak':src or d or 'Açık Sosyal',
+            'Yayıncı_URL':str(r.get('source_url') or ''),
+            'Yayıncı':src or d or 'Açık Sosyal',
+            'Domain':d,
+            'Kaynak_Grubu':'📱 Sosyal Medya / Açık Sosyal',
+            'Kaynak Perspektifi':'Kamuya açık / indekslenmiş sosyal içerik',
+            'Bölge':'Sosyal Medya',
+            'Kategori':cat,
+            'Duygu':sentiment,
+            'Skor':score,
+            'Risk_Skoru':score,
+            'Risk_Durumu':status,
+            'Risk_Gerekçesi':'; '.join(risk_reasons),
+            'Negatif_Sinyaller':neg,
+            'Risk_Sinyalleri':risk,
+            'Yaklaşım':_tt_stance(text),
+            'Çerçeve':_tt_frame(text),
+            'İçerik Türü':_v7_content_type(title,snippet,url),
+            'Seç':False,
+            'Görsel_URL':'',
+            '_mode':'social'
+        })
+
+    return out,reasons
+
+# ============================================================
+# /V22 TARAMA
+# ============================================================
+
 if run:
     st.session_state.pop('_v20_frame_cmp_rows',None)
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
@@ -13104,313 +13417,214 @@ if run:
         stat['Kaynak dışı']+=reasons['kaynak']
         return norm_rows
 
-    # 1) Türk ana taraması — V21 çoklu motor + kararlı snapshot.
-    primary_label,primary_queries,primary_mode=batches[0]
+    # V22 — TÜM KAYNAK AİLELERİ AYNI ANDA BAŞLAR.
+    # Yerli taramanın bitmesini bekleyip sonra yabancı/think/social başlatma yoktur.
 
-    fresh_local=_v21_snapshot_load(
-        'turkish',
-        hours,
-        V21_FRESH_SNAPSHOT_MIN['turkish']
-    )
+    mode_queries={
+        'turkish':_v22_turkish_queries(),
+        'foreign':_v22_foreign_queries() if greek else [],
+        'social':_v22_social_queries() if social else [],
+        'thinktank':_v22_thinktank_queries() if global_on else [],
+        'kurdish':_v22_kurdish_queries(),
+        'movement':_v22_movement_queries(),
+        'commentary':_v22_commentary_queries()
+    }
 
-    if fresh_local:
-        status_box.write(f'⚡ {primary_label} — sağlıklı yakın dönem snapshot ({len(fresh_local)})')
-        all_rows=dedupe(fresh_local)
-        stat['Sonuç']=len(all_rows)
-
-    else:
-        status_box.write(
-            f'{primary_label} — {len(primary_queries)} sorgu / '
-            'Google News TR + DDGS + Bing News TR'
-        )
-
-        local_jobs=[]
-        for q in primary_queries:
-            for engine in ['Google News TR','DDGS Local','Bing News TR']:
-                local_jobs.append((q,engine))
-
-        primary_raw=[]
-
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=min(18,max(1,len(local_jobs)))
-        ) as ex:
-
-            fmap={
-                ex.submit(
-                    _v21_local_engine_call,
-                    engine,
-                    q,
-                    hours,
-                    v11_cache_snapshot
-                ):(q,engine)
-                for q,engine in local_jobs
-            }
-
-            for fut in concurrent.futures.as_completed(fmap):
-                try:
-                    fetched=fut.result() or {}
-                    chunk=fetched.get('rows') or []
-                    diag=fetched.get('diag') or {}
-
-                    if diag:
-                        v11_engine_diag_records.append(diag)
-
-                    if fetched.get('cache_update'):
-                        v11_cache_updates.append(fetched['cache_update'])
-
-                    primary_raw.extend(chunk)
-
-                except Exception:
-                    pass
-
-        stat['Ham sonuç']+=len(primary_raw)
-
-        live_local=dedupe(_merge_batch(primary_raw,primary_mode))
-        local_cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
-        pooled_local=_v21_pool_load('turkish',local_cutoff)
-
-        if pooled_local:
-            live_local=dedupe(pooled_local+live_local)
-
-        # Canlı sonuç olağandışı düşükse son sağlıklı snapshot'ı fallback olarak birleştir.
-        if len(live_local)<V21_HEALTHY_MIN['turkish']:
-            stale=_v21_snapshot_load(
-                'turkish',
-                hours,
-                V21_STALE_FALLBACK_MIN['turkish']
+    # Kullanıcının özgül takip terimlerinden en fazla iki ek yerli sorgu.
+    for term in _query_terms(query)[:2]:
+        if norm(term) not in {'terörsüz türkiye','terorsuz turkiye','pkk'}:
+            mode_queries['turkish'].append(
+                f'"{term}" ("Terörsüz Türkiye" OR PKK OR Öcalan)'
             )
-            if stale:
-                live_local=dedupe(stale+live_local)
 
-        all_rows=dedupe(live_local)
+    mode_hours={
+        'turkish':hours,
+        'foreign':hours,
+        'social':hours,
+        'thinktank':think_hours,
+        'kurdish':movement_hours,
+        'movement':movement_hours,
+        'commentary':hours
+    }
 
-        _v21_pool_upsert('turkish',all_rows)
-        _v21_snapshot_save('turkish',hours,all_rows)
-
-        stat['Sonuç']=len(all_rows)
-
-    # V44: Hızlı İlk Bakış kaldırıldı.
-    # Tarama sonuçları doğrudan aşağıdaki ana Görünüm ekranında (Kronolojik/Negatif/Yüksek Risk vb.) açılır.
-
-    # 2) Tamamlayıcı kaynaklar — V21 query-aware motorlar + kararlı fallback.
-    supplemental=batches[1:]
-    jobs=[]
-    snapshot_by_mode={}
-    ordered_modes=[]
-
-    for label,queries,mode in supplemental:
-        if mode not in ordered_modes:
-            ordered_modes.append(mode)
-
-        mh=_v9_mode_hours(mode,hours,think_hours,movement_hours)
-
+    # Önce son sağlıklı snapshot/pool'u yükle; canlı tarama bunları tazeler ve genişletir.
+    snapshot_seed={}
+    for mode in mode_queries:
+        mh=int(mode_hours[mode])
         fresh=_v21_snapshot_load(
             mode,
             mh,
             V21_FRESH_SNAPSHOT_MIN.get(mode,15)
         )
-
         if fresh:
-            snapshot_by_mode[mode]=fresh
-            continue
+            snapshot_seed[mode]=fresh
 
-        for q in queries:
-            jobs.append((label,q,mode))
-
-    supplemental_raw_by_mode={}
-
-    if snapshot_by_mode:
+    if snapshot_seed:
         status_box.write(
-            '⚡ Yakın dönem sağlıklı sonuç yeniden kullanıldı: '
-            + ', '.join(f'{m} ({len(v)})' for m,v in snapshot_by_mode.items())
+            '⚡ Kararlı başlangıç havuzu: '
+            + ', '.join(f'{m} {len(v)}' for m,v in snapshot_seed.items())
         )
 
-    if jobs:
-        engine_jobs=[]
+    engine_jobs=[]
+    for mode,queries in mode_queries.items():
+        mh=int(mode_hours[mode])
+        for q in queries:
+            for engine in _v22_engines(mode,q):
+                engine_jobs.append((mode,q,engine,mh))
 
-        for label,q,mode in jobs:
-            mh=_v9_mode_hours(mode,hours,think_hours,movement_hours)
-            site_q=_v9_is_site_query(q)
+    # Sosyal + yerli + yabancı öncelikli; hepsi yine tek havuzda.
+    priority={'social':0,'turkish':1,'foreign':2,'thinktank':3,'movement':4,'kurdish':5,'commentary':6}
+    engine_jobs.sort(key=lambda z:(priority.get(z[0],9),z[0],z[2]))
 
-            for engine in _v21_engines_for(mode,site_q,q):
-                engine_jobs.append((label,q,mode,engine,mh))
+    status_box.write(
+        f'⚡ V22 hızlı ilk tarama — {sum(len(v) for v in mode_queries.values())} sorgu / '
+        f'{len(engine_jobs)} motor işi / {min(V22_WORKERS,max(1,len(engine_jobs)))} worker'
+    )
 
-        # Sosyal/yabancı önce; DDGS'nin kendi concurrency limiti ayrıca uygulanır.
-        priority={
-            'social':0,
-            'foreign':1,
-            'thinktank':2,
-            'movement':3,
-            'kurdish':4,
-            'commentary':5,
-            'negative':6,
-            'official':7,
-            'statistics':8
+    raw_by_mode={m:[] for m in mode_queries}
+    v11_engine_diag_records=[]
+    v11_cache_updates=[]
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=min(V22_WORKERS,max(1,len(engine_jobs)))
+    ) as ex:
+        fmap={
+            ex.submit(
+                _v22_engine_call,
+                engine,
+                q,
+                mode,
+                when,
+                mh,
+                v11_cache_snapshot
+            ):(mode,q,engine)
+            for mode,q,engine,mh in engine_jobs
         }
 
-        engine_jobs.sort(
-            key=lambda z:(priority.get(z[2],9),z[2],z[3])
-        )
+        for fut in concurrent.futures.as_completed(fmap):
+            mode,q,engine=fmap[fut]
 
-        workers=min(V21_ENGINE_WORKERS,max(1,len(engine_jobs)))
+            try:
+                fetched=fut.result() or {}
+                chunk=fetched.get('rows') or []
+                diag=fetched.get('diag') or {}
 
-        status_box.write(
-            f'⚡ Tamamlayıcı kaynaklar — {len(jobs)} sorgu / '
-            f'{len(engine_jobs)} motor işi / {workers} worker · '
-            'motor-bazlı rate-limit koruması aktif'
-        )
+                # Origin query sosyal içerik doğrulamasında kullanılır.
+                for item in chunk:
+                    if isinstance(item,dict):
+                        item['_origin_query']=q
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
-            fmap={
-                ex.submit(
-                    _v21_engine_call,
-                    engine,
-                    q,
-                    mode,
-                    when,
-                    mh,
-                    v11_cache_snapshot
-                ):(label,q,mode,engine)
-                for label,q,mode,engine,mh in engine_jobs
-            }
-
-            for fut in concurrent.futures.as_completed(fmap):
-                label,q,mode,engine=fmap[fut]
-
-                try:
-                    fetched=fut.result() or {}
-                    chunk=fetched.get('rows') or []
-                    diag=fetched.get('diag') or {}
-
-                    if diag:
-                        v11_engine_diag_records.append(diag)
-
-                    if fetched.get('cache_update'):
-                        v11_cache_updates.append(fetched['cache_update'])
-
-                except Exception:
-                    chunk=[]
-
+                raw_by_mode.setdefault(mode,[]).extend(chunk)
                 stat['Ham sonuç']+=len(chunk)
-                supplemental_raw_by_mode.setdefault(mode,[]).extend(chunk)
 
-    # Sosyal açık uçları sabit birkaç güçlü sorguyla ayrıca besle.
-    if 'social' in ordered_modes and 'social' not in snapshot_by_mode:
-        direct_social_queries=[
+                if diag:
+                    v11_engine_diag_records.append(diag)
+
+                if fetched.get('cache_update'):
+                    v11_cache_updates.append(fetched['cache_update'])
+
+            except Exception:
+                pass
+
+    # Reddit + Bluesky açık arama: yalnız 4 güçlü sorgu, paralel ve ucuz.
+    if social:
+        direct_social=[
             '"Terörsüz Türkiye"',
             'PKK Ocalan Turkey peace process',
             '"PKK disarmament" Turkey',
             'Öcalan PKK Türkiye'
         ]
-
-        extra_jobs=[]
-
-        for q in direct_social_queries:
-            extra_jobs.append((q,'Reddit Public'))
-            extra_jobs.append((q,'Bluesky Public'))
+        extra=[]
+        for q in direct_social:
+            extra.append((q,'Reddit Public'))
+            extra.append((q,'Bluesky Public'))
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
             fmap={
                 ex.submit(
-                    _v21_engine_call,
-                    engine,
-                    q,
-                    'social',
-                    when,
-                    hours,
-                    v11_cache_snapshot
+                    _v22_engine_call,
+                    engine,q,'social',when,hours,v11_cache_snapshot
                 ):(q,engine)
-                for q,engine in extra_jobs
+                for q,engine in extra
             }
-
             for fut in concurrent.futures.as_completed(fmap):
+                q,engine=fmap[fut]
                 try:
                     fetched=fut.result() or {}
                     chunk=fetched.get('rows') or []
+                    for item in chunk:
+                        if isinstance(item,dict):
+                            item['_origin_query']=q
+                    raw_by_mode['social'].extend(chunk)
+                    stat['Ham sonuç']+=len(chunk)
                     diag=fetched.get('diag') or {}
-
                     if diag:
                         v11_engine_diag_records.append(diag)
-
                     if fetched.get('cache_update'):
                         v11_cache_updates.append(fetched['cache_update'])
-
-                    supplemental_raw_by_mode.setdefault('social',[]).extend(chunk)
-                    stat['Ham sonuç']+=len(chunk)
-
                 except Exception:
                     pass
 
-    stat['Snapshot Modları']={
-        m:len(v) for m,v in snapshot_by_mode.items()
-    }
+    # Motor cache güncellemeleri tek transaction'a yakın şekilde session'a yaz.
+    if v11_cache_updates:
+        _cache=st.session_state.get('_v11_source_cache',{}) or {}
+        for _k,_v in v11_cache_updates:
+            _cache[_k]=_v
+        _now=time.time()
+        _ttl=V11_CACHE_TTL_MINUTES*60
+        _cache={
+            k:v for k,v in _cache.items()
+            if _now-float(v.get('ts',0))<=_ttl
+        }
+        st.session_state['_v11_source_cache']=_cache
 
-    # Mode bazlı normalize + kararlı kaynak havuzu.
-    for mode in ordered_modes:
-        mh=_v9_mode_hours(mode,hours,think_hours,movement_hours)
-        used_snapshot=mode in snapshot_by_mode
+    # Normalize her mod için yalnız BİR KEZ.
+    all_rows=[]
+    mode_counts={}
+    for mode in ['turkish','foreign','thinktank','kurdish','movement','social','commentary']:
+        mh=int(mode_hours.get(mode,hours))
+        cutoff_mode=(datetime.now(timezone.utc)-timedelta(hours=mh)).astimezone(timezone.utc)
 
-        if used_snapshot:
-            incoming=list(snapshot_by_mode.get(mode) or [])
-            current_incoming=[]
-        else:
-            raw=supplemental_raw_by_mode.get(mode,[])
-            incoming=_merge_batch(raw,mode) if raw else []
-            current_incoming=list(incoming)
+        raw=raw_by_mode.get(mode,[])
+        live=[]
+        if raw:
+            live,_reasons=normalize_rows(raw,cutoff_mode,mode,query)
+            stat['Zaman dışı']+=_reasons.get('zaman',0)
+            stat['Konu dışı']+=_reasons.get('konu',0)
+            stat['Kaynak dışı']+=_reasons.get('kaynak',0)
+            stat['Yunan dışı']+=_reasons.get('yunan',0)
+            live=dedupe(live)
 
-        mode_cutoff=(
-            datetime.now(timezone.utc)-timedelta(hours=mh)
-        ).astimezone(timezone.utc)
+        # Kararlı havuz + taze snapshot seed ile birleştir.
+        pooled=_v21_pool_load(mode,cutoff_mode)
+        combined=dedupe((snapshot_seed.get(mode) or []) + pooled + live)
 
-        pooled=_v21_pool_load(mode,mode_cutoff)
+        # Sağlıklı canlı sonucu kaydet.
+        if live:
+            _v21_pool_upsert(mode,live)
+        if combined:
+            _v21_snapshot_save(mode,mh,combined)
 
-        if pooled:
-            incoming=dedupe(pooled+incoming)
+        mode_counts[mode]=len(combined)
+        all_rows=dedupe(all_rows+combined)
 
-        # Canlı sonuç sağlıklı eşik altındaysa daha eski ama geçerli son snapshot'ı birleştir.
-        if not used_snapshot and len(incoming)<V21_HEALTHY_MIN.get(mode,0):
-            stale=_v21_snapshot_load(
-                mode,
-                mh,
-                V21_STALE_FALLBACK_MIN.get(mode,360)
-            )
+    # Motor tanısı
+    _engine_df=_v11_aggregate_engine_diag(v11_engine_diag_records)
+    st.session_state['_v11_engine_diag']=(
+        _engine_df.to_dict('records') if not _engine_df.empty else []
+    )
+    stat['Motor Başarı Özeti']={
+        str(r['Motor']):{
+            'sorgu':int(r['Sorgu']),
+            'başarılı':int(r['Başarılı']),
+            'cache':int(r['Cache Kullanıldı']),
+            'başarı_yüzde':int(r['Başarı %'])
+        }
+        for _,r in _engine_df.iterrows()
+    } if not _engine_df.empty else {}
 
-            if stale:
-                incoming=dedupe(stale+incoming)
-
-        if current_incoming:
-            _v21_pool_upsert(mode,current_incoming)
-
-        if incoming:
-            _v21_snapshot_save(mode,mh,incoming)
-
-        # Kritik eşik kontrolü bir kez.
-        if instant_alerts and incoming:
-            for qr in incoming:
-                critical_label=critical_industrial_incident(
-                    qr.get('Başlık',''),
-                    qr.get('İçerik_Özeti','')
-                )
-
-                if critical_label:
-                    qkey=_alert_key(qr)
-
-                    if qkey not in alerted_keys:
-                        _register_alert(qr)
-
-                        st.toast(
-                            f'{critical_label}: {str(qr.get("Başlık",""))[:105]}',
-                            icon='🚨'
-                        )
-
-                        live_alarm_box.error(
-                            f'🚨 **KRİTİK SÜREÇ GELİŞMESİ ALARMI — {critical_label}** — '
-                            f'{qr.get("Tarih","")} · {qr.get("Kaynak","Açık Kaynak")} · '
-                            f'{str(qr.get("Başlık",""))[:140]}'
-                        )
-
-        all_rows=dedupe(all_rows+incoming)
-        stat['Sonuç']=len(all_rows)
+    stat['V22 Mod Sonuçları']=mode_counts
+    stat['Sonuç']=len(all_rows)
 
     _groups=[str(r.get('Kaynak_Grubu','')) for r in all_rows]
     stat['Yerli Basın']=sum(x=='🇹🇷 Yerli Basın' for x in _groups)
@@ -15091,6 +15305,218 @@ def _v20_short_headline(source,title,maxlen=125):
 # ============================================================
 # /V20 KARŞILAŞTIRMA
 # ============================================================
+
+# ============================================================
+# V22 — "ŞU AN NE KONUŞULUYOR?" + "KİM NE DİYOR?"
+# Ağ isteği yapmaz; mevcut tarama dataframe'i üzerinden çalışır.
+# ============================================================
+
+V22_TOPIC_MAP = {
+    'Öcalan / İmralı':[
+        'öcalan','ocalan','imralı','imrali','özgürlüğ','freedom of ocalan',
+        'ocalan freedom','imrali delegation'
+    ],
+    'Silahsızlanma / Fesih':[
+        'silah bırak','silahsızlan','fesih','tasfiye','disarmament',
+        'dissolution','disbandment','lay down arms'
+    ],
+    'Meclis / Hukuki Çerçeve':[
+        'tbmm','meclis','komisyon','yasa','kanun','hukuki','legal framework',
+        'parliament','legislation'
+    ],
+    'Suriye / SDG-YPG':[
+        'suriye','syria','sdg','sdf','ypg','pyd','damascus','şam'
+    ],
+    'Irak / IKBY / Kandil':[
+        'ırak','iraq','ikby','krg','kandil','qandil','erbil','süleymaniye'
+    ],
+    'Siyasi Süreç / Partiler':[
+        'dem parti','mhp','ak parti','bahçeli','bahceli','erdoğan','erdogan',
+        'siyasi süreç','political process'
+    ],
+    'Barış / Demokratik Siyaset':[
+        'barış','peace','demokratik siyaset','democratic politics',
+        'toplumsal bütünleşme','reconciliation'
+    ],
+    'Eleştiri / Şartlar / Risk':[
+        'şart','koşul','önkoşul','yetersiz','eleştiri','kaygı','risk','gerilim',
+        'condition','essential','insufficient','criticism','concern','stalled'
+    ],
+    'Toplumsal Tepki / Kamuoyu':[
+        'kamuoyu','toplum','şehit aile','gazi','tepki','anket',
+        'public opinion','society','victim','family'
+    ]
+}
+
+V22_ACTORS = {
+    'Abdullah Öcalan':['abdullah öcalan','abdullah ocalan','öcalan','ocalan'],
+    'Cemil Bayık':['cemil bayık','cemil bayik','bayık','bayik'],
+    'Murat Karayılan':['murat karayılan','murat karayilan','karayılan','karayilan'],
+    'Duran Kalkan':['duran kalkan'],
+    'Besê Hozat':['besê hozat','bese hozat'],
+    'Recep Tayyip Erdoğan':['recep tayyip erdoğan','recep tayyip erdogan','erdoğan','erdogan'],
+    'Devlet Bahçeli':['devlet bahçeli','devlet bahceli','bahçeli','bahceli'],
+    'DEM Parti':['dem parti','dem heyeti'],
+    'Tuncer Bakırhan':['tuncer bakırhan','tuncer bakirhan'],
+    'Pervin Buldan':['pervin buldan'],
+    'Mazlum Abdi':['mazlum abdi','mazloum abdi','mazlum kobani'],
+    'SDG / SDF':['sdg','sdf','syrian democratic forces']
+}
+
+def _v22_text(row):
+    return norm(
+        f"{row.get('Başlık','')} {row.get('İçerik_Özeti','')} "
+        f"{row.get('Kategori','')} {row.get('Çerçeve','')}"
+    )
+
+def _v22_focus_df(df):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    x=df.copy()
+    if 'Tarih_dt' in x.columns:
+        x['Tarih_dt']=pd.to_datetime(x['Tarih_dt'],utc=True,errors='coerce')
+        dated=x[x['Tarih_dt'].notna()].copy()
+        if not dated.empty:
+            # "Şu an" için son 7 gün; ana haber aralığı daha kısaysa o aralık.
+            h=min(int(hours or 168),168)
+            cut=pd.Timestamp.now(tz='UTC')-pd.Timedelta(hours=h)
+            recent=dated[dated['Tarih_dt']>=cut]
+            if not recent.empty:
+                return recent
+    return x
+
+def _v22_topic_table(df):
+    x=_v22_focus_df(df)
+    cols=['Konu','İçerik','Kaynak Ailesi','Yerli','Yabancı','Think Tank','Kürt/PKK-KCK','Sosyal','Trend']
+    if x.empty:
+        return pd.DataFrame(columns=cols)
+
+    now=pd.Timestamp.now(tz='UTC')
+    rows=[]
+    for topic,terms in V22_TOPIC_MAP.items():
+        mask=x.apply(
+            lambda r:any(norm(t) in _v22_text(r) for t in terms),
+            axis=1
+        )
+        z=x[mask].copy()
+        if z.empty:
+            continue
+
+        groups=z.get('Kaynak_Grubu',pd.Series('',index=z.index)).astype(str)
+        source_families=groups.nunique()
+
+        trend='—'
+        if 'Tarih_dt' in z.columns and z['Tarih_dt'].notna().any():
+            last24=int((z['Tarih_dt']>=now-pd.Timedelta(hours=24)).sum())
+            prev24=int(((z['Tarih_dt']<now-pd.Timedelta(hours=24)) &
+                        (z['Tarih_dt']>=now-pd.Timedelta(hours=48))).sum())
+            if last24>=max(3,prev24*1.5):
+                trend='↑ Yükseliyor'
+            elif prev24>=max(3,last24*1.5):
+                trend='↓ Geriliyor'
+            else:
+                trend='→ Dengeli'
+
+        rows.append({
+            'Konu':topic,
+            'İçerik':len(z),
+            'Kaynak Ailesi':source_families,
+            'Yerli':int(groups.eq('🇹🇷 Yerli Basın').sum()),
+            'Yabancı':int(groups.eq('🌍 Yabancı Basın').sum()),
+            'Think Tank':int(groups.eq('🧠 Think Tank / Analiz Kuruluşu').sum()),
+            'Kürt/PKK-KCK':int(
+                groups.isin([
+                    '🟣 Kürt Bölgesel Medyası',
+                    '🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak'
+                ]).sum()
+            ),
+            'Sosyal':int(groups.eq('📱 Sosyal Medya / Açık Sosyal').sum()),
+            'Trend':trend
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=cols)
+
+    out=pd.DataFrame(rows)
+    return out.sort_values(['İçerik','Kaynak Ailesi'],ascending=[False,False]).reset_index(drop=True)
+
+def _v22_topic_summary(topic_df):
+    if topic_df is None or topic_df.empty:
+        return 'Yeterli konu yoğunluğu oluşmamıştır.'
+    top=topic_df.head(3)
+    parts=[f"{r['Konu']} ({int(r['İçerik'])} içerik)" for _,r in top.iterrows()]
+    rising=topic_df[topic_df['Trend']=='↑ Yükseliyor']['Konu'].tolist()
+    txt='En yoğun gündem başlıkları ' + ', '.join(parts) + ' olarak görünmektedir.'
+    if rising:
+        txt += ' Son 24 saatte yükselen başlıklar: ' + ', '.join(rising[:3]) + '.'
+    return txt
+
+def _v22_actor_rows(df):
+    x=_v22_focus_df(df)
+    cols=['Aktör','İçerik','Kaynak Ailesi','Baskın Vurgu','Yaklaşım','Son Görünüm','Son Tarih']
+    if x.empty:
+        return pd.DataFrame(columns=cols)
+
+    rows=[]
+    for actor,variants in V22_ACTORS.items():
+        mask=x.apply(
+            lambda r:any(norm(v) in _v22_text(r) for v in variants),
+            axis=1
+        )
+        z=x[mask].copy()
+        if z.empty:
+            continue
+
+        if 'Tarih_dt' in z.columns:
+            z=z.sort_values('Tarih_dt',ascending=False,na_position='last')
+
+        # Baskın konu
+        topic_counts=[]
+        for topic,terms in V22_TOPIC_MAP.items():
+            c=sum(
+                any(norm(t) in _v22_text(r) for t in terms)
+                for _,r in z.iterrows()
+            )
+            if c:
+                topic_counts.append((c,topic))
+        topic_counts.sort(reverse=True)
+        focus=' / '.join([t for _,t in topic_counts[:2]]) if topic_counts else 'Genel süreç'
+
+        stance_series=z.get('Yaklaşım',pd.Series('',index=z.index)).fillna('').astype(str)
+        stance=stance_series.value_counts().index[0] if not stance_series.empty and stance_series.str.len().gt(0).any() else 'Nötr / Bilgilendirici'
+
+        latest=z.iloc[0]
+        headline=str(latest.get('Başlık','') or '')
+        # Başlıkta "Aktör: söz" formu varsa ne dediğini daha görünür yap.
+        said=headline
+        if ':' in headline:
+            left,right=headline.split(':',1)
+            if any(norm(v) in norm(left) for v in variants):
+                said=right.strip()
+        if len(said)>145:
+            said=said[:144].rstrip()+'…'
+
+        rows.append({
+            'Aktör':actor,
+            'İçerik':len(z),
+            'Kaynak Ailesi':z.get('Kaynak_Grubu',pd.Series('',index=z.index)).astype(str).nunique(),
+            'Baskın Vurgu':focus,
+            'Yaklaşım':stance,
+            'Son Görünüm':said,
+            'Son Tarih':str(latest.get('Tarih','') or '')
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=cols)
+
+    return pd.DataFrame(rows).sort_values(
+        ['İçerik','Kaynak Ailesi'],
+        ascending=[False,False]
+    ).reset_index(drop=True)
+
+# ============================================================
+# /V22 ANALİZ
+# ============================================================
 # V3 — SADELEŞTİRİLMİŞ TERÖRSÜZ TÜRKİYE ANALİST ARAYÜZÜ
 # Amaç: Yerli basın + sosyal medya/açık sosyal + yabancı basın + think tank
 # Ayrı sekmeler; yalnız Detaylı Bilgi Notu ve Analiz Sepeti işlemleri.
@@ -15258,6 +15684,47 @@ if _cmd_rows:
         )
 else:
     st.info('İlk ana tarama tamamlandığında İlk Bakış Analizi otomatik olarak çalışacaktır.')
+
+st.markdown('---')
+
+# ---------------- ŞU AN NE KONUŞULUYOR? ----------------
+st.subheader('🧭 Şu An Ne Konuşuluyor?')
+if st.session_state.get('rows'):
+    _now_df=pd.DataFrame(st.session_state.rows)
+    if not _now_df.empty and 'Tarih_dt' in _now_df.columns:
+        _now_df['Tarih_dt']=pd.to_datetime(_now_df['Tarih_dt'],utc=True,errors='coerce')
+    _topic_df=_v22_topic_table(_now_df)
+    if _topic_df.empty:
+        st.info('Henüz yeterli konu yoğunluğu oluşmamıştır.')
+    else:
+        st.info(_v22_topic_summary(_topic_df))
+        st.dataframe(
+            _topic_df.head(9),
+            hide_index=True,
+            use_container_width=True,
+            height=min(440,115+38*len(_topic_df.head(9)))
+        )
+else:
+    st.info('Tarama tamamlandığında ana gündem kümeleri burada otomatik olarak gösterilecektir.')
+
+st.markdown('---')
+
+# ---------------- KİM NE DİYOR? ----------------
+st.subheader('🗣️ Kim Ne Diyor? — Aktör Analizi')
+st.caption('Aktörlerin son görünürlüğünü, hangi konularla birlikte anıldığını ve başlıklarda öne çıkan son söylemi mevcut açık kaynak verisi üzerinden gösterir.')
+if st.session_state.get('rows'):
+    _actor_df=_v22_actor_rows(pd.DataFrame(st.session_state.rows))
+    if _actor_df.empty:
+        st.info('Bu taramada aktör analizi için yeterli eşleşme bulunmamıştır.')
+    else:
+        st.dataframe(
+            _actor_df.head(12),
+            hide_index=True,
+            use_container_width=True,
+            height=min(540,120+38*len(_actor_df.head(12)))
+        )
+else:
+    st.info('Tarama tamamlandığında aktör analizi burada oluşacaktır.')
 
 st.markdown('---')
 
@@ -15621,7 +16088,7 @@ else:
         p7.metric('PKK/KCK OSINT',int(movement_mask.sum()))
         p8.metric('Sosyal Medya',int(social_mask.sum()))
         p9.metric('Analiz Sepeti',len(_v3_analysis_basket()))
-        st.caption('Performans özeti tarama kapsamını ve Analiz Sepetini esas alır. V11 ile yabancı/think tank/açık kaynak motorlarında retry, kaynak sağlığı ve kısa süreli başarılı-sonuç cache mekanizması kullanılmaktadır.')
+        st.caption('Performans özeti tarama kapsamını ve Analiz Sepetini esas alır. V22 yerli, yabancı, think tank, Kürt/PKK-KCK ve sosyal taramaları aynı anda başlatır; geniş sorgular, kararlı havuz ve motor-bazlı eşzamanlılık ile ilk tarama süresini kısaltmayı hedefler.')
 
         # ---------------- SEÇİLİ HABERLERDEN ÇIKTI ----------------
         st.markdown('---')
