@@ -10031,8 +10031,8 @@ with st.sidebar:
     watch=st.text_area('⭐ Takip listesi (virgül / satır sonu):','Öcalan, DEM Parti, MHP, TBMM, PKK, SDF, YPG, Kandil, Irak, Suriye',height=90)
     neg=st.checkbox('⚠️ Eleştirel / şüpheci / riskli söylemleri ayrıca tara',True)
     greek=st.checkbox('🌍 Uluslararası basın — öncelikli',True)
-    social=st.checkbox('📱 Türk açık sosyal / indeks kaynakları',True)
-    global_on=st.checkbox('🧠 Uluslararası analiz / think tank (opsiyonel)',False)
+    social=st.checkbox('📱 Sosyal medya / açık sosyal kaynaklar',True)
+    global_on=st.checkbox('🧠 Think Tank / analiz kuruluşları',True)
     instant_alerts=st.checkbox('🔔 Tarama sırasında negatif/yüksek risk bildirimi göster',True,
                                help='Tarama devam ederken yeni negatif veya yüksek riskli içerik yakalanırsa ekranda anlık bildirim gösterir.')
     period=st.selectbox('🕒 Haber dönemi',['⚡ Son 3 saat','📅 Son 24 saat','📆 Son 48 saat','📆 Son 1 hafta','🗓️ Son 1 ay'],index=1)
@@ -10334,6 +10334,106 @@ def normalize_rows(raw, cutoff, mode, user_query):
 # /V5
 # ============================================================
 
+# ============================================================
+# V6 — ÇOKLU KAYNAK TARAMA
+# Türkçe Google News RSS, yabancı Google News RSS, DDGS ve GDELT birlikte kullanılır.
+# ============================================================
+
+def rss_global(query, timeout=8):
+    try:
+        r=requests.get(
+            'https://news.google.com/rss/search',
+            params={'q':query,'hl':'en-US','gl':'US','ceid':'US:en'},
+            headers=HEADERS,timeout=timeout
+        )
+        r.raise_for_status()
+        root=ET.fromstring(r.content)
+        out=[]
+        for it in root.findall('.//item'):
+            src=it.find('source')
+            out.append({
+                'title':html.unescape(it.findtext('title') or ''),
+                'url':it.findtext('link') or '',
+                'date':it.findtext('pubDate') or '',
+                'snippet':BeautifulSoup(it.findtext('description') or '','html.parser').get_text(' ',strip=True),
+                'source':src.text if src is not None else '',
+                'source_url':src.get('url','') if src is not None else ''
+            })
+        return out
+    except Exception:
+        return []
+
+def _v6_clean_query(q):
+    q=str(q or '')
+    q=re.sub(r'\bwhen:\S+',' ',q,flags=re.I)
+    q=re.sub(r'\btimespan:\S+',' ',q,flags=re.I)
+    return re.sub(r'\s+',' ',q).strip()
+
+def _v6_ddgs_raw(query,max_results=40):
+    q=_v6_clean_query(query)
+    try:
+        items=ddgs_text(q) or []
+    except Exception:
+        items=[]
+    out=[]
+    for item in items[:max_results]:
+        url=str(item.get('href') or item.get('url') or '').strip()
+        title=str(item.get('title') or '').strip()
+        if not url or not title:
+            continue
+        d=domain(url)
+        out.append({
+            'title':title,'url':url,
+            'date':item.get('date') or item.get('published') or '',
+            'snippet':str(item.get('body') or item.get('snippet') or item.get('description') or ''),
+            'source':d,'source_url':('https://'+d if d else '')
+        })
+    return out
+
+def _v6_gdelt_raw(query,timespan):
+    q=_v6_clean_query(query)
+    try:
+        items=gdelt(q,timespan) or []
+    except Exception:
+        items=[]
+    out=[]
+    for item in items:
+        url=str(item.get('url') or '').strip()
+        title=str(item.get('title') or '').strip()
+        if not url or not title:
+            continue
+        d=str(item.get('domain') or domain(url) or '')
+        out.append({
+            'title':title,'url':url,
+            'date':item.get('seendate') or item.get('date') or '',
+            'snippet':str(item.get('description') or item.get('title') or ''),
+            'source':d,'source_url':('https://'+d if d else '')
+        })
+    return out
+
+def _v6_fetch_query(query,mode,timespan):
+    if mode=='foreign':
+        # Yabancı basında üç ayrı açık kaynağı birleştir.
+        out=[]
+        out.extend(rss_global(query))
+        out.extend(_v6_ddgs_raw(query,35))
+        out.extend(_v6_gdelt_raw(query,timespan))
+        return out
+    if mode=='social':
+        # Google News X/Instagram/Facebook'u sistematik indekslemez; web araması kullan.
+        return _v6_ddgs_raw(query,40)
+    if mode=='thinktank':
+        # Think tank sayfaları çoğu zaman Google News'e düşmez.
+        out=[]
+        out.extend(_v6_ddgs_raw(query,40))
+        out.extend(rss_global(query))
+        return out
+    return rss(query)
+
+# ============================================================
+# /V6
+# ============================================================
+
 if run:
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
     when=period_window(hours)
@@ -10414,7 +10514,7 @@ if run:
     if jobs:
         status_box.write(f'⚡ Tamamlayıcı kaynaklar — {len(jobs)} sorgu / 12 eşzamanlı')
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(12,len(jobs))) as ex:
-            future_map={ex.submit(rss,q):(label,mode) for label,q,mode in jobs}
+            future_map={ex.submit(_v6_fetch_query,q,mode,when):(label,mode) for label,q,mode in jobs}
             for fut in concurrent.futures.as_completed(future_map):
                 label,mode=future_map[fut]
                 try:
@@ -10454,6 +10554,13 @@ if run:
         # Önce aşağıda gerçek haber sayfasının tam metni okunarak nihai sınıflandırma yapılır.
         # Kritik sanayi yangın/patlama anlık alarmı yukarıdaki özel blokta aynen devam eder.
         stat['Sonuç']=len(all_rows)
+
+    _groups=[str(r.get('Kaynak_Grubu','')) for r in all_rows]
+    stat['Yerli Basın']=sum(x=='🇹🇷 Yerli Basın' for x in _groups)
+    stat['Yabancı Basın']=sum(x=='🌍 Yabancı Basın' for x in _groups)
+    stat['Sosyal Medya']=sum(x=='📱 Sosyal Medya / Açık Sosyal' for x in _groups)
+    stat['Think Tank']=sum(x=='🧠 Think Tank / Analiz Kuruluşu' for x in _groups)
+    stat['Kaynağı Belirsiz']=sum(x=='❔ Kaynağı Belirsiz / Diğer' for x in _groups)
 
     # 3) Analitik katman — V44 performans düzenlemesi.
     # V43'teki her haber sayfasını tek tek indiren tam-metin negatif analizi kaldırıldı.
