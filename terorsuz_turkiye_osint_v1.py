@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import concurrent.futures
+import time
 import xml.etree.ElementTree as ET
 import re, html, json
 import sqlite3, hashlib
@@ -11575,6 +11576,162 @@ def _v9_source_coverage(df,group_value,limit=15):
 # /V9
 # ============================================================
 
+# ============================================================
+# V11 — TARAMA İSTİKRARI / KAYNAK SAĞLIĞI / CACHE FALLBACK
+#
+# Amaç:
+# - aynı ayarlarla yapılan taramalarda yabancı basın / think tank / açık
+#   kaynak sayılarının geçici motor hataları yüzünden sert dalgalanmasını azaltmak;
+# - başarısız kaynakları sessizce yutmak yerine görünür kılmak;
+# - başarılı sonuçları kısa süreli cache'de tutarak geçici rate-limit /
+#   erişim sorunu olduğunda önceki başarılı sonucu kullanmak.
+# ============================================================
+
+V11_CACHE_TTL_MINUTES = 120
+V11_MAX_RETRIES = 2
+V11_RETRY_SLEEP_SECONDS = 0.35
+
+def _v11_cache_snapshot():
+    cache=st.session_state.get('_v11_source_cache',{}) or {}
+    now_ts=time.time()
+    fresh={}
+    ttl=V11_CACHE_TTL_MINUTES*60
+    for k,v in cache.items():
+        try:
+            ts=float(v.get('ts',0))
+            rows=v.get('rows',[]) or []
+            if rows and now_ts-ts<=ttl:
+                fresh[k]=v
+        except Exception:
+            continue
+    return fresh
+
+def _v11_cache_key(mode,engine,query,hours):
+    raw=f'{mode}|{engine}|{int(hours or 0)}|{str(query or "").strip()}'
+    return hashlib.sha1(raw.encode('utf-8','ignore')).hexdigest()
+
+def _v11_engine_call(engine,query,mode,timespan,hours,cache_snapshot):
+    """
+    Tek arama motoru çağrısı.
+    - boş/başarısız sonuçta en fazla 1 ek deneme,
+    - yine sonuç yoksa son 120 dakikadaki başarılı cache sonucu kullanılır.
+    """
+    cache_key=_v11_cache_key(mode,engine,query,hours)
+    diag={
+        'Motor':engine,'Mod':mode,'Sorgu':1,'Başarılı':0,'Boş/Başarısız':0,
+        'Retry':0,'Cache Kullanıldı':0,'Sonuç':0
+    }
+    rows=[]
+    attempts=max(1,V11_MAX_RETRIES)
+
+    def invoke():
+        if engine=='Google News US':
+            return rss_google_locale(query,'en-US','US','US:en')
+        if engine=='Google News GB':
+            return rss_google_locale(query,'en-GB','GB','GB:en')
+        if engine=='Google News DE':
+            return rss_google_locale(query,'de','DE','DE:de')
+        if engine=='Google News FR':
+            return rss_google_locale(query,'fr','FR','FR:fr')
+        if engine=='Google News AR':
+            return rss_google_locale(query,'ar','SA','SA:ar')
+        if engine=='Google News TR':
+            return rss(query)
+        if engine=='Bing News US':
+            return _v8_bing_news_rss(query,'en-US')
+        if engine=='Bing News GB':
+            return _v8_bing_news_rss(query,'en-GB')
+        if engine=='DDGS':
+            return _v9_ddgs_raw(query,60 if not _v9_is_site_query(query) else 35,hours)
+        if engine=='GDELT':
+            return _v6_gdelt_raw(query,timespan)
+        return []
+
+    for attempt in range(attempts):
+        try:
+            rows=invoke() or []
+        except Exception:
+            rows=[]
+        if rows:
+            diag['Başarılı']=1
+            diag['Sonuç']=len(rows)
+            return {
+                'rows':rows,
+                'diag':diag,
+                'cache_update':(cache_key,{'ts':time.time(),'rows':rows})
+            }
+        if attempt+1<attempts:
+            diag['Retry']+=1
+            time.sleep(V11_RETRY_SLEEP_SECONDS)
+
+    cached=cache_snapshot.get(cache_key)
+    if cached and cached.get('rows'):
+        rows=cached.get('rows') or []
+        diag['Cache Kullanıldı']=1
+        diag['Sonuç']=len(rows)
+        return {'rows':rows,'diag':diag,'cache_update':None}
+
+    diag['Boş/Başarısız']=1
+    return {'rows':[],'diag':diag,'cache_update':None}
+
+def _v11_engines_for(mode,site_q=False):
+    """
+    Mod başına kullanılacak motorlar.
+    Genel yabancı sorgularda çok dilli pencereler; site sorgularında daha hafif set.
+    """
+    if mode=='foreign':
+        engines=['Google News US','Google News GB','Bing News US','DDGS']
+        if not site_q:
+            engines += ['Google News DE','Google News FR','Google News AR','Bing News GB','GDELT']
+        return engines
+    if mode=='thinktank':
+        return ['DDGS','Google News US','Bing News US']
+    if mode in {'kurdish','movement'}:
+        engines=['DDGS','Google News US','Bing News US']
+        if not site_q:
+            engines.append('Google News DE')
+        return engines
+    if mode=='commentary':
+        return ['DDGS','Google News US','Google News TR','Bing News US']
+    if mode=='social':
+        return ['DDGS']
+    return ['Google News TR']
+
+def _v11_fetch_query(query,mode,timespan,hours,cache_snapshot):
+    """
+    Bir sorgunun tüm ilgili motorlarını çalıştırır ve ham sonuç + motor sağlığı döndürür.
+    """
+    site_q=_v9_is_site_query(query)
+    all_rows=[]
+    diagnostics=[]
+    cache_updates=[]
+    for engine in _v11_engines_for(mode,site_q):
+        result=_v11_engine_call(engine,query,mode,timespan,hours,cache_snapshot)
+        all_rows.extend(result.get('rows') or [])
+        diagnostics.append(result.get('diag') or {})
+        if result.get('cache_update'):
+            cache_updates.append(result['cache_update'])
+    return {
+        'rows':all_rows,
+        'diagnostics':diagnostics,
+        'cache_updates':cache_updates
+    }
+
+def _v11_aggregate_engine_diag(records):
+    if not records:
+        return pd.DataFrame(columns=['Motor','Sorgu','Başarılı','Boş/Başarısız','Retry','Cache Kullanıldı','Sonuç','Başarı %'])
+    df=pd.DataFrame(records)
+    numeric=['Sorgu','Başarılı','Boş/Başarısız','Retry','Cache Kullanıldı','Sonuç']
+    for c in numeric:
+        df[c]=pd.to_numeric(df.get(c,0),errors='coerce').fillna(0).astype(int)
+    out=df.groupby('Motor',as_index=False)[numeric].sum()
+    out['Başarı %']=(100*out['Başarılı']/out['Sorgu'].clip(lower=1)).round(0).astype(int)
+    return out.sort_values(['Başarı %','Sonuç'],ascending=[False,False]).reset_index(drop=True)
+
+# ============================================================
+# /V11
+# ============================================================
+
 if run:
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
     when=period_window(hours)
@@ -11590,6 +11747,9 @@ if run:
     batches.append(('🛰️ PKK/KCK çevresi / hareket söylemi açık kaynak',build_movement_queries(when),'movement'))
     batches.append(('✍️ Yazar / yorum / görüş taraması',build_commentary_queries(when),'commentary'))
     all_rows=[]; stat={'Ham sonuç':0,'Zaman dışı':0,'Konu dışı':0,'Yunan dışı':0,'Kaynak dışı':0,'Sonuç':0,'Olay':0}
+    v11_engine_diag_records=[]
+    v11_cache_updates=[]
+    v11_cache_snapshot=_v11_cache_snapshot()
     live_alarm_box=st.empty()
     status_box=st.status('🔎 Tarama başlıyor...',expanded=True)
 
@@ -11658,19 +11818,23 @@ if run:
 
     supplemental_raw_by_mode={}
     if jobs:
-        status_box.write(f'⚡ Tamamlayıcı kaynaklar — {len(jobs)} sorgu / 18 eşzamanlı')
+        status_box.write(f'⚡ Tamamlayıcı kaynaklar — {len(jobs)} sorgu / 18 eşzamanlı · retry + cache fallback aktif')
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(18,len(jobs))) as ex:
             future_map={
                 ex.submit(
-                    _v9_fetch_query,q,mode,when,
-                    _v9_mode_hours(mode,hours,think_hours,movement_hours)
+                    _v11_fetch_query,q,mode,when,
+                    _v9_mode_hours(mode,hours,think_hours,movement_hours),
+                    v11_cache_snapshot
                 ):(label,mode)
                 for label,q,mode in jobs
             }
             for fut in concurrent.futures.as_completed(future_map):
                 label,mode=future_map[fut]
                 try:
-                    chunk=fut.result() or []
+                    fetched=fut.result() or {}
+                    chunk=fetched.get('rows') or []
+                    v11_engine_diag_records.extend(fetched.get('diagnostics') or [])
+                    v11_cache_updates.extend(fetched.get('cache_updates') or [])
                 except Exception:
                     chunk=[]
                 stat['Ham sonuç']+=len(chunk)
@@ -11769,6 +11933,30 @@ if run:
     all_rows=sorted(all_rows,key=_v101_row_dt,reverse=True)
     st.session_state.rows=all_rows
     st.session_state.scan_time=datetime.now().astimezone()
+    # V11 — yalnız başarılı motor sonuçlarını session cache'e yaz.
+    if v11_cache_updates:
+        _cache=st.session_state.get('_v11_source_cache',{}) or {}
+        for _k,_v in v11_cache_updates:
+            _cache[_k]=_v
+        # Eskimiş kayıtları temizle.
+        _now=time.time()
+        _ttl=V11_CACHE_TTL_MINUTES*60
+        _cache={k:v for k,v in _cache.items() if _now-float(v.get('ts',0))<=_ttl}
+        st.session_state['_v11_source_cache']=_cache
+
+    _engine_df=_v11_aggregate_engine_diag(v11_engine_diag_records)
+    st.session_state['_v11_engine_diag']=_engine_df.to_dict('records') if not _engine_df.empty else []
+    stat['Motor Başarı Özeti']={
+        str(r['Motor']):{
+            'sorgu':int(r['Sorgu']),
+            'başarılı':int(r['Başarılı']),
+            'cache':int(r['Cache Kullanıldı']),
+            'başarı_yüzde':int(r['Başarı %'])
+        }
+        for _,r in _engine_df.iterrows()
+    } if not _engine_df.empty else {}
+    stat['Cache Aktif Kayıt']=len(st.session_state.get('_v11_source_cache',{}) or {})
+
     st.session_state.stats=stat
     st.session_state.last_scan_alerts=live_alerts
 
@@ -12324,6 +12512,17 @@ else:
     st.caption(f'Son tarama: {st.session_state.scan_time.strftime("%d.%m.%Y %H:%M:%S") if st.session_state.scan_time else "-"}')
     with st.expander('🧪 Tarama teşhisi',False):
         st.json(st.session_state.stats)
+        _diag=pd.DataFrame(st.session_state.get('_v11_engine_diag',[]) or [])
+        if not _diag.empty:
+            st.markdown('**🌐 Arama Motoru / Kaynak Sağlığı**')
+            st.dataframe(
+                _diag[[c for c in ['Motor','Sorgu','Başarılı','Boş/Başarısız','Retry','Cache Kullanıldı','Sonuç','Başarı %'] if c in _diag.columns]],
+                hide_index=True,use_container_width=True
+            )
+            st.caption(
+                'Cache Kullanıldı: motor o anda sonuç üretemediğinde son 120 dakika içindeki başarılı aynı sorgu sonucu korunmuştur. '
+                'Bu mekanizma geçici rate-limit/erişim sorunlarında sonuç sayısının sert düşmesini azaltır.'
+            )
 
     if df.empty:
         st.warning('Sonuç bulunamadı.')
@@ -12338,14 +12537,16 @@ else:
         movement_mask=df['Kaynak_Grubu'].astype(str).eq('🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak')
         commentary_mask=df.get('İçerik Türü',pd.Series('',index=df.index)).astype(str).str.startswith(('✍️','🎙️','📑'))
 
-        m1,m2,m3,m4,m5,m6,m7=st.columns(7)
+        m1,m2,m3,m4=st.columns(4)
         m1.metric('Toplam İçerik',total)
         m2.metric('Tekil Olay',events)
         m3.metric('Yerli Basın',int(local_mask.sum()))
         m4.metric('Yabancı Basın',int(foreign_mask.sum()))
+        m5,m6,m7,m8=st.columns(4)
         m5.metric('Think Tank',int(think_mask.sum()))
-        m6.metric('Kürt/PKK-KCK OSINT',int(kurdish_mask.sum()+movement_mask.sum()))
-        m7.metric('Sosyal Medya',int(social_mask.sum()))
+        m6.metric('Kürt Bölgesel',int(kurdish_mask.sum()))
+        m7.metric('PKK/KCK OSINT',int(movement_mask.sum()))
+        m8.metric('Sosyal Medya',int(social_mask.sum()))
 
         unclassified_mask=df['Kaynak_Grubu'].astype(str).eq('❔ Kaynağı Belirsiz / Diğer')
         if int(unclassified_mask.sum())>0:
@@ -12357,16 +12558,22 @@ else:
 
         with st.expander('📡 Kaynak Kapsama Özeti',False):
             st.caption('Her kaynak ailesinde hangi yayınların gerçekten yakalandığını gösterir; yalnız toplam sayıya bakılmasını önler.')
-            c1,c2,c3=st.columns(3)
+            c1,c2=st.columns(2)
             with c1:
                 st.markdown('**🌍 Yabancı Basın**')
-                st.dataframe(_v9_source_coverage(df,'🌍 Yabancı Basın',15),hide_index=True,use_container_width=True)
+                st.dataframe(_v9_source_coverage(df,'🌍 Yabancı Basın',18),hide_index=True,use_container_width=True)
             with c2:
                 st.markdown('**🧠 Think Tank**')
-                st.dataframe(_v9_source_coverage(df,'🧠 Think Tank / Analiz Kuruluşu',15),hide_index=True,use_container_width=True)
+                st.dataframe(_v9_source_coverage(df,'🧠 Think Tank / Analiz Kuruluşu',18),hide_index=True,use_container_width=True)
+            c3,c4=st.columns(2)
             with c3:
+                st.markdown('**🟣 Kürt Bölgesel Medyası**')
+                st.dataframe(_v9_source_coverage(df,'🟣 Kürt Bölgesel Medyası',18),hide_index=True,use_container_width=True)
+            with c4:
                 st.markdown('**🛰️ PKK/KCK Çevresi Açık Kaynak**')
-                st.dataframe(_v9_source_coverage(df,'🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak',15),hide_index=True,use_container_width=True)
+                st.dataframe(_v9_source_coverage(df,'🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak',18),hide_index=True,use_container_width=True)
+            st.markdown('**📱 Sosyal Medya / Açık Sosyal**')
+            st.dataframe(_v9_source_coverage(df,'📱 Sosyal Medya / Açık Sosyal',18),hide_index=True,use_container_width=True)
 
         st.subheader('🗞️ Kaynak Bazlı İzleme')
         tab_local,tab_social,tab_foreign,tab_think,tab_kurdish,tab_movement,tab_commentary=st.tabs([
@@ -12533,15 +12740,18 @@ else:
         st.markdown('---')
         st.subheader('📋 Gün Sonu Performans Özeti')
         today=df.copy()
-        p1,p2,p3,p4,p5,p6,p7=st.columns(7)
+        p1,p2,p3,p4,p5=st.columns(5)
         p1.metric('Toplam İçerik',len(today))
         p2.metric('Tekil Olay',today['Olay_ID'].nunique() if 'Olay_ID' in today.columns else len(today))
         p3.metric('Yerli Basın',int(local_mask.sum()))
         p4.metric('Yabancı Basın',int(foreign_mask.sum()))
         p5.metric('Think Tank',int(think_mask.sum()))
-        p6.metric('Kürt/PKK-KCK OSINT',int(kurdish_mask.sum()+movement_mask.sum()))
-        p7.metric('Analiz Sepeti',len(_v3_analysis_basket()))
-        st.caption('Performans özeti artık kaldırılan ÖGN/AKT/Sunum sepetlerini değil, tarama kapsamını ve Analiz Sepetini esas alır.')
+        p6,p7,p8,p9=st.columns(4)
+        p6.metric('Kürt Bölgesel',int(kurdish_mask.sum()))
+        p7.metric('PKK/KCK OSINT',int(movement_mask.sum()))
+        p8.metric('Sosyal Medya',int(social_mask.sum()))
+        p9.metric('Analiz Sepeti',len(_v3_analysis_basket()))
+        st.caption('Performans özeti tarama kapsamını ve Analiz Sepetini esas alır. V11 ile yabancı/think tank/açık kaynak motorlarında retry, kaynak sağlığı ve kısa süreli başarılı-sonuç cache mekanizması kullanılmaktadır.')
 
         # ---------------- SEÇİLİ HABERLERDEN ÇIKTI ----------------
         st.markdown('---')
