@@ -28,7 +28,7 @@ from docx.oxml.ns import qn
 # ============================================================
 
 _V104_ENTITY_HINTS = {
-    'tüik','tcmb','epdk','tübitak','kosgeb','tse','türkpatent','ssb','aselsan','tusaş','tusas',
+    'tüik','tcmb','epdk','tbmm','mgk','tse','tbmm','ssb','aselsan','tusaş','tusas',
     'roketsan','havelsan','baykar','togg','mke','kaan','kızılelma','kizilelma','hisar','siper',
     'teknofest','tcg','anadolu','turksat','türksat','thk','thy','turkcell','türk telekom'
 }
@@ -308,9 +308,9 @@ def _v104_shift_priority(r):
     text=norm(f"{r.get('Başlık','')} {r.get('İçerik_Özeti','')} {r.get('Kategori','')}")
     official=_is_official_radar_row(r) or _verification_rank(r.get('Doğrulama',''))>=4
     data_terms=['tüik','tcmb','epdk','istatistik','veri','endeks','oran','kapasite kullanım',
-                'sanayi üretimi','ihracat','ithalat','istihdam','milyar','milyon','yüzde','%']
-    strategic_terms=['yatırım','üretim','tesis','fabrika','çip','yarı iletken','yapay zeka','yapay zekâ',
-                     'siber','ar-ge','arge','patent','teşvik','kritik teknoloji','otomotiv','enerji']
+                'süreç ilerlemesi','ihracat','ithalat','istihdam','milyar','milyon','yüzde','%']
+    strategic_terms=['yatırım','uygulama','saha','süreç','kritik eşik','bölgesel güvenlik','yapay zeka','yapay zekâ',
+                     'siber','ar-ge','arge','patent','teşvik','kritik teknoloji','bölgesel','enerji']
     defence_terms=['savunma','aselsan','tusaş','tusas','roketsan','havelsan','baykar','kaan','kızılelma',
                    'füze','iha','siha','uzay','uydu','teknofest']
     has_data=any(x in text for x in data_terms) or bool(re.search(r'\d',text))
@@ -560,9 +560,9 @@ def _v109_event_sources(df,event_id):
 def _v109_official_source_type(r):
     text=norm(f"{r.get('Kaynak','')} {r.get('Domain','')} {r.get('Başlık','')} {r.get('URL','')}")
     if 'tuik' in text or 'tüik' in text or 'turkiye istatistik' in text: return 'TÜİK'
-    if 'tubitak' in text or 'tübitak' in text: return 'TÜBİTAK'
-    if 'kosgeb' in text: return 'KOSGEB'
-    if 'turkpatent' in text or 'türkpatent' in text: return 'TÜRKPATENT'
+    if 'tbmm' in text or 'tbmm' in text: return 'TBMM'
+    if 'mgk' in text: return 'MGK'
+    if 'tbmm' in text or 'tbmm' in text: return 'TBMM'
     if re.search(r'\btse\b',text) or 'türk standartları' in text: return 'TSE'
     if 'ssb.gov' in text or 'savunma sanayii başkan' in text or 'savunma sanayii baskan' in text: return 'SSB'
     if 'sanayi.gov' in text or 'sanayi ve teknoloji bakan' in text: return 'Bakanlık'
@@ -633,71 +633,90 @@ HEADERS={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537
 # KONU EVRENİ
 # -----------------------------
 TOPIC_TERMS = [
-    # Sanayi / üretim
-    'sanayi','sanayi üretimi','imalat','üretim','fabrika','tesis','organize sanayi','OSB','endüstri',
-    'makine','makine sanayii','endüstriyel otomasyon','otomasyon','robotik','endüstri 4.0','mesleki üretim',
-    'kapasite','kapasite kullanım','yatırım','yatırım teşvik','yerli üretim','yerlileştirme','millileştirme',
-    'tedarik zinciri','tedarikçi','lojistik','depo','depolama','tersane','gemi inşa','denizcilik',
-    # Teknoloji / dijital
-    'teknoloji','teknolojik','Ar-Ge','Arge','araştırma geliştirme','inovasyon','patent','faydalı model',
-    'dijital dönüşüm','endüstri 4.0','yapay zeka','yapay zekâ','makine öğrenmesi','derin öğrenme','yazılım',
-    'siber güvenlik','siber saldırı','veri sızıntısı','veri merkezi','bulut','cloud','saas','yazılım şirketi',
-    'çip','mikroçip','yarı iletken','semiconductor','işlemci','wafer','elektronik','pcb','sensör',
-    'telekom','5G','6G','fiber','internet altyapısı','kuantum','blokzincir','blockchain','fintech',
-    # İleri teknoloji / sağlık teknolojileri
-    'biyoteknoloji','biyomedikal','nanoteknoloji','medikal cihaz','sağlık teknolojisi','gen tedavisi',
-    'malzeme','ileri malzeme','kompozit','karbon fiber','3D yazıcı','eklemeli imalat','batarya teknolojisi',
-    # Savunma / havacılık / uzay
-    'savunma sanayii','savunma sanayi','savunma teknolojisi','ASELSAN','TUSAŞ','TUSAS','ROKETSAN','HAVELSAN',
-    'Baykar','Bayraktar','İHA','SİHA','drone','insansız hava aracı','insansız deniz aracı','KAAN','Kızılelma',
-    'HİSAR','SİPER','füze','roket','radar','elektronik harp','elektronik destek','komuta kontrol',
-    'mühimmat','zırhlı araç','tank','denizaltı','fırkateyn','korvet','helikopter','havacılık','uçak',
-    'havacılık sanayii','uzay','uydu','uydu teknolojisi','roket fırlatma','fırlatma sistemi','Türkiye Uzay Ajansı',
-    # Otomotiv / mobilite
-    'otomotiv','TOGG','elektrikli araç','hibrit araç','otonom araç','sürücüsüz araç','batarya','şarj',
-    'şarj istasyonu','mobilite','raylı sistem','lokomotif','metro','demiryolu','lastik','yan sanayi',
-    # Enerji / kimya / kaynak
-    'enerji','enerji depolama','güneş enerjisi','solar','rüzgar enerjisi','hidrojen','yakıt hücresi',
-    'nükleer enerji','nükleer santral','petrol','doğalgaz','LNG','elektrik üretimi','şebeke','kimya',
-    'petrokimya','plastik','polimer','demir çelik','çelik','metal','alüminyum','bakır','madencilik','maden',
-    # Diğer üretim sektörleri
-    'tekstil','hazır giyim','gıda teknolojisi','gıda sanayii','tarım teknolojisi','akıllı tarım','seracılık',
-    'su ürünleri','inşaat teknolojisi','çimento','cam','seramik','kağıt','ambalaj','mobilya',
-    # Ekosistem / kamu / girişim
-    'TÜBİTAK','KOSGEB','Sanayi ve Teknoloji Bakanlığı','TSE','TürkPatent','TEKNOFEST','teknopark',
-    'girişim','girişimcilik','startup','start-up','venture capital','yatırım turu','teknoloji transferi',
-    'teknoloji geliştirme bölgesi','Ar-Ge merkezi','tasarım merkezi','OSBÜK','ihracat','ithalat','yüksek teknoloji',
-    'orta yüksek teknoloji','kritik teknoloji','stratejik ürün','stratejik yatırım'
+    'terörsüz türkiye','terorsuz turkiye','pkk','pkk/kck','kck','öcalan','ocalan','imralı','imrali',
+    'silah bırakma','silahsızlanma','fesih','tasfiye','dem parti','mhp','tbmm',
+    'sdf','sdg','ypg','pyd','suriye','ırak','kandil',
+    'terror-free turkey','terror-free türkiye','pkk peace process','pkk disarmament',
+    'pkk dissolution','kurdish peace process','ocalan call'
 ]
 
+
 NEGATIVE_TERMS = [
-    'iflas','konkordato','zarar açıkladı','net zarar','üretim durdu','üretim durduruldu',
-    'fabrika kapandı','fabrika kapanıyor','işten çıkarma','işçi çıkarma','toplu işten çıkarma',
-    'grev','lokavt','soruşturma','dava açıldı','dava','ceza','para cezası','geri çağırma',
-    'recall','arıza','kaza','patlama','yangın','siber saldırı','veri sızıntısı','hacklendi',
-    'fidye yazılımı','ambargo','yaptırım','ihracat yasağı','ithalat yasağı','lisans reddi',
-    'ruhsat iptali','sözleşme feshi','ihale iptal','ihale iptal edildi','askıya alındı',
-    'ertelendi','gecikme','teslim edilemedi','testi geçemedi','kapasite kaybı','daralma',
-    'sert düşüş','pazar kaybı','maliyet artışı','tedarik sorunu','tedarik krizi','çip krizi',
-    'kıtlık','blokaj','güvenlik açığı','kritik zafiyet','zafiyet','usulsüzlük','yolsuzluk',
-    'vurgun','casusluk','can kaybı','ölüm','yaralanma','ifşa edildi'
+    'süreç çöktü',
+    'süreç tıkandı',
+    'süreç askıya alındı',
+    'süreç sona erdi',
+    'görüşmeler kesildi',
+    'ateşkes bozuldu',
+    'silah bırakma durdu',
+    'silahsızlanma durdu',
+    'fesih kararı uygulanmadı',
+    'provokasyon',
+    'sabotaj',
+    'saldırı',
+    'terör saldırısı',
+    'çatışma',
+    'şehit',
+    'can kaybı',
+    'tutuklama',
+    'gözaltı',
+    'operasyon',
+    'eleştiri',
+    'tepki',
+    'itiraz',
+    'kaygı',
+    'şüphe',
+    'güvensizlik',
+    'belirsizlik',
+    'taviz',
+    'kriz',
+    'gerilim',
+    'risk',
+    'tehdit',
+    'criticism',
+    'concern',
+    'skepticism',
+    'scepticism',
+    'doubt',
+    'controversy',
+    'stalled',
+    'suspended',
+    'collapse',
+    'breakdown',
+    'attack',
+    'clash',
+    'threat'
 ]
 HIGH_RISK_TERMS = [
-    'iflas','konkordato','üretim durdu','fabrika kapandı','toplu işten çıkarma','siber saldırı',
-    'veri sızıntısı','fidye yazılımı','ambargo','yaptırım','ihracat yasağı','lisans reddi',
-    'ruhsat iptali','sözleşme feshi','ihale iptal edildi','patlama','yangın','can kaybı','ölüm',
-    'kritik zafiyet','yolsuzluk','usulsüzlük','casusluk','tedarik krizi','çip krizi'
+    'süreç çöktü',
+    'süreç askıya alındı',
+    'süreç sona erdi',
+    'görüşmeler kesildi',
+    'ateşkes bozuldu',
+    'silah bırakma durdu',
+    'silahsızlanma durdu',
+    'terör saldırısı',
+    'saldırı',
+    'çatışma',
+    'şehit',
+    'can kaybı',
+    'provokasyon',
+    'sabotaj',
+    'collapse',
+    'breakdown',
+    'attack',
+    'clash'
 ]
 
 CATEGORIES={
  'Savunma & Havacılık':['savunma','aselsan','tusaş','tusas','roketsan','havelsan','baykar','bayraktar','iha','siha','kaan','kızılelma','füze','roket','havacılık'],
  'Dijital & Yapay Zeka':['yapay zeka','yapay zekâ','siber','yazılım','5g','6g','veri merkezi','bulut','kuantum'],
- 'Yarı İletken & Elektronik':['çip','mikroçip','yarı iletken','işlemci','elektronik','wafer','pcb'],
- 'Otomotiv & Mobilite':['otomotiv','togg','elektrikli araç','batarya','şarj'],
+ 'Yarı İletken & Elektronik':['kritik eşik','mikrokritik eşik','bölgesel güvenlik','işlemci','elektronik','wafer','pcb'],
+ 'Otomotiv & Mobilite':['bölgesel','togg','elektrikli araç','batarya','şarj'],
  'Enerji':['enerji','hidrojen','güneş','rüzgar','nükleer','enerji depolama'],
- 'Sanayi & Üretim':['sanayi','imalat','üretim','fabrika','osb','makine','robotik','otomasyon','demir çelik','kimya'],
+ 'Süreç ve Güvenlik':['sanayi','uygulama','uygulama','süreç','osb','makine','robotik','otomasyon','demir çelik','kimya'],
  'Uzay & İleri Teknoloji':['uzay','uydu','tua','nanoteknoloji','biyoteknoloji'],
- 'Kurumsal Ekosistem':['tübitak','kosgeb','sanayi ve teknoloji bakanlığı','türkpatent','teknopark','teknofest']
+ 'Siyasi ve Kurumsal Aktörler':['tbmm','mgk','İçişleri Bakanlığı','tbmm','komisyon','teknofest']
 }
 
 TR_MAIN=[
@@ -713,7 +732,7 @@ TR_TECH=[
  'defencehere.com','c4defence.com','savunmahaber.com','gdh.digital','stratejikortak.com','m5dergi.com','mavivatan.net'
 ]
 TR_OFFICIAL=[
- 'sanayi.gov.tr','tubitak.gov.tr','kosgeb.gov.tr','tse.org.tr','turkpatent.gov.tr','tua.gov.tr','ticaret.gov.tr',
+ 'icisleri.gov.tr','tbmm.gov.tr','mgk.gov.tr','tse.org.tr','tbmm.gov.tr','tua.gov.tr','ticaret.gov.tr',
  'uab.gov.tr','aselsan.com','tusas.com','roketsan.com.tr','havelsan.com.tr','baykartech.com','togg.com.tr','tei.com.tr','tai.com.tr'
 ]
 GR=[
@@ -730,8 +749,8 @@ SOURCE_ALIASES={
  'dünya':'dunya.com','ekonomim':'ekonomim.com','bloomberg ht':'bloomberght.com','webrazzi':'webrazzi.com',
  'shiftdelete':'shiftdelete.net','donanımhaber':'donanimhaber.com','technopat':'technopat.net','savunma sanayi st':'savunmasanayist.com',
  'savunma sanayi':'savunmasanayist.com','defence türk':'defenceturk.net','defence turk':'defenceturk.net','defencehere':'defencehere.com',
- 'c4 defence':'c4defence.com','c4defence':'c4defence.com','sanayi ve teknoloji bakanlığı':'sanayi.gov.tr','tübitak':'tubitak.gov.tr',
- 'kosgeb':'kosgeb.gov.tr','türkpatent':'turkpatent.gov.tr','türkiye uzay ajansı':'tua.gov.tr','aselsan':'aselsan.com',
+ 'c4 defence':'c4defence.com','c4defence':'c4defence.com','İçişleri Bakanlığı':'icisleri.gov.tr','tbmm':'tbmm.gov.tr',
+ 'mgk':'mgk.gov.tr','tbmm':'tbmm.gov.tr','türkiye uzay ajansı':'tua.gov.tr','aselsan':'aselsan.com',
  'tusaş':'tusas.com','tusas':'tusas.com','roketsan':'roketsan.com.tr','havelsan':'havelsan.com.tr','baykar':'baykartech.com','togg':'togg.com.tr'
 }
 
@@ -833,7 +852,7 @@ def relevant(text,user_query=''):
     t=norm(text)
     if any(x in t for x in TOPIC_TERMS): return True
     uq=re.split(r'\bOR\b|,|\n',user_query or '',flags=re.I)
-    generic={'sanayi','teknoloji','üretim','yatırım','enerji','türkiye','türk','haber'}
+    generic={'sanayi','teknoloji','uygulama','yatırım','enerji','türkiye','türk','haber'}
     return any(len(x.strip())>2 and norm(x.strip()) not in generic and norm(x.strip()) in t for x in uq)
 
 def greek_defense(text):
@@ -842,36 +861,32 @@ def greek_defense(text):
     return any(x in t for x in terms)
 
 
-OSB_FIRE_LOCATION_TERMS = [
-    'osb','organize sanayi','organize sanayi bölgesi','organize sanayi bölgesinde',
-    'organize sanayi bölgesindeki','organize sanayi sitesinde'
+SÜREÇ_FIRE_LOCATION_TERMS = [
+    'terörsüz türkiye','pkk','kck','öcalan','ocalan','imralı','imrali',
+    'sdf','sdg','ypg','pyd','kandil','tbmm','mgk'
 ]
 INDUSTRIAL_LOCATION_TERMS = [
-    'osb','organize sanayi','organize sanayi bölgesi','organize sanayi sitesinde',
-    'fabrika','fabrikada','fabrikasında','tesis','tesiste','üretim tesisi','sanayi tesisi',
-    'imalathane','atölye','depo','üretim alanı','sanayi sitesi'
+    'terörsüz türkiye','pkk','kck','öcalan','ocalan','imralı','imrali',
+    'sdf','sdg','ypg','pyd','kandil','suriye','ırak','tbmm','mgk'
 ]
 CRITICAL_INCIDENT_TERMS = [
-    'yangın','yangını','yangin','alev','alevler','yanıyor','yaniyor','yandı','yandi',
-    'patlama','patladı','patladi','infilak','infilak etti','parlama',
-    'fabrika yangını','tesis yangını','fabrika patlaması','tesis patlaması'
+    'süreç çöktü','süreç askıya alındı','ateşkes bozuldu','silah bırakma başladı',
+    'silah bırakma durdu','silahlar teslim edildi','silahsızlanma','fesih',
+    'terör saldırısı','saldırı','çatışma','şehit','kritik çağrı','yasa kabul edildi'
 ]
 
 def is_osb_fire(title, snippet=''):
-    """Geriye dönük uyumluluk: OSB + yangın bağlamı."""
-    t=norm(f'{title} {snippet}')
-    return (
-        any(term in t for term in OSB_FIRE_LOCATION_TERMS)
-        and any(term in t for term in ['yangın','yangını','yangin','alev','alevler','yanıyor','yaniyor','yandı','yandi'])
-    )
+    # Geriye dönük fonksiyon adı korunmuştur; Terörsüz Türkiye sürümünde kullanılmaz.
+    return False
+
 
 def critical_industrial_incident(title, snippet=''):
     """
     Özel kırmızı alarm için:
-    - OSB içi yangın
-    - OSB içi patlama
-    - OSB dışı fabrika/tesis yangını
-    - OSB dışı fabrika/tesis patlaması
+    - SÜREÇ içi yangın
+    - SÜREÇ içi patlama
+    - SÜREÇ dışı süreç/saha yangını
+    - SÜREÇ dışı süreç/saha patlaması
     """
     t=norm(f'{title} {snippet}')
     has_location=any(term in t for term in INDUSTRIAL_LOCATION_TERMS)
@@ -879,19 +894,19 @@ def critical_industrial_incident(title, snippet=''):
     if not (has_location and has_incident):
         return None
 
-    osb=any(term in t for term in OSB_FIRE_LOCATION_TERMS)
+    osb=any(term in t for term in SÜREÇ_FIRE_LOCATION_TERMS)
     fire=any(term in t for term in ['yangın','yangını','yangin','alev','alevler','yanıyor','yaniyor','yandı','yandi'])
     explosion=any(term in t for term in ['patlama','patladı','patladi','infilak','infilak etti','parlama'])
 
     if osb and explosion:
-        return '💥 OSB PATLAMA'
+        return '💥 SÜREÇ PATLAMA'
     if osb and fire:
-        return '🔥 OSB YANGINI'
+        return '🔥 SÜREÇ YANGINI'
     if explosion:
         return '💥 FABRİKA/TESİS PATLAMASI'
     if fire:
         return '🔥 FABRİKA/TESİS YANGINI'
-    return '🚨 KRİTİK SANAYİ OLAYI'
+    return '🚨 KRİTİK SÜREÇ GELİŞMESİ'
 
 
 NEGATION_OR_RESOLUTION_PHRASES = [
@@ -904,18 +919,31 @@ NEGATION_OR_RESOLUTION_PHRASES = [
 POSITIVE_SIGNAL_TERMS = [
     'arttı','artış','yükseldi','yükseliş','rekor','büyüdü','büyüme',
     'yatırım','yatırım kararı','yeni yatırım','ihracat arttı','ihracat artışı',
-    'kapasite arttı','kapasite artışı','üretim arttı','üretim artışı',
+    'kapasite arttı','kapasite artışı','uygulama arttı','uygulama artışı',
     'devreye alındı','faaliyete geçti','başarıyla','başarılı',
     'anlaşma imzalandı','sözleşme imzalandı','teslim edildi',
     'teşvik','destek','hibe','istihdam artışı','yeni istihdam'
 ]
 
 SEVERE_NEGATIVE_TERMS = {
-    'iflas','konkordato','üretim durdu','fabrika kapandı','toplu işten çıkarma',
-    'siber saldırı','veri sızıntısı','fidye yazılımı','ambargo','yaptırım',
-    'ihracat yasağı','lisans reddi','ruhsat iptali','sözleşme feshi',
-    'ihale iptal edildi','patlama','yangın','can kaybı','ölüm',
-    'kritik zafiyet','yolsuzluk','usulsüzlük','casusluk','tedarik krizi','çip krizi'
+    'süreç çöktü',
+    'süreç askıya alındı',
+    'süreç sona erdi',
+    'görüşmeler kesildi',
+    'ateşkes bozuldu',
+    'silah bırakma durdu',
+    'silahsızlanma durdu',
+    'terör saldırısı',
+    'saldırı',
+    'çatışma',
+    'şehit',
+    'can kaybı',
+    'provokasyon',
+    'sabotaj',
+    'collapse',
+    'breakdown',
+    'attack',
+    'clash'
 }
 
 def _term_regex(term):
@@ -953,7 +981,7 @@ def _active_adverse_terms(terms, text):
             if not _physical_incident_is_real(term,ctx):
                 continue
 
-            # "yaptırım kaldırıldı", "ihlal yaşanmadı", "üretim durmadı" gibi bağlamları bastır.
+            # "yaptırım kaldırıldı", "ihlal yaşanmadı", "uygulama durmadı" gibi bağlamları bastır.
             # Gerçekleşmiş yangın/patlama/can kaybı ise "kontrol altına alındı" gibi sonraki olumlu
             # gelişmeler olayın negatif niteliğini ortadan kaldırmaz.
             if term not in {'yangın','patlama','can kaybı','ölüm'}:
@@ -990,7 +1018,7 @@ def _positive_strength(text):
         'arttı','artış','yükseldi','yükseliş','rekor','büyüdü','büyüme',
         'yeni yatırım','yatırım kararı','yatırım yaptı','yatırım yapacak',
         'ihracat arttı','ihracat artışı','kapasite artışı','kapasite arttı',
-        'üretim artışı','üretim arttı','devreye alındı','faaliyete geçti',
+        'uygulama artışı','uygulama arttı','devreye alındı','faaliyete geçti',
         'başarıyla','başarılı','anlaşma imzalandı','sözleşme imzalandı',
         'teslim edildi','teşvik','destek','hibe','istihdam artışı','yeni istihdam',
         'pazar payı arttı','gelir arttı','kâr arttı','kar arttı'
@@ -1003,25 +1031,25 @@ V48_NEGATIVE_PHRASES = [
     'düştü','düşüş','azaldı','azalış','geriledi','gerileme','daraldı','daralma',
     'zarar açıkladı','zarar etti','net zarar','faaliyet zararı','kayıp yaşadı',
     'satışlar düştü','satışlar azaldı','satışlarda düşüş','satışlarda azalma',
-    'üretim düştü','üretim azaldı','üretimde düşüş','üretimde azalma',
+    'uygulama düştü','uygulama azaldı','uygulamade düşüş','uygulamade azalma',
     'ihracat düştü','ihracat azaldı','ihracatta düşüş','ihracatta gerileme',
     'siparişler düştü','siparişler azaldı','siparişlerde düşüş',
     'kapasite düştü','kapasite azaldı','kapasite kullanım oranı düştü',
     'istihdam azaldı','istihdam düştü','istihdam kaybı',
-    'işten çıkarma','işçi çıkarma','personel azaltma','toplu işten çıkarma',
-    'maliyet arttı','maliyet artışı','maliyet baskısı','girdi maliyetleri arttı',
+    'toplumsal gerilim','toplumsal gerilim','personel azaltma','kitlesel gerilim',
+    'maliyet arttı','gerilim artışı','maliyet baskısı','girdi maliyetleri arttı',
     'fiyat baskısı','finansman maliyeti','nakit sıkıntısı','likidite sıkıntısı',
     'talep düştü','talep azaldı','talep daralması','talepte daralma',
     'pazar payı düştü','pazar payı kaybı','rekabet gücü kaybı',
     'beklentinin altında','beklentilerin altında','hedefin altında','hedefin gerisinde',
     'kriz','aksama','kesinti','arıza','gecikme','ertelendi','iptal edildi',
-    'faaliyet durdu','üretim durdu','üretime ara verdi','üretime ara verildi',
-    'fabrika kapandı','tesis kapandı','kapanma kararı',
-    'iflas','konkordato','haciz','borç krizi',
+    'faaliyet durdu','silah bırakma durdu','uygulamae ara verdi','uygulamae ara verildi',
+    'süreç kapandı','saha kapandı','kapanma kararı',
+    'süreç çöküşü','süreç tıkanması','haciz','borç krizi',
     'soruşturma','inceleme başlatıldı','ceza verildi','para cezası',
-    'yasaklandı','yasak','geri çağırma','ürün geri çağırma',
+    'yasaklandı','yasak','çağrının geri çekilmesi','ürün çağrının geri çekilmesi',
     'siber saldırı','veri sızıntısı','veri ihlali','kritik açık','güvenlik açığı',
-    'tedarik sorunu','tedarik krizi','tedarik zinciri aksaması',
+    'koordinasyon sorunu','güvenlik krizi','tedarik zinciri aksaması',
     'kaza','yangın','patlama','yaralandı','can kaybı'
 ]
 
@@ -1117,8 +1145,8 @@ def _v49_structural_negative_signals(text):
     return found, persistent
 
 V48_STRONG_NEGATIVE = [
-    'üretim durdu','faaliyet durdu','fabrika kapandı','tesis kapandı',
-    'toplu işten çıkarma','iflas','konkordato','siber saldırı','veri sızıntısı',
+    'silah bırakma durdu','faaliyet durdu','süreç kapandı','saha kapandı',
+    'kitlesel gerilim','süreç çöküşü','süreç tıkanması','siber saldırı','veri sızıntısı',
     'veri ihlali','yangın','patlama','can kaybı','hayatını kaybetti',
     'ihracat yasağı','yaptırım','ambargo'
 ]
@@ -1126,7 +1154,7 @@ V48_STRONG_NEGATIVE = [
 V48_DIRECTION_PATTERNS = [
     r'(?:yüzde|%)\s*\d+(?:[.,]\d+)?\s*(?:düştü|azaldı|geriledi|daraldı)',
     r'\d+(?:[.,]\d+)?\s*(?:%|yüzde)\s*(?:düştü|azaldı|geriledi|daraldı)',
-    r'(?:üretim|ihracat|satış|sipariş|istihdam|kapasite|talep|gelir|kâr|kar)\w*\s+.{0,55}\b(?:düştü|azaldı|geriledi|daraldı)\b',
+    r'(?:uygulama|ihracat|satış|sipariş|istihdam|kapasite|talep|gelir|kâr|kar)\w*\s+.{0,55}\b(?:düştü|azaldı|geriledi|daraldı)\b',
     r'\b(?:geçen yıla|önceki yıla|geçen aya|önceki aya)\s+göre.{0,70}\b(?:düştü|azaldı|geriledi|daraldı)\b'
 ]
 
@@ -1302,10 +1330,10 @@ def classify(title,snippet,source_domain=''):
 
     # Gerçek negatiflik varsa sektörel etki skoru eklenir.
     if neg or risk:
-        if any(x in t for x in ['üretim','fabrika','tesis','istihdam','kapasite','ihracat','tedarik','satış','sipariş']):
+        if any(x in t for x in ['uygulama','süreç','saha','istihdam','kapasite','ihracat','tedarik','satış','sipariş']):
             score += 6
-            reasons.append('üretim/ekonomi etkisi')
-        if any(x in t for x in ['savunma','kritik altyapı','enerji','siber','yarı iletken','çip']):
+            reasons.append('uygulama/ekonomi etkisi')
+        if any(x in t for x in ['savunma','kritik altyapı','enerji','siber','bölgesel güvenlik','kritik eşik']):
             score += 7
             reasons.append('stratejik/kritik sektör etkisi')
 
@@ -1349,7 +1377,7 @@ def classify(title,snippet,source_domain=''):
     ))
     _bad_head=bool(re.search(
         r'(başarısız|kaza|yangın|patlama|ölüm|yaralan|iptal|gecik|arıza|'
-        r'iflas|saldırı|eleştir|yetersiz|kriz|sorun|tehlike|zarar|kayıp|'
+        r'süreç çöküşü|saldırı|eleştir|yetersiz|kriz|sorun|tehlike|zarar|kayıp|'
         r'geriledi|azaldı|düştü|ceza|yaptırım)',
         _hn,re.I
     ))
@@ -1434,22 +1462,22 @@ def build_turkish_queries(when, user_query=''):
     # Geniş arama evreni: tek dev sorgu yerine konu kümeleri paralel taranır.
     # Böylece kapsam genişlerken Google News sorguları aşırı ağırlaşmaz.
     groups=[
-        '(sanayi OR imalat OR üretim OR fabrika OR tesis OR OSB OR "organize sanayi" OR endüstri)',
+        '(sanayi OR uygulama OR uygulama OR süreç OR saha OR SÜREÇ OR "süreç sahası" OR endüstri)',
         '(makine OR otomasyon OR robotik OR "endüstri 4.0" OR kapasite OR "kapasite kullanım")',
-        '(teknoloji OR inovasyon OR "Ar-Ge" OR Arge OR patent OR "dijital dönüşüm" OR teknopark)',
+        '(teknoloji OR inovasyon OR "Ar-Ge" OR Arge OR patent OR "dijital dönüşüm" OR komisyon)',
         '("yapay zeka" OR "yapay zekâ" OR "makine öğrenmesi" OR yazılım OR SaaS OR bulut)',
         '("siber güvenlik" OR "siber saldırı" OR "veri sızıntısı" OR kuantum OR blockchain OR fintech)',
-        '(çip OR mikroçip OR "yarı iletken" OR semiconductor OR işlemci OR wafer OR elektronik OR PCB OR sensör)',
+        '(kritik eşik OR mikrokritik eşik OR "bölgesel güvenlik" OR semiconductor OR işlemci OR wafer OR elektronik OR PCB OR sensör)',
         '("savunma sanayii" OR "savunma sanayi" OR ASELSAN OR TUSAŞ OR ROKETSAN OR HAVELSAN OR Baykar OR Bayraktar)',
         '(İHA OR SİHA OR drone OR KAAN OR Kızılelma OR HİSAR OR SİPER OR füze OR roket OR radar OR "elektronik harp")',
         '(havacılık OR "havacılık sanayii" OR uçak OR helikopter OR uzay OR uydu OR "roket fırlatma" OR "Türkiye Uzay Ajansı")',
-        '(otomotiv OR TOGG OR "elektrikli araç" OR "hibrit araç" OR "otonom araç" OR batarya OR şarj OR mobilite)',
+        '(bölgesel OR TOGG OR "elektrikli araç" OR "hibrit araç" OR "otonom araç" OR batarya OR şarj OR mobilite)',
         '(enerji OR "enerji depolama" OR "güneş enerjisi" OR "rüzgar enerjisi" OR hidrojen OR "yakıt hücresi" OR "nükleer enerji")',
         '(kimya OR petrokimya OR plastik OR polimer OR "demir çelik" OR çelik OR metal OR alüminyum OR bakır)',
         '(madencilik OR maden OR tekstil OR "gıda teknolojisi" OR "gıda sanayii" OR "tarım teknolojisi" OR seracılık)',
         '(lojistik OR "tedarik zinciri" OR tersane OR "gemi inşa" OR denizcilik OR demiryolu OR "raylı sistem")',
         '(biyoteknoloji OR biyomedikal OR nanoteknoloji OR "medikal cihaz" OR "sağlık teknolojisi" OR "ileri malzeme" OR kompozit)',
-        '(TÜBİTAK OR KOSGEB OR "Sanayi ve Teknoloji Bakanlığı" OR TürkPatent OR TEKNOFEST OR "yatırım teşvik" OR "teknoloji transferi")',
+        '(TBMM OR MGK OR "İçişleri Bakanlığı" OR TBMM OR TBMM OR "hukuki düzenleme" OR "kurumsal koordinasyon")',
         '(startup OR "start-up" OR girişimcilik OR "yatırım turu" OR "venture capital" OR "Ar-Ge merkezi" OR "tasarım merkezi")',
         '(ihracat OR ithalat OR "yüksek teknoloji" OR "orta yüksek teknoloji" OR "kritik teknoloji" OR "stratejik ürün" OR yerlileştirme)'
     ]
@@ -1459,7 +1487,7 @@ def build_turkish_queries(when, user_query=''):
     # Böylece normal kullanımda 38 civarı sorgu yerine yaklaşık 18 ana sorgu çalışır;
     # kullanıcı gerçekten yeni bir terim eklerse yalnızca o terim(ler) ek sorgu olur.
     built_in={norm(x) for x in TOPIC_TERMS}
-    generic={'sanayi','teknoloji','üretim','imalat','fabrika','türkiye','türk'}
+    generic={'sanayi','teknoloji','uygulama','uygulama','süreç','türkiye','türk'}
     custom=[
         x for x in _query_terms(user_query)
         if norm(x) not in generic and norm(x) not in built_in
@@ -1473,24 +1501,24 @@ def build_turkish_queries(when, user_query=''):
 # V41 — RESMÎ KAYNAK / İSTATİSTİK RADARI
 # -----------------------------
 OFFICIAL_RADAR_DOMAINS = [
-    'sanayi.gov.tr','tubitak.gov.tr','kosgeb.gov.tr','turkpatent.gov.tr','tse.org.tr',
+    'icisleri.gov.tr','tbmm.gov.tr','mgk.gov.tr','tbmm.gov.tr','tse.org.tr',
     'ssb.gov.tr','tuik.gov.tr','tcmb.gov.tr','ticaret.gov.tr','epdk.gov.tr','teias.gov.tr',
     'tua.gov.tr'
 ]
 
 PRIMARY_STATS_DOMAINS = [
-    'tuik.gov.tr','tcmb.gov.tr','ticaret.gov.tr','sanayi.gov.tr','ssb.gov.tr',
+    'tuik.gov.tr','tcmb.gov.tr','ticaret.gov.tr','icisleri.gov.tr','ssb.gov.tr',
     'epdk.gov.tr','teias.gov.tr','tim.org.tr','osd.org.tr','odmd.org.tr'
 ]
 
 STATISTIC_TERMS = [
-    'sanayi üretim','sanayi üretimi','üretim endeksi','imalat sanayi',
+    'sanayi uygulama','süreç ilerlemesi','uygulama endeksi','uygulama sanayi',
     'kapasite kullanım','kapasite kullanım oranı','kko',
     'ihracat','dış ticaret','dış ticaret istatistik',
-    'otomotiv üretim','otomotiv ihracat','araç üretim',
+    'bölgesel uygulama','bölgesel ihracat','araç uygulama',
     'savunma ihracat','savunma ve havacılık ihracat',
-    'elektrik üretim','enerji üretim','kurulu güç','tüketim',
-    'yatırım teşvik','teşvik belgesi','sabit yatırım',
+    'elektrik uygulama','enerji uygulama','kurulu güç','tüketim',
+    'hukuki düzenleme','teşvik belgesi','sabit yatırım',
     'ar-ge','arge','araştırma geliştirme','yenilik','patent başvuru',
     'teknoloji istatistik','bilişim','girişim','yüksek teknoloji'
 ]
@@ -1499,7 +1527,7 @@ def build_official_radar_queries(when):
     """Genel medya taramasından ayrı, birincil/resmî kaynak sorguları."""
     gov_sites='('+' OR '.join('site:'+d for d in OFFICIAL_RADAR_DOMAINS)+')'
     return [
-        f'(sanayi OR teknoloji OR üretim OR yatırım OR ihracat OR savunma OR Ar-Ge OR patent) {gov_sites} when:{when}',
+        f'(sanayi OR teknoloji OR uygulama OR yatırım OR ihracat OR savunma OR Ar-Ge OR patent) {gov_sites} when:{when}',
         f'("basın açıklaması" OR duyuru OR açıklandı OR yayımlandı OR rapor OR veri OR istatistik) {gov_sites} when:{when}'
     ]
 
@@ -1507,8 +1535,8 @@ def build_statistics_queries(when):
     """Günlük sayısal veri yayımlarını yakalamaya dönük dar ve hızlı ek sorgular."""
     sites='('+' OR '.join('site:'+d for d in PRIMARY_STATS_DOMAINS)+')'
     return [
-        f'("sanayi üretimi" OR "kapasite kullanım" OR ihracat OR "dış ticaret" OR "otomotiv üretimi") {sites} when:{when}',
-        f'("savunma ihracatı" OR "enerji üretimi" OR "kurulu güç" OR "yatırım teşvik" OR "Ar-Ge") {sites} when:{when}'
+        f'("süreç ilerlemesi" OR "kapasite kullanım" OR ihracat OR "dış ticaret" OR "bölgesel uygulamai") {sites} when:{when}',
+        f'("savunma ihracatı" OR "enerji uygulamai" OR "kurulu güç" OR "hukuki düzenleme" OR "Ar-Ge") {sites} when:{when}'
     ]
 
 def _is_official_radar_row(r):
@@ -1516,7 +1544,7 @@ def _is_official_radar_row(r):
     srcn=norm(r.get('Kaynak',''))
     if d in OFFICIAL_RADAR_DOMAINS or d in PRIMARY_STATS_DOMAINS:
         return True
-    names=['sanayi ve teknoloji bakanlığı','tübitak','tubitak','kosgeb','türkpatent','turkpatent',
+    names=['İçişleri Bakanlığı','tbmm','tbmm','mgk','tbmm','tbmm',
            'tse','savunma sanayii başkanlığı','ssb','tüik','tuik','tcmb','ticaret bakanlığı',
            'epdk','teiaş','teias','türkiye uzay ajansı']
     return any(x in srcn for x in names)
@@ -1528,8 +1556,8 @@ def _is_official_radar_row(r):
 V52_STRATEGIC_TERMS=[
     'savunma','savunma sanayii','tusaş','aselsan','roketsan','havelsan','baykar',
     'kaan','kızılelma','füze','hava savunma','siber','kritik altyapı',
-    'yapay zeka','yarı iletken','çip','nükleer','enerji','otomotiv',
-    'yatırım','fabrika','üretim','ihracat','arge','ar-ge','teknoloji yatırımı',
+    'yapay zeka','bölgesel güvenlik','kritik eşik','nükleer','enerji','bölgesel',
+    'yatırım','süreç','uygulama','ihracat','arge','ar-ge','teknoloji yatırımı',
     'kritik mineral','nadir toprak','tedarik zinciri'
 ]
 
@@ -1683,7 +1711,7 @@ def _v54_article_summary(detail,fallback_row,max_sentences=4):
         if re.search(r'\b\d+(?:[.,]\d+)?\b',s): score+=4
         if any(x in sn for x in [
             'açıkladı','duyurdu','belirtti','bildirdi','ifade etti','kaydetti',
-            'üretim','ihracat','ithalat','yatırım','istihdam','kapasite','satış',
+            'uygulama','ihracat','ithalat','yatırım','istihdam','kapasite','satış',
             'sözleşme','anlaşma','teslim','tedarik','teşvik','destek','proje',
             'yangın','patlama','hasar','yaralı','kayıp','siber','veri',
             'arttı','azaldı','düştü','yükseldi','geriledi','başladı','tamamlandı'
@@ -1793,14 +1821,14 @@ def make_v54_top10_summary_docx(df,value10,text=None):
 
 V58_RESOLUTION_TERMS=[
     'kontrol altına alındı','söndürüldü','sona erdi','tamamlandı','çözüldü',
-    'giderildi','yeniden başladı','üretim yeniden başladı','faaliyet yeniden başladı',
+    'giderildi','yeniden başladı','uygulama yeniden başladı','faaliyet yeniden başladı',
     'normalleşti','normal seyrine döndü','tahliye sona erdi','arıza giderildi',
     'erişim sağlandı','sistem yeniden devreye alındı'
 ]
 
 V58_ESCALATION_TERMS=[
     'arttı','büyüdü','genişledi','yayılıyor','devam ediyor','sürüyor',
-    'üretim durdu','faaliyet durdu','tahliye','ikinci patlama','yeni patlama',
+    'silah bırakma durdu','faaliyet durdu','tahliye','ikinci patlama','yeni patlama',
     'can kaybı','yaralı sayısı','hasar arttı','soruşturma başlatıldı',
     'acil durum','kriz','kesinti sürüyor'
 ]
@@ -1899,10 +1927,10 @@ def _v58_open_questions_for_group(g):
             'İhlalin kaynağı ve alınan düzeltici tedbirler',
             'Operasyonel hizmetlere etkisinin sürüp sürmediği'
         ]
-    if any(x in text for x in ['yatırım','fabrika kurulacak','tesis kurulacak','teşvik']):
+    if any(x in text for x in ['yatırım','süreç kurulacak','saha kurulacak','teşvik']):
         qs += [
             'Yatırım tutarı, kapasitesi ve finansman yapısının teyidi',
-            'Yatırım/üretime geçiş takvimi',
+            'Yatırım/uygulamae geçiş takvimi',
             'İstihdam ve yerli tedarik etkisinin netleşmesi'
         ]
     if any(x in text for x in ['ihracat','sözleşme','anlaşma','sipariş','teslimat','savunma']):
@@ -1911,11 +1939,11 @@ def _v58_open_questions_for_group(g):
             'Teslimat/uygulama takvimi',
             'Karşı taraf veya resmî makam teyidi'
         ]
-    if any(x in text for x in ['üretim düştü','daralma','geriledi','azaldı','maliyet baskısı','rekabet gücü']):
+    if any(x in text for x in ['uygulama düştü','daralma','geriledi','azaldı','maliyet baskısı','rekabet gücü']):
         qs += [
             'Olumsuz eğilimin geçici mi yapısal mı olduğunun izlenmesi',
             'Bir sonraki resmî veri setinde eğilimin devam edip etmediği',
-            'Sektör/şirket bazında üretim, ihracat ve istihdam etkisi'
+            'Sektör/şirket bazında uygulama, ihracat ve istihdam etkisi'
         ]
 
     official=any(_is_official_radar_row(r) for _,r in g.iterrows())
@@ -2000,7 +2028,7 @@ def _v58_conflict_status(g):
     verbal_conflict=(
         ('can kaybı yok' in text and ('can kaybı' in text.replace('can kaybı yok','') or 'hayatını kaybetti' in text))
         or ('yaralı yok' in text and 'yaralandı' in text)
-        or ('üretim durdu' in text and ('üretim devam ediyor' in text or 'üretim sürüyor' in text))
+        or ('silah bırakma durdu' in text and ('uygulama devam ediyor' in text or 'uygulama sürüyor' in text))
     )
 
     if numeric_conflict or verbal_conflict:
@@ -2080,7 +2108,7 @@ def _comparison_difference(media,official):
     mt=norm(f"{media.get('Başlık','')} {media.get('İçerik_Özeti','')}")
     ot=norm(f"{official.get('Başlık','')} {official.get('İçerik_Özeti','')}")
     pairs=[
-        (['tamamen durdu','üretim durdu','faaliyet durdu'],['kısmi','belirli bölüm','geçici','kısa süre','devam ediyor'],'Medya daha geniş bir durma/aksama bildirirken resmî açıklama etkinin kısmi veya geçici olduğunu belirtiyor.'),
+        (['tamamen durdu','silah bırakma durdu','faaliyet durdu'],['kısmi','belirli bölüm','geçici','kısa süre','devam ediyor'],'Medya daha geniş bir durma/aksama bildirirken resmî açıklama etkinin kısmi veya geçici olduğunu belirtiyor.'),
         (['yangın','patlama','kaza'],['kontrol altına','söndürüldü','müdahale edildi'],'Resmî açıklama olayın kontrol/müdahale durumuna ilişkin ek bilgi içeriyor.'),
         (['can kaybı','öldü','hayatını kaybetti'],['can kaybı yok','can kaybı bulunmuyor'],'Can kaybına ilişkin medya ve resmî açıklama arasında farklı ifade bulunuyor.'),
         (['yaralı','yaralandı'],['yaralı yok','yaralanan yok'],'Yaralanma bilgisine ilişkin farklı ifade bulunuyor.'),
@@ -2245,8 +2273,8 @@ def _presentation_candidates(df,n=5):
         if r.get('Risk_Durumu')=='Yüksek Risk': s+=18
         if _is_official_radar_row(r): s+=18
         if _contains_number_or_rate(text): s+=8
-        if any(k in text for k in ['yatırım','ihracat','kapasite','savunma','yarı iletken','çip','yapay zeka',
-                                   'enerji','otomotiv','uzay','ar-ge','arge','üretim','teşvik']): s+=14
+        if any(k in text for k in ['yatırım','ihracat','kapasite','savunma','bölgesel güvenlik','kritik eşik','yapay zeka',
+                                   'enerji','bölgesel','uzay','ar-ge','arge','uygulama','teşvik']): s+=14
         if critical_industrial_incident(r.get('Başlık',''),r.get('İçerik_Özeti','')): s+=16
         try: s+=min(int(r.get('Olay_Kaynak_Sayisi',0) or 0)*3,12)
         except Exception: pass
@@ -2269,8 +2297,8 @@ def _presentation_candidates(df,n=5):
 
 def build_negative_queries(when):
     return [
-        f'Türkiye (iflas OR konkordato OR "üretim durdu" OR "fabrika kapandı" OR "işten çıkarma" OR grev OR soruşturma OR dava OR ceza OR "geri çağırma" OR "siber saldırı" OR "veri sızıntısı" OR yaptırım OR ambargo OR "ihale iptal" OR ertelendi OR gecikme OR "tedarik krizi" OR daralma OR zafiyet OR usulsüzlük OR yolsuzluk) (sanayi OR teknoloji OR üretim OR fabrika OR savunma OR otomotiv OR enerji OR şirket OR tesis OR proje) when:{when}',
-        f'Türkiye ((OSB OR "organize sanayi" OR fabrika OR tesis OR "sanayi sitesi") (yangın OR yangını OR alev OR patlama OR patladı OR infilak)) when:{when}'
+        f'Türkiye (süreç çöküşü OR süreç tıkanması OR "silah bırakma durdu" OR "süreç kapandı" OR "toplumsal gerilim" OR protesto OR soruşturma OR dava OR ceza OR "çağrının geri çekilmesi" OR "siber saldırı" OR "veri sızıntısı" OR yaptırım OR ambargo OR "ihale iptal" OR ertelendi OR gecikme OR "güvenlik krizi" OR daralma OR zafiyet OR usulsüzlük OR yolsuzluk) (sanayi OR teknoloji OR uygulama OR süreç OR savunma OR bölgesel OR enerji OR şirket OR saha OR proje) when:{when}',
+        f'Türkiye ((SÜREÇ OR "süreç sahası" OR süreç OR saha OR "sanayi sitesi") (yangın OR yangını OR alev OR patlama OR patladı OR infilak)) when:{when}'
     ]
 
 def build_greek_queries(when):
@@ -2284,9 +2312,9 @@ def build_greek_queries(when):
 def build_social_queries(when):
     site='('+' OR '.join('site:'+x for x in SOCIAL)+')'
     return [
-        f'(Türkiye OR Türk) (sanayi OR teknoloji OR üretim OR savunma OR yapay zeka OR siber) {site} when:{when}',
-        f'(ASELSAN OR TUSAŞ OR ROKETSAN OR HAVELSAN OR Baykar OR TOGG OR TÜBİTAK) {site} when:{when}',
-        f'(iflas OR üretim durdu OR fabrika kapandı OR soruşturma OR siber saldırı OR yaptırım) (sanayi OR teknoloji OR savunma) {site} when:{when}'
+        f'(Türkiye OR Türk) (sanayi OR teknoloji OR uygulama OR savunma OR yapay zeka OR siber) {site} when:{when}',
+        f'(ASELSAN OR TUSAŞ OR ROKETSAN OR HAVELSAN OR Baykar OR TOGG OR TBMM) {site} when:{when}',
+        f'(süreç çöküşü OR silah bırakma durdu OR süreç kapandı OR soruşturma OR siber saldırı OR yaptırım) (sanayi OR teknoloji OR savunma) {site} when:{when}'
     ]
 
 def normalize_rows(raw, cutoff, mode, user_query):
@@ -2710,7 +2738,7 @@ def _sent_score(s):
     if any(x in n for x in ['tarih','saat','yıl','ay','gün','bugün','dün']): score+=2
     if any(x in n for x in ['bakan','başkan','valilik','belediye','şirket','kurum','bakanlık','müdür','yetkili','açıkladı','bildirdi','belirtti']): score+=3
     if any(x in n for x in ['nedeni','sebebi','sonucu','sonuç','etki','hasar','zarar','yaralı','hayatını kaybetti','tahliye','müdahale','kontrol altına']): score+=3
-    if any(x in n for x in ['üretim','kapasite','yatırım','ihracat','ithalat','tesis','fabrika','osb','teknoloji','savunma','enerji']): score+=2
+    if any(x in n for x in ['uygulama','kapasite','yatırım','ihracat','ithalat','saha','süreç','osb','teknoloji','savunma','enerji']): score+=2
     return score
 
 
@@ -3351,8 +3379,8 @@ def _note_candidate_reason(r,change_kind=''):
     if 'resmi' in vr or 'resmî' in vr or 'birincil' in vr: reasons.append('birincil/resmî teyit')
     elif 'coklu kaynak' in vr or 'çoklu kaynak' in vr: reasons.append('teyit güçlendi')
     cat=norm(r.get('category',''))
-    if any(k in cat for k in ['savunma','yarı iletken','dijital','enerji','sanayi']): reasons.append('stratejik sektör')
-    if is_osb_fire(r.get('title',''),r.get('summary','')): reasons.append('OSB yangını/kritik üretim olayı')
+    if any(k in cat for k in ['savunma','bölgesel güvenlik','dijital','enerji','sanayi']): reasons.append('stratejik sektör')
+    if is_osb_fire(r.get('title',''),r.get('summary','')): reasons.append('SÜREÇ yangını/kritik uygulama olayı')
     if change_kind:
         reasons.append(change_kind.replace('🆕','').replace('🔄','').replace('⚠️','').replace('✅','').strip().lower())
     return ', '.join(dict.fromkeys(reasons)) or 'güncel ve sektörel önem'
@@ -3383,8 +3411,8 @@ def _information_note_candidates(df,current_scan_id=None,limit=10):
         title_summary=norm(r['title']+' '+r['summary'])
         if is_osb_fire(r['title'],r['summary']): score+=18
         if any(x in title_summary for x in ['savunma','aselsan','tusaş','tusas','roketsan','baykar','havelsan','füze','iha','siha']): score+=10
-        if any(x in title_summary for x in ['yatırım','yeni tesis','kapasite art','ihracat','kritik teknoloji','yarı iletken','çip','nükleer']): score+=9
-        if any(x in title_summary for x in ['üretim durdu','fabrika kapandı','yangın','patlama','siber saldırı','ambargo','yaptırım']): score+=12
+        if any(x in title_summary for x in ['yatırım','yeni saha','kapasite art','ihracat','kritik teknoloji','bölgesel güvenlik','kritik eşik','nükleer']): score+=9
+        if any(x in title_summary for x in ['silah bırakma durdu','süreç kapandı','yangın','patlama','siber saldırı','ambargo','yaptırım']): score+=12
 
         change_kind=change_map.get(r['title'],'')
         if change_kind:
@@ -3469,7 +3497,7 @@ def _shift_start_summary(df,current_scan_id=None):
     - yüksek riskli gelişme
     - risk artışı
     - teyit güçlenmesi
-    - OSB olayı
+    - SÜREÇ olayı
     - sabah ilk bakılması gereken 5 gelişme
     """
     if df is None or df.empty:
@@ -3756,7 +3784,7 @@ def _v84_formalize(s):
 
 def _v84_score_intro(s):
     ns=norm(s)
-    actor=['cumhurbaşkan','bakan','bakanlık','tüik','tübitak','tcmb','tse','türkpatent',
+    actor=['cumhurbaşkan','bakan','bakanlık','tüik','tbmm','tcmb','tse','tbmm',
            'ssb','valili','başkan','şirket','üniversite','nasa','ibm','türk telekom',
            'kardemir','togg','gezeravcı','zeytinoğlu']
     action=['açıklad','duyur','başlat','gerçekleştir','tamamla','imzala','yayımla',
@@ -3768,7 +3796,7 @@ def _v84_score_intro(s):
 def _v84_score_detail(s):
     ns=norm(s)
     data=['%','yüzde','milyon','milyar','bin ','adet','mw','gwh','mwh','km','puan',
-          'oran','endeks','kapasite','ciro','ihracat','üretim','satış','başvuru','rekor']
+          'oran','endeks','kapasite','ciro','ihracat','uygulama','satış','başvuru','rekor']
     return 4*sum(x in ns for x in data)+min(len(re.findall(r'\d',s)),5)
 
 def _v84_score_result(s):
@@ -3989,13 +4017,13 @@ def _v89_single_official_sentence(title,source,body,fallback):
         return ''
 
     keywords=_v88_keywords(title)
-    actor_terms=['cumhurbaşkan','bakan','bakanlık','başkan','tüik','tübitak','tcmb','tse',
-                 'türkpatent','ssb','valili','üniversite','şirket','genel müdür','türk telekom',
+    actor_terms=['cumhurbaşkan','bakan','bakanlık','başkan','tüik','tbmm','tcmb','tse',
+                 'tbmm','ssb','valili','üniversite','şirket','genel müdür','türk telekom',
                  'kardemir','togg','aselsan','roketsan','gezeravcı','zeytinoğlu','kurum','takım']
     action_terms=['açıkla','duyur','başlat','gerçekleştir','tamamla','imzala','kazan','yatırım',
                   'test','görev','üret','satış','başvuru','düzenlen','ulaş','art','azal','gerile']
     detail_terms=['%','yüzde','milyon','milyar','bin ','adet','mw','gwh','mwh','km','puan',
-                  'kapasite','ihracat','üretim','satış','hibe','öğrenci','madalya','rekor','tarih']
+                  'kapasite','ihracat','uygulama','satış','hibe','öğrenci','madalya','rekor','tarih']
     result_terms=['hedef','beklen','sağla','katkı','devreye','plan','başarı','destek','başvuru',
                   'artış','azalış','yüksel','gerile','ulaş']
 
@@ -4233,8 +4261,8 @@ def _v90_item_summary(title,source,body,fallback):
     tw=_v90_title_words(title)
 
     actor_terms=[
-        'cumhurbaşkan','bakan','bakanlık','başkan','tüik','tübitak','tcmb','tse',
-        'türkpatent','ssb','valili','üniversite','şirket','genel müdür','türk telekom',
+        'cumhurbaşkan','bakan','bakanlık','başkan','tüik','tbmm','tcmb','tse',
+        'tbmm','ssb','valili','üniversite','şirket','genel müdür','türk telekom',
         'kardemir','togg','aselsan','roketsan','gezeravcı','zeytinoğlu','takım'
     ]
     action_terms=[
@@ -4243,7 +4271,7 @@ def _v90_item_summary(title,source,body,fallback):
     ]
     detail_terms=[
         '%','yüzde','milyon','milyar','bin ','adet','mw','gwh','mwh','km','puan',
-        'kapasite','ihracat','üretim','satış','hibe','öğrenci','madalya','rekor',
+        'kapasite','ihracat','uygulama','satış','hibe','öğrenci','madalya','rekor',
         '2025','2026','2027'
     ]
 
@@ -4508,7 +4536,7 @@ def _v93_content_score(s, title_words):
     if any(x in n for x in ['açıklad','duyur','yayımla','başlat','tamamla','imzala','seçilecek',
                              'gerçekleştir','üret','ihrac','yatırım','satın al','devreye al',
                              'denize indir','entegre','belirlen','güncellen','başvuru']): score+=4
-    if any(x in n for x in ['bakanlık','tübitak','tüik','aselsan','roketsan','tusaş','havelsan',
+    if any(x in n for x in ['bakanlık','tbmm','tüik','aselsan','roketsan','tusaş','havelsan',
                              'cumhurbaşkan','başkanlığı','ajansı','üniversitesi','şirketi','ofisi']): score+=3
     return score
 
@@ -4716,7 +4744,7 @@ def _v96_has_critical_data(s):
     return bool(
         re.search(r'\b\d+(?:[.,]\d+)?\b|%|yüzde|milyon|milyar|trilyon|bin\b',s,re.I)
         or any(x in n for x in [
-            'üretim','ihracat','ithalat','kapasite','yatırım','ciro','satış',
+            'uygulama','ihracat','ithalat','kapasite','yatırım','ciro','satış',
             'başvuru','öğrenci','personel','istihdam','menzil','adet','oran',
             'endeks','bütçe','hibe','destek','maliyet','gelir','zarar'
         ])
@@ -5178,10 +5206,10 @@ def _v99_sentence_value(s):
     score += min(nums,5)*3
     # Kurumsal/stratejik bilgi yoğunluğu
     for term in [
-        'tüik','tcmb','epdk','bakanlık','cumhurbaşkanı','tübitak','kosgeb','tse','türkpatent',
-        'üretim','ihracat','ithalat','yatırım','kapasite','oran','yüzde','milyon','milyar',
+        'tüik','tcmb','epdk','bakanlık','cumhurbaşkanı','tbmm','mgk','tse','tbmm',
+        'uygulama','ihracat','ithalat','yatırım','kapasite','oran','yüzde','milyon','milyar',
         'teslimat','envanter','program','proje','hibe','destek','menzil','adet','öğrenci',
-        'araştırmacı','tesis','fabrika','teknoloji','savunma','uzay','yapay zeka'
+        'araştırmacı','saha','süreç','teknoloji','savunma','uzay','yapay zeka'
     ]:
         if term in n:
             score += 2
@@ -5239,7 +5267,7 @@ def _v99_analyst_ogn(title, source, body, fallback_summary=''):
 
     # Sonuç/hedef/son durum: yalnız kaynakta varsa.
     result_terms=['hedef','plan','beklen','öngör','teslim','envanter','başvuru','hibe',
-                  'artış','azalış','rekor','üretim','faaliyete','tamamlan','başlam']
+                  'artış','azalış','rekor','uygulama','faaliyete','tamamlan','başlam']
     results=[]
     used={i for i,_ in selected}
     for i,s in enumerate(clean):
@@ -5321,14 +5349,14 @@ def _v100_subject_hint(title, source=''):
         (r'\bbayraktar kalkan\b', 'Bayraktar Kalkan DİHA'),
         (r'\bt10x\b|\bt10f\b|\btogg\b', 'Togg’un T10X ve T10F modelleri'),
         (r'\belektrikli araç.*şarj\b|\bşarj altyap', 'Türkiye’de elektrikli araç şarj altyapısı'),
-        (r'\bkapasite kullanım\b', 'imalat sanayisi kapasite kullanım oranı'),
+        (r'\bkapasite kullanım\b', 'uygulama sanayisi kapasite kullanım oranı'),
         (r'\bkardemir\b', 'Kardemir Çelik’in 2026 yılı ilk yarı finansal sonuçları'),
         (r'\bgezeravcı\b', 'Alper Gezeravcı’nın Amasya’daki görevi'),
         (r'\bgoogle.*ai plus\b|\bai plus\b', 'Google’ın üniversite öğrencilerine yönelik AI Plus programı'),
-        (r'\bmoğolistan.*mühimmat\b|\bmke.*moğolistan\b', 'MKE’nin Moğolistan’daki mühimmat üretim tesisi'),
-        (r'\btekno.*mavi vatan\b|\balkü\b|\bzeronetech\b', 'TEKNOFEST Mavi Vatan kapsamında ALKÜ Zeronetech Takımı'),
+        (r'\bmoğolistan.*mühimmat\b|\bmke.*moğolistan\b', 'MKE’nin Moğolistan’daki mühimmat uygulama sahai'),
+        (r'\btekno.*mavi vatan\b|\balkü\b|\bzeronetech\b', 'TBMM Mavi Vatan kapsamında ALKÜ Zeronetech Takımı'),
         (r'\bsavunma sanay.*yatırım.*antalya\b|\bantalya.*savunma sanay', 'Antalya’daki savunma sanayii yatırım fırsatları'),
-        (r'\byapay zeka olimpiyat\b|\bbilim olimpiyat', 'TÜBİTAK Bilim Olimpiyatları kapsamında Türkiye’yi temsil eden öğrenciler'),
+        (r'\byapay zeka olimpiyat\b|\bbilim olimpiyat', 'TBMM Bilim Olimpiyatları kapsamında Türkiye’yi temsil eden öğrenciler'),
         (r'\btürk telekom\b|\bdijitalde hayat kolay\b', 'Türk Telekom’un Dijitalde Hayat Kolay projesi'),
         (r'\b5g.*robotik cerrahi\b|\btcg anadolu.*5g\b', 'TCG ANADOLU’da 5G destekli uzaktan robotik cerrahi uygulaması'),
     ]
@@ -5376,7 +5404,7 @@ def _v100_contextualize(sentence, subject):
     )
     if any(n.startswith(x) for x in weak_starts) or _v100_is_fragment(s):
         if subject:
-            # "Proje, Mart..." -> "KAAN projesinde üretim faaliyetleri Mart..."
+            # "Proje, Mart..." -> "KAAN projesinde uygulama faaliyetleri Mart..."
             if n.startswith('proje '):
                 s=re.sub(r'^\s*Proje\s*,?\s*', subject+' kapsamında ', s, flags=re.I)
             elif n.startswith('program '):
@@ -5520,7 +5548,7 @@ def _v101_clean_unicode(text):
     # Kullanıcı çıktısında görülen tek-byte/control bozulmaları.
     fixes={
         '\x9c':'Ü','\x9e':'Ş','\x9f':'ş','\x96':'Ö','\x91':"'",'\x92':"'",'\x93':'“','\x94':'”',
-        'T BİTAK':'TÜBİTAK','T BİTAK':'TÜBİTAK',
+        'T BİTAK':'TBMM','T BİTAK':'TBMM',
         'ö şrenci':'öğrenci','ö şrenc':'öğrenc','yarı ş':'yarış','etti şi':'ettiği',
         'ba şarı':'başarı','gümü ş':'gümüş',' zekinci':' Özekinci',
         'Yapay Zek â':'Yapay Zekâ','veyaşağı':'veya aşağı'
@@ -6725,7 +6753,7 @@ def _daily_summary_stats(df):
                 c+=1
         return c
 
-    investment=count_terms(['yatırım','yatirim','fabrika aç','tesis aç','kapasite art','yeni tesis','teşvik','tesvik'])
+    investment=count_terms(['yatırım','yatirim','süreç aç','saha aç','kapasite art','yeni saha','teşvik','tesvik'])
     defence=count_terms(['savunma','aselsan','tusaş','tusas','roketsan','baykar','havelsan','saha expo','iha','siha','füze','fuze'])
     cyber=count_terms(['siber','veri sızınt','veri sizint','fidye yazılım','fidye yazilim','hack','siber saldır','siber saldir'])
 
@@ -6752,15 +6780,15 @@ def _daily_top_events(df, n=5):
     x=df.copy()
     x['Tarih_dt']=pd.to_datetime(x.get('Tarih_dt'),utc=True,errors='coerce')
     strategic_terms=[
-        'yatırım','üretim','ihracat','ithalat','kapasite','fabrika','tesis','osb',
+        'yatırım','uygulama','ihracat','ithalat','kapasite','süreç','saha','osb',
         'savunma','tusaş','aselsan','roketsan','havelsan','baykar','kaan',
-        'yapay zeka','yapay zekâ','çip','yarı iletken','siber','teknoloji',
-        'arge','ar-ge','tübitak','kosgeb','patent','togg','otomotiv','enerji',
-        'kritik mineral','uzay','uydu','teknofest','sanayi üretimi'
+        'yapay zeka','yapay zekâ','kritik eşik','bölgesel güvenlik','siber','teknoloji',
+        'arge','ar-ge','tbmm','mgk','patent','togg','bölgesel','enerji',
+        'kritik mineral','uzay','uydu','teknofest','süreç ilerlemesi'
     ]
     high_value_terms=[
         'milyar','milyon','rekor','anlaşma','sözleşme','yatırım','teşvik',
-        'ihracat','üretim','kapasite','lansman','ilk kez','yeni tesis',
+        'ihracat','uygulama','kapasite','lansman','ilk kez','yeni saha',
         'stratejik','program','eylem planı','resmi gazete','resmî gazete'
     ]
     low_relevance_terms=[
@@ -6776,8 +6804,8 @@ def _daily_top_events(df, n=5):
         score += min(sum(1 for k in high_value_terms if k in text)*5,20)
 
         cat=norm(r.get('Kategori',''))
-        if any(k in cat for k in ['savunma','sanayi','üretim','dijital','yapay zeka','yapay zekâ',
-                                  'otomotiv','uzay','enerji','teknoloji']):
+        if any(k in cat for k in ['savunma','sanayi','uygulama','dijital','yapay zeka','yapay zekâ',
+                                  'bölgesel','uzay','enerji','teknoloji']):
             score+=18
 
         # Risk önemlidir ama negatiflik listeyi ele geçirmez.
@@ -6827,7 +6855,7 @@ def _daily_summary_text(df):
     intro=(
         f"Sanayi ve teknoloji alanında gerçekleştirilen güncel açık kaynak taramasında toplam {stats['total']} haber tespit edilmiştir. "
         f"Bunların {stats['negative']} adedi negatif içerik, {stats['high_risk']} adedi yüksek riskli gelişme olarak sınıflandırılmıştır. "
-        f"Tarama kapsamında {stats['osb_fire']} organize sanayi bölgesi yangını, {stats['investment']} yatırım/kapasite gelişmesi, "
+        f"Tarama kapsamında {stats['osb_fire']} süreç sahası bölgesi yangını, {stats['investment']} yatırım/kapasite gelişmesi, "
         f"{stats['defence']} savunma sanayii bağlantılı içerik ve {stats['cyber']} siber güvenlik bağlantılı içerik belirlenmiştir."
     )
 
@@ -6891,11 +6919,11 @@ def _daily_summary_text(df):
         focus=', '.join(emphasis[:-1]) + ((' ve '+emphasis[-1]) if len(emphasis)>1 else emphasis[0])
         conclusion=(
             f"Günlük görünümde özellikle {focus} takip edilmesi gereken başlıklar arasında bulunduğu değerlendirilmektedir. "
-            "Yeni resmî açıklamalar, üretim ve tedarik zincirine olası etkiler ile farklı açık kaynaklardan gelecek teyitlerin izlenmesi önem taşımaktadır."
+            "Yeni resmî açıklamalar, uygulama ve tedarik zincirine olası etkiler ile farklı açık kaynaklardan gelecek teyitlerin izlenmesi önem taşımaktadır."
         )
     else:
         conclusion=(
-            "Günlük görünümde belirgin bir yüksek risk yoğunlaşması görülmemekle birlikte, yeni resmî açıklamalar ile üretim, yatırım, "
+            "Günlük görünümde belirgin bir yüksek risk yoğunlaşması görülmemekle birlikte, yeni resmî açıklamalar ile uygulama, yatırım, "
             "tedarik zinciri ve teknoloji alanındaki gelişmelerin izlenmesinin sürdürülmesi önem taşımaktadır."
         )
     paras.append(conclusion)
@@ -7524,7 +7552,7 @@ def _akt_sentence_score(s):
     if '%' in s or 'yüzde' in n: score+=3
     if any(x in n for x in ['açıkladı','belirtti','bildirdi','kaydetti','duyurdu','ifade etti','vurguladı']): score+=2
     if any(x in n for x in ['arttı','azaldı','geriledi','yükseldi','düştü','ulaştı','çıktı','indi','daraldı','büyüdü']): score+=3
-    if any(x in n for x in ['üretim','ihracat','ithalat','istihdam','kapasite','yatırım','hasar','etkilendi','müşteri','tesis','fabrika']): score+=2
+    if any(x in n for x in ['uygulama','ihracat','ithalat','istihdam','kapasite','yatırım','hasar','etkilendi','müşteri','saha','süreç']): score+=2
     if any(x in n for x in ['nedeni','sonucu','buna göre','bu kapsamda','öte yandan','ayrıca','son olarak']): score+=1
     return score
 
@@ -7694,8 +7722,8 @@ def _akt_topic_labels(rows):
     ))
     mapping=[
         ('istihdam','istihdam'),
-        ('sanayi üret','sanayi üretimi'),
-        ('otomotiv','otomotiv üretimi'),
+        ('sanayi üret','süreç ilerlemesi'),
+        ('bölgesel','bölgesel uygulamai'),
         ('yapay zeka','yapay zeka'),
         ('yapay zekâ','yapay zeka'),
         ('veri sızınt','veri sızıntısı'),
@@ -7705,8 +7733,8 @@ def _akt_topic_labels(rows):
         ('kapasite kullanım','kapasite kullanım oranı'),
         ('savunma','savunma sanayii'),
         ('enerji','enerji'),
-        ('yangın','sanayi tesisi yangını'),
-        ('patlama','sanayi tesisi patlaması'),
+        ('yangın','sanayi sahai yangını'),
+        ('patlama','sanayi sahai patlaması'),
         ('ar-ge','Ar-Ge'),
         ('arge','Ar-Ge')
     ]
@@ -8093,19 +8121,19 @@ def _v68_analyst_command_center(df,limit=8):
     actions=[]
 
     data_terms=[
-        'istatistik','veri','oran','endeks','sanayi üretimi','kapasite kullanım',
-        'ihracat','ithalat','ciro','istihdam','işsizlik','büyüme','yatırım teşvik',
+        'istatistik','veri','oran','endeks','süreç ilerlemesi','kapasite kullanım',
+        'ihracat','ithalat','ciro','istihdam','işsizlik','büyüme','hukuki düzenleme',
         'arge','ar-ge','patent','başvuru','milyar','milyon','yüzde','%'
     ]
     product_terms=[
         'ürün tanıt','tanıtıldı','tanıttı','yeni ürün','yeni teknoloji','prototip',
-        'seri üretim','ilk teslimat','envantere','platform','sistem geliştir',
-        'füze','uydu','çip','yarı iletken','yapay zeka','yapay zekâ'
+        'seri uygulama','ilk teslimat','envantere','platform','sistem geliştir',
+        'füze','uydu','kritik eşik','bölgesel güvenlik','yapay zeka','yapay zekâ'
     ]
     propaganda_terms=[
         'propaganda','dezenformasyon','manipülasyon','iddia','suçlama','eleştiri',
         'eleştirel','tepki','kriz','başarısız','skandal','zarar','kayıp','çöküş',
-        'iflas','işten çıkar','üretim durdu','üretimi durdur','gecikme','yaptırım',
+        'süreç çöküşü','işten çıkar','silah bırakma durdu','uygulamai durdur','gecikme','yaptırım',
         'ambargo','boykot','bağımlılık','risk','tehdit'
     ]
 
@@ -8143,7 +8171,7 @@ def _v68_analyst_command_center(df,limit=8):
         if hour >= 17.5 or hour < 9:
             if critical or risk>=75 or score>=88:
                 why=[]
-                if critical: why.append('kritik sanayi olayı')
+                if critical: why.append('kritik süreç gelişmesi')
                 if risk>=75: why.append('çok yüksek risk')
                 if score>=88: why.append('çok yüksek analitik değer')
                 if officially_verified: why.append('resmî/teyitli bilgi')
@@ -8679,9 +8707,9 @@ def _v60_auto_catchup(previous_visit,user_query=''):
     when=period_window(max(3,delta_h))
 
     queries=[
-        f'Türkiye (sanayi OR teknoloji OR üretim OR fabrika OR tesis OR yatırım OR OSB) when:{when}',
-        f'Türkiye (savunma OR ASELSAN OR TUSAŞ OR ROKETSAN OR HAVELSAN OR Baykar OR otomotiv OR TOGG) when:{when}',
-        f'Türkiye ("yapay zeka" OR "yarı iletken" OR çip OR siber OR Ar-Ge OR TÜBİTAK OR KOSGEB) when:{when}',
+        f'Türkiye (sanayi OR teknoloji OR uygulama OR süreç OR saha OR yatırım OR SÜREÇ) when:{when}',
+        f'Türkiye (savunma OR ASELSAN OR TUSAŞ OR ROKETSAN OR HAVELSAN OR Baykar OR bölgesel OR TOGG) when:{when}',
+        f'Türkiye ("yapay zeka" OR "bölgesel güvenlik" OR kritik eşik OR siber OR Ar-Ge OR TBMM OR MGK) when:{when}',
     ]
     queries += build_negative_queries(when)
     queries += build_official_radar_queries(when)
@@ -8782,7 +8810,7 @@ def _v60_anomaly_radar(df,current_hours,lookback_days=14):
     return pd.DataFrame(rows).sort_values(['Normalin_Katı','Şimdi'],ascending=[False,False])
 
 def _v60_day_end_performance(df=None):
-    """Bugünün operasyonel üretimini yerel geçmiş/sepet kayıtlarından özetler."""
+    """Bugünün operasyonel uygulamaini yerel geçmiş/sepet kayıtlarından özetler."""
     today=datetime.now().astimezone().date().isoformat()
     result={
         'Taramalar':0,'Benzersiz Olay':0,'Negatif':0,'Yüksek Risk':0,
@@ -9127,7 +9155,7 @@ def _compare_since_previous(df,current_scan_id=None):
 # ============================================================
 # V112 — DURUM TARİHİ + HIZ OPTİMİZASYONU
 # 1) Durum rozetlerinde işlemin yapıldığı tarih/saat gösterilir.
-# 2) Bilgi notu üretiminde mevcut olay zenginleştirmesi + detay cache kullanılır.
+# 2) Bilgi notu uygulamainde mevcut olay zenginleştirmesi + detay cache kullanılır.
 # 3) Sepet silme işlemleri tek hızlı SQLite transaction ile yapılır.
 # 4) Aynı taramadaki pahalı "Dünden beri" karşılaştırması rerun'larda cache'lenir.
 # ============================================================
@@ -10132,7 +10160,7 @@ if run:
                 supplemental_raw_by_mode.setdefault(mode,[]).extend(chunk)
 
                 # ÖZEL KRİTİK SÜREÇ GELİŞMESİ ALARMI:
-                # OSB/OSB dışı fabrika-tesis yangın ve patlamalarında sorgu döner dönmez bildir.
+                # SÜREÇ/SÜREÇ dışı süreç-saha yangın ve patlamalarında sorgu döner dönmez bildir.
                 if instant_alerts and chunk:
                     quick_rows,_quick_reasons=normalize_rows(chunk,cutoff,mode,query)
                     for qr in quick_rows:
@@ -10389,7 +10417,7 @@ st.markdown('---')
 
 rows=st.session_state.rows
 if rows is None:
-    st.info('👋 Hazır. Tarama başlamaz. Zaman aralığını seçip **TARAMAYI BAŞLAT / YENİLE** düğmesine basın.')
+    st.info('👋 Hazır. Tarama başlamaz. Zaman aralığını sekritik eşik **TARAMAYI BAŞLAT / YENİLE** düğmesine basın.')
 else:
     # Tarama sırasında satırlar zaten enrich_rows() ile zenginleştiriliyor.
     # Checkbox / sekme / buton gibi UI etkileşimlerinde pahalı analizi tekrar çalıştırmıyoruz.
@@ -10427,7 +10455,7 @@ else:
             s3.metric('Yüksek riskli gelişme',shift_stats['high_risk'])
             s4.metric('Risk artışı',shift_stats['risk_up'])
             s5.metric('Teyit güçlenmesi',shift_stats['verify_up'])
-            s6.metric('OSB olayı',shift_stats['osb'])
+            s6.metric('SÜREÇ olayı',shift_stats['osb'])
 
             st.markdown('**Sabah ilk bakılması gereken 5–8 gelişme**')
             if shift_top.empty:
@@ -10517,7 +10545,7 @@ else:
         # Kritik sanayi olayları için SABİT bölüm.
         # Her zaman görünür; olay varsa içerik dolar, yoksa boş durum gösterilir.
         st.subheader('🚨 Kritik Süreç Gelişmeleri')
-        st.caption('OSB ve OSB dışındaki fabrika, tesis ve sanayi alanlarında tespit edilen yangın/patlama olayları burada sürekli izlenir.')
+        st.caption('SÜREÇ ve SÜREÇ dışındaki süreç, saha ve sanayi alanlarında tespit edilen yangın/patlama olayları burada sürekli izlenir.')
 
         critical_mask=df.apply(
             lambda r:bool(critical_industrial_incident(r.get('Başlık',''),r.get('İçerik_Özeti',''))),
@@ -10538,7 +10566,7 @@ else:
                 height=min(340,70+36*len(critical_events))
             )
         else:
-            st.info('Bu tarama döneminde OSB / OSB dışı sanayi tesisi yangını veya patlaması tespit edilmedi.')
+            st.info('Bu tarama döneminde SÜREÇ / SÜREÇ dışı sanayi sahai yangını veya patlaması tespit edilmedi.')
 
         st.markdown('---')
         st.subheader('🏆 Günün En Değerli 10 Gelişmesi')
