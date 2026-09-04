@@ -12260,7 +12260,347 @@ def _v19_pool_load(mode,cutoff):
 # /V19 TARAMA
 # ============================================================
 
+# ============================================================
+# V20 — HIZ + KARARLI/DOYGUN SOSYAL MEDYA
+# ============================================================
+
+V20_ENGINE_WORKERS = 36
+V20_POOL_RETENTION_HOURS = 36
+V19_POOL_RETENTION_HOURS = V20_POOL_RETENTION_HOURS
+
+V20_SNAPSHOT_TTL_MIN = {
+    'foreign':12,
+    'social':15,
+    'thinktank':120,
+    'kurdish':60,
+    'movement':60,
+    'commentary':45
+}
+
+V20_SNAPSHOT_MIN_ROWS = {
+    'foreign':20,
+    'social':8,
+    'thinktank':8,
+    'kurdish':5,
+    'movement':8,
+    'commentary':8
+}
+
+def build_social_queries(when):
+    return [
+        '"Terörsüz Türkiye" (site:x.com OR site:twitter.com)',
+        '(PKK OR KCK OR Öcalan OR Ocalan) Türkiye (site:x.com OR site:twitter.com)',
+        '("Turkey PKK peace process" OR "PKK disarmament") (site:x.com OR site:twitter.com)',
+        '"Terörsüz Türkiye" site:instagram.com',
+        '(PKK OR KCK OR Öcalan OR Ocalan) Türkiye site:instagram.com',
+        '"Terörsüz Türkiye" site:facebook.com',
+        '(PKK OR KCK OR Öcalan OR Ocalan) Türkiye site:facebook.com',
+        '"Terörsüz Türkiye" site:tiktok.com',
+        '(PKK OR Öcalan OR Ocalan) Türkiye site:tiktok.com',
+        '"Terörsüz Türkiye" site:youtube.com',
+        '("Turkey PKK peace process" OR PKK OR Öcalan OR Ocalan) site:youtube.com',
+        '("Turkey PKK peace process" OR "PKK disarmament" OR Ocalan) site:reddit.com',
+        '("Terörsüz Türkiye" OR PKK OR Öcalan) site:reddit.com',
+        '("Terörsüz Türkiye" OR PKK OR KCK OR Öcalan OR Ocalan) (site:t.me OR site:telegram.me)',
+        '(PKK OR Öcalan OR Ocalan OR "Turkey peace process") (site:threads.net OR site:bsky.app)',
+        '("Terörsüz Türkiye" OR "Turkey PKK peace process" OR Ocalan) (site:linkedin.com OR site:mastodon.social OR site:mastodon.online OR site:vk.com)',
+        '"Terörsüz Türkiye" sosyal medya',
+        '("Turkey PKK peace process" OR "PKK disarmament") social media',
+        '(PKK OR KCK OR Öcalan OR Ocalan) Türkiye sosyal medya'
+    ]
+
+def _v20_social_core_query(query):
+    q=str(query or '')
+    q=re.sub(r'\bsite:[^\s)]+',' ',q,flags=re.I)
+    q=re.sub(r'\b(?:OR|AND)\b',' ',q,flags=re.I)
+    q=q.replace('(',' ').replace(')',' ')
+    q=re.sub(r'\s+',' ',q).strip()
+    return q[:420]
+
+def _v20_reddit_raw(query,hours):
+    q=_v20_social_core_query(query)
+    if not q:
+        return []
+    try:
+        h=int(hours)
+    except Exception:
+        h=168
+    period='day' if h<=24 else ('week' if h<=168 else 'month')
+    try:
+        rr=requests.get(
+            'https://www.reddit.com/search.json',
+            params={'q':q,'sort':'new','t':period,'limit':100,'raw_json':1},
+            headers={**HEADERS,'User-Agent':'TerorsuzTurkiyeOSINT/1.0'},
+            timeout=7
+        )
+        if rr.status_code>=400:
+            return []
+        data=rr.json()
+    except Exception:
+        return []
+
+    out=[]
+    for child in data.get('data',{}).get('children',[]) or []:
+        d=child.get('data',{}) or {}
+        title=str(d.get('title') or '').strip()
+        body=str(d.get('selftext') or '').strip()
+        permalink=str(d.get('permalink') or '')
+        url=('https://www.reddit.com'+permalink) if permalink.startswith('/') else str(d.get('url') or '')
+        if not title or not url:
+            continue
+        date=''
+        try:
+            date=datetime.fromtimestamp(float(d.get('created_utc')),tz=timezone.utc).isoformat()
+        except Exception:
+            pass
+        out.append({
+            'title':title,
+            'url':url,
+            'date':date,
+            'snippet':body[:1200],
+            'source':'reddit.com',
+            'source_url':'https://reddit.com'
+        })
+    return out
+
+def _v20_bluesky_raw(query,hours):
+    q=_v20_social_core_query(query)
+    if not q:
+        return []
+    try:
+        rr=requests.get(
+            'https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts',
+            params={'q':q,'limit':100,'sort':'latest'},
+            headers=HEADERS,
+            timeout=7
+        )
+        if rr.status_code>=400:
+            return []
+        data=rr.json()
+    except Exception:
+        return []
+
+    cutoff=datetime.now(timezone.utc)-timedelta(hours=int(hours or 168))
+    out=[]
+    for post in data.get('posts',[]) or []:
+        record=post.get('record',{}) or {}
+        text=str(record.get('text') or '').strip()
+        author=post.get('author',{}) or {}
+        handle=str(author.get('handle') or '').strip()
+        indexed=str(post.get('indexedAt') or record.get('createdAt') or '')
+        dt=_to_utc_datetime(indexed)
+        if dt and dt < cutoff:
+            continue
+        uri=str(post.get('uri') or '')
+        rkey=uri.rsplit('/',1)[-1] if '/' in uri else ''
+        url=f'https://bsky.app/profile/{handle}/post/{rkey}' if handle and rkey else 'https://bsky.app'
+        if not text:
+            continue
+        out.append({
+            'title':text[:180],
+            'url':url,
+            'date':indexed,
+            'snippet':text,
+            'source':'bsky.app',
+            'source_url':'https://bsky.app'
+        })
+    return out
+
+def _v20_engines_for(mode,site_q=False,query=''):
+    if mode!='social':
+        return _v19_engines_for(mode,site_q)
+
+    engines=['DDGS','Bing Web']
+    q=str(query or '').lower()
+    if 'reddit.com' in q or 'reddit' in q:
+        engines.append('Reddit Public')
+    if 'bsky.app' in q or 'bluesky' in q:
+        engines.append('Bluesky Public')
+    return list(dict.fromkeys(engines))
+
+def _v20_hot_minutes(mode):
+    return {
+        'foreign':30,
+        'social':30,
+        'thinktank':180,
+        'kurdish':90,
+        'movement':90,
+        'commentary':60,
+        'official':20,
+        'statistics':60,
+        'negative':20,
+        'turkish':15
+    }.get(mode,30)
+
+def _v20_engine_call(engine,query,mode,timespan,hours,cache_snapshot):
+    cache_key=_v11_cache_key(mode,engine,query,hours)
+    diag={
+        'Motor':engine,'Mod':mode,'Sorgu':1,'Başarılı':0,'Boş/Başarısız':0,
+        'Retry':0,'Cache Kullanıldı':0,'Sonuç':0
+    }
+
+    cached=cache_snapshot.get(cache_key)
+    if cached and cached.get('rows'):
+        try:
+            age=(time.time()-float(cached.get('ts',0)))/60.0
+        except Exception:
+            age=999
+        if age<=_v20_hot_minutes(mode):
+            rows=cached.get('rows') or []
+            diag['Başarılı']=1
+            diag['Cache Kullanıldı']=1
+            diag['Sonuç']=len(rows)
+            return {'rows':rows,'diag':diag,'cache_update':None}
+
+    site_q=_v9_is_site_query(query)
+
+    def invoke():
+        if engine=='Reddit Public':
+            return _v20_reddit_raw(query,hours)
+        if engine=='Bluesky Public':
+            return _v20_bluesky_raw(query,hours)
+        if engine=='Bing Web':
+            return _v19_bing_web_rss(query)
+        if engine=='Google News US':
+            return rss_google_locale(query,'en-US','US','US:en')
+        if engine=='Google News GB':
+            return rss_google_locale(query,'en-GB','GB','GB:en')
+        if engine=='Google News DE':
+            return rss_google_locale(query,'de','DE','DE:de')
+        if engine=='Google News FR':
+            return rss_google_locale(query,'fr','FR','FR:fr')
+        if engine=='Google News AR':
+            return rss_google_locale(query,'ar','SA','SA:ar')
+        if engine=='Google News TR':
+            return rss(query)
+        if engine=='Bing News US':
+            return _v8_bing_news_rss(query,'en-US')
+        if engine=='Bing News GB':
+            return _v8_bing_news_rss(query,'en-GB')
+        if engine=='DDGS':
+            mx=90 if mode=='social' else (35 if site_q else 60)
+            return _v9_ddgs_raw(query,mx,hours)
+        if engine=='GDELT':
+            return _v6_gdelt_raw(query,timespan)
+        return []
+
+    # V20: tek ağ denemesi. Uzun kuyruğu keser; cache/pool fallback korur.
+    try:
+        rows=invoke() or []
+    except Exception:
+        rows=[]
+
+    if rows:
+        diag['Başarılı']=1
+        diag['Sonuç']=len(rows)
+        return {
+            'rows':rows,
+            'diag':diag,
+            'cache_update':(cache_key,{'ts':time.time(),'rows':rows})
+        }
+
+    if cached and cached.get('rows'):
+        rows=cached.get('rows') or []
+        diag['Cache Kullanıldı']=1
+        diag['Sonuç']=len(rows)
+        return {'rows':rows,'diag':diag,'cache_update':None}
+
+    diag['Boş/Başarısız']=1
+    return {'rows':[],'diag':diag,'cache_update':None}
+
+def _v20_snapshot_init():
+    try:
+        with _history_connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS mode_snapshot_v20(
+                    mode TEXT NOT NULL,
+                    window_hours INTEGER NOT NULL,
+                    refreshed_at TEXT NOT NULL,
+                    row_count INTEGER NOT NULL,
+                    rows_json TEXT NOT NULL,
+                    PRIMARY KEY(mode,window_hours)
+                )
+            """)
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+def _v20_snapshot_save(mode,window_hours,rows):
+    min_rows=V20_SNAPSHOT_MIN_ROWS.get(mode,999999)
+    if len(rows or [])<min_rows or not _v20_snapshot_init():
+        return
+    payload=[]
+    for r in rows:
+        d={}
+        for k,v in dict(r).items():
+            try:
+                if pd.isna(v):
+                    d[k]=None
+                    continue
+            except Exception:
+                pass
+            if isinstance(v,(datetime,pd.Timestamp)):
+                try: d[k]=v.isoformat()
+                except Exception: d[k]=str(v)
+            else:
+                d[k]=v
+        payload.append(d)
+    try:
+        with _history_connect() as conn:
+            conn.execute("""
+                INSERT INTO mode_snapshot_v20(mode,window_hours,refreshed_at,row_count,rows_json)
+                VALUES(?,?,?,?,?)
+                ON CONFLICT(mode,window_hours) DO UPDATE SET
+                    refreshed_at=excluded.refreshed_at,
+                    row_count=excluded.row_count,
+                    rows_json=excluded.rows_json
+            """,(
+                mode,int(window_hours),datetime.now(timezone.utc).isoformat(),
+                len(payload),json.dumps(payload,ensure_ascii=False,default=str)
+            ))
+            conn.commit()
+    except Exception:
+        pass
+
+def _v20_snapshot_load(mode,window_hours):
+    ttl=V20_SNAPSHOT_TTL_MIN.get(mode)
+    min_rows=V20_SNAPSHOT_MIN_ROWS.get(mode,999999)
+    if not ttl or not _v20_snapshot_init():
+        return []
+    try:
+        with _history_connect() as conn:
+            rec=conn.execute(
+                "SELECT refreshed_at,row_count,rows_json FROM mode_snapshot_v20 WHERE mode=? AND window_hours=?",
+                (mode,int(window_hours))
+            ).fetchone()
+    except Exception:
+        return []
+    if not rec:
+        return []
+    refreshed,row_count,raw=rec
+    if int(row_count or 0)<min_rows:
+        return []
+    dt=_to_utc_datetime(refreshed)
+    if not dt or dt<datetime.now(timezone.utc)-timedelta(minutes=ttl):
+        return []
+    try:
+        rows=json.loads(raw)
+    except Exception:
+        return []
+    out=[]
+    for r in rows:
+        if r.get('Tarih_dt'):
+            r['Tarih_dt']=_to_utc_datetime(r.get('Tarih_dt')) or r.get('Tarih_dt')
+        out.append(r)
+    return out
+
+# ============================================================
+# /V20 TARAMA
+# ============================================================
+
 if run:
+    st.session_state.pop('_v20_frame_cmp_rows',None)
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
     when=period_window(hours)
     batches=[('🇹🇷 Türk medya / Terörsüz Türkiye',build_turkish_queries(when,query),'turkish')]
@@ -12321,9 +12661,9 @@ if run:
 
     # 1) Türk ana taraması önce: kullanıcı ilk sonuçları en kısa sürede görsün.
     primary_label,primary_queries,primary_mode=batches[0]
-    status_box.write(f'{primary_label} — {len(primary_queries)} sorgu / 14 eşzamanlı')
+    status_box.write(f'{primary_label} — {len(primary_queries)} sorgu / 16 eşzamanlı')
     primary_raw=[]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(14,len(primary_queries))) as ex:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(16,len(primary_queries))) as ex:
         futures=[ex.submit(rss,q) for q in primary_queries]
         for f in concurrent.futures.as_completed(futures):
             try:
@@ -12337,87 +12677,138 @@ if run:
     # V44: Hızlı İlk Bakış kaldırıldı.
     # Tarama sonuçları doğrudan aşağıdaki ana Görünüm ekranında (Kronolojik/Negatif/Yüksek Risk vb.) açılır.
 
-    # 2) Negatif + Yunan + sosyal + global sorgularını TEK HAVUZDA paralel çalıştır.
+    # 2) Tamamlayıcı kaynaklar — V20 hızlı/kararlı yürütme.
     supplemental=batches[1:]
     jobs=[]
+    snapshot_by_mode={}
+    ordered_modes=[]
+
     for label,queries,mode in supplemental:
+        if mode not in ordered_modes:
+            ordered_modes.append(mode)
+
+        mh=_v9_mode_hours(mode,hours,think_hours,movement_hours)
+        snap=_v20_snapshot_load(mode,mh)
+
+        if snap:
+            snapshot_by_mode[mode]=snap
+            continue
+
         for q in queries:
             jobs.append((label,q,mode))
 
     supplemental_raw_by_mode={}
+
+    if snapshot_by_mode:
+        status_box.write(
+            '⚡ Sağlıklı yakın dönem snapshot yeniden kullanıldı: '
+            + ', '.join(f'{m} ({len(v)})' for m,v in snapshot_by_mode.items())
+        )
+
     if jobs:
-        # V18: V11'in AYNI motor matrisi kullanılır; yalnız motor işleri tek havuzda paraleldir.
         engine_jobs=[]
+
         for label,q,mode in jobs:
             mh=_v9_mode_hours(mode,hours,think_hours,movement_hours)
             site_q=_v9_is_site_query(q)
-            for engine in _v11_engines_for(mode,site_q):
+
+            for engine in _v20_engines_for(mode,site_q,q):
                 engine_jobs.append((label,q,mode,engine,mh))
 
-        engine_jobs.sort(key=lambda z: (0 if z[2]=='social' else 1, z[2], z[3]))
-        workers=min(V19_ENGINE_WORKERS,max(1,len(engine_jobs)))
+        priority={'social':0,'foreign':1,'thinktank':2,'movement':3,'kurdish':4,'commentary':5}
+        engine_jobs.sort(key=lambda z:(priority.get(z[2],9),z[2],z[3]))
+
+        workers=min(V20_ENGINE_WORKERS,max(1,len(engine_jobs)))
+
         status_box.write(
             f'⚡ Tamamlayıcı kaynaklar — {len(jobs)} sorgu / {len(engine_jobs)} motor işi / '
-            f'{workers} eşzamanlı · V19 kararlı/doygun tarama'
+            f'{workers} eşzamanlı · V20 hızlı/kararlı tarama'
         )
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
             future_map={
                 ex.submit(
-                    _v19_engine_call,engine,q,mode,when,mh,v11_cache_snapshot
+                    _v20_engine_call,engine,q,mode,when,mh,v11_cache_snapshot
                 ):(label,q,mode,engine)
                 for label,q,mode,engine,mh in engine_jobs
             }
+
             for fut in concurrent.futures.as_completed(future_map):
                 label,q,mode,engine=future_map[fut]
+
                 try:
                     fetched=fut.result() or {}
                     chunk=fetched.get('rows') or []
                     diag=fetched.get('diag') or {}
+
                     if diag:
                         v11_engine_diag_records.append(diag)
+
                     if fetched.get('cache_update'):
                         v11_cache_updates.append(fetched['cache_update'])
+
                 except Exception:
                     chunk=[]
 
                 stat['Ham sonuç']+=len(chunk)
                 supplemental_raw_by_mode.setdefault(mode,[]).extend(chunk)
 
-    # Mode bazlı normalize + birleştirme.
-    for mode,raw in supplemental_raw_by_mode.items():
-        incoming=_merge_batch(raw,mode)
+    stat['Snapshot Modları']={m:len(v) for m,v in snapshot_by_mode.items()}
 
-        # V19: aynı dönem tekrar taramalarında arama motoru dalgalanmasını azalt.
-        _mh=_v9_mode_hours(mode,hours,think_hours,movement_hours)
-        _mode_cutoff=(datetime.now(timezone.utc)-timedelta(hours=_mh)).astimezone(timezone.utc)
-        pooled=_v19_pool_load(mode,_mode_cutoff)
-        current_incoming=list(incoming)
+    # Mode bazlı normalize + kararlı havuz + snapshot.
+    for mode in ordered_modes:
+        mh=_v9_mode_hours(mode,hours,think_hours,movement_hours)
+        used_snapshot=mode in snapshot_by_mode
+
+        if used_snapshot:
+            incoming=list(snapshot_by_mode.get(mode) or [])
+            current_incoming=[]
+        else:
+            raw=supplemental_raw_by_mode.get(mode,[])
+            incoming=_merge_batch(raw,mode) if raw else []
+            current_incoming=list(incoming)
+
+        mode_cutoff=(datetime.now(timezone.utc)-timedelta(hours=mh)).astimezone(timezone.utc)
+
+        # V19 kararlı kaynak havuzu korunur.
+        pooled=_v19_pool_load(mode,mode_cutoff)
+
         if pooled:
             incoming=dedupe(pooled+incoming)
-        _v19_pool_upsert(mode,current_incoming)
 
-        # Kritik eşik kontrolü normalize edilmiş mod sonucu üzerinde bir kez çalışır.
+        if current_incoming:
+            _v19_pool_upsert(mode,current_incoming)
+
+        # Yalnız sağlıklı/doygun sonuç snapshot olur.
+        if not used_snapshot and incoming:
+            _v20_snapshot_save(mode,mh,incoming)
+
+        # Kritik eşik kontrolü yalnız bir kez.
         if instant_alerts and incoming:
             for qr in incoming:
-                critical_label=critical_industrial_incident(qr.get('Başlık',''),qr.get('İçerik_Özeti',''))
+                critical_label=critical_industrial_incident(
+                    qr.get('Başlık',''),
+                    qr.get('İçerik_Özeti','')
+                )
+
                 if critical_label:
                     qkey=_alert_key(qr)
+
                     if qkey not in alerted_keys:
                         _register_alert(qr)
+
                         st.toast(
                             f'{critical_label}: {str(qr.get("Başlık",""))[:105]}',
                             icon='🚨'
                         )
+
                         live_alarm_box.error(
                             f'🚨 **KRİTİK SÜREÇ GELİŞMESİ ALARMI — {critical_label}** — '
                             f'{qr.get("Tarih","")} · {qr.get("Kaynak","Açık Kaynak")} · '
                             f'{str(qr.get("Başlık",""))[:140]}'
                         )
 
-        old_keys={_alert_key(x) for x in all_rows}
         all_rows=dedupe(all_rows+incoming)
-        # Genel negatif/yüksek risk alarmı bu aşamada verilmez.
         stat['Sonuç']=len(all_rows)
 
     _groups=[str(r.get('Kaynak_Grubu','')) for r in all_rows]
@@ -14039,6 +14430,66 @@ def _v19_cross_source_comparisons(df,limit=25):
 # ============================================================
 # /V19 ÇERÇEVE EŞLEŞTİRME
 # ============================================================
+
+# ============================================================
+# V20 — AYNI OLAY / FARKLI BAKIŞ: SADE VE SEÇİLEBİLİR
+# ============================================================
+
+def _v20_frame_specificity(row):
+    frames_a=[x.strip() for x in str(row.get('Çerçeve A','')).split('•') if x.strip()]
+    frames_b=[x.strip() for x in str(row.get('Çerçeve B','')).split('•') if x.strip()]
+    score=0
+    if frames_a and frames_a[0]!='Genel süreç':
+        score+=3
+    if frames_b and frames_b[0]!='Genel süreç':
+        score+=3
+    if str(row.get('Ton A',''))!=str(row.get('Ton B','')):
+        score+=2
+    score+=min(2,len(set(frames_a)^set(frames_b)))
+    return score
+
+def _v20_group_pair(row):
+    a=str(row.get('Grup A','') or '')
+    b=str(row.get('Grup B','') or '')
+    return ' ↔ '.join(sorted([a,b]))
+
+def _v20_cross_source_comparisons(df,limit=14):
+    base=_v19_cross_source_comparisons(df,90)
+
+    if base is None or base.empty:
+        return pd.DataFrame(columns=[
+            'Olay / Aktör','Kaynak A','Başlık A','Grup A','Çerçeve A','Ton A',
+            'Kaynak B','Başlık B','Grup B','Çerçeve B','Ton B',
+            'Çerçeve Farkı','Eşleşme','Güven','URL A','URL B'
+        ])
+
+    x=base.copy()
+    x['_özgüllük']=x.apply(_v20_frame_specificity,axis=1)
+    x['_grupçifti']=x.apply(_v20_group_pair,axis=1)
+    x['_rank']=pd.to_numeric(x['Eşleşme'],errors='coerce').fillna(0)+(x['_özgüllük']*8)
+
+    # Aynı olay + aynı iki kaynak ailesi için tek, en açıklayıcı haber çifti.
+    x=x.sort_values(['_rank','Eşleşme'],ascending=[False,False])
+    x=x.drop_duplicates(subset=['Olay / Aktör','_grupçifti'],keep='first')
+    x=x.drop_duplicates(subset=['Başlık A','Başlık B'],keep='first')
+
+    return x.head(limit).drop(
+        columns=['_özgüllük','_grupçifti','_rank'],
+        errors='ignore'
+    ).reset_index(drop=True)
+
+def _v20_pair_summary(row):
+    return str(row.get('Çerçeve Farkı','') or '').strip()
+
+def _v20_short_headline(source,title,maxlen=125):
+    text=re.sub(r'\s+',' ',str(title or '')).strip()
+    if len(text)>maxlen:
+        text=text[:maxlen-1].rstrip()+'…'
+    return f"{source} — {text}"
+
+# ============================================================
+# /V20 KARŞILAŞTIRMA
+# ============================================================
 # V3 — SADELEŞTİRİLMİŞ TERÖRSÜZ TÜRKİYE ANALİST ARAYÜZÜ
 # Amaç: Yerli basın + sosyal medya/açık sosyal + yabancı basın + think tank
 # Ayrı sekmeler; yalnız Detaylı Bilgi Notu ve Analiz Sepeti işlemleri.
@@ -14333,51 +14784,114 @@ else:
                  'İçerik Türü','Başlık','İçerik_Özeti','URL']
             )
 
-        # ---------------- AYNI OLAY / FARKLI ÇERÇEVE ----------------
+        # ---------------- AYNI OLAY / FARKLI BAKIŞ ----------------
         st.markdown('---')
-        st.subheader('🪞 Aynı Olay — Farklı Kaynak / Farklı Çerçeve')
+        st.subheader('🪞 Aynı Olay — Farklı Bakış')
         st.caption(
-            'Aynı gelişmenin yerli basın, yabancı basın, think tank, Kürt bölgesel medya veya '
-            'PKK/KCK çevresi açık kaynaklarda hangi farklı başlık ve vurgu tercihleriyle sunulduğunu karşılaştırır. '
-            'Ek web isteği yapmaz; mevcut tarama verisini kullanır.'
+            'Bu analiz sayfa yüklenirken otomatik çalışmaz. Böylece aşağıdaki bölümler gecikmeden açılır. '
+            'Butona bastığınızda aynı olayın farklı kaynaklardaki başlık, vurgu ve ton farkları eşleştirilir.'
         )
-        _frame_cmp=_v19_cross_source_comparisons(df,25)
-        if _frame_cmp.empty:
-            st.info('Bu taramada mevcut içerikler arasında güvenilir bir çapraz-kaynak eşleşmesi bulunamadı. V19 kişi + çapraz dil kavram + zaman yakınlığını birlikte kullanır.')
+
+        if st.button(
+            '🔎 Aynı olaydaki farklı bakışları bul',
+            key='v20_run_frame_compare',
+            use_container_width=True
+        ):
+            with st.spinner('Aynı olaylar eşleştiriliyor...'):
+                tmp=_v20_cross_source_comparisons(df,14)
+                st.session_state['_v20_frame_cmp_rows']=tmp.to_dict('records')
+
+        stored=st.session_state.get('_v20_frame_cmp_rows',None)
+
+        if stored is None:
+            st.info('Karşılaştırma isteğe bağlıdır; sayfanın geri kalanını yavaşlatmaz.')
+
         else:
-            f1,f2=st.columns(2)
-            f1.metric('Karşılaştırılabilir çift',len(_frame_cmp))
-            f2.metric('Yüksek/Orta güven',int(_frame_cmp['Güven'].isin(['Yüksek','Orta']).sum()))
+            frame_cmp=pd.DataFrame(stored)
 
-            st.dataframe(
-                _frame_cmp[
-                    ['Tarih','Olay / Aktör','Kaynak A','Çerçeve A','Ton A',
-                     'Kaynak B','Çerçeve B','Ton B','Çerçeve Farkı','Eşleşme','Güven']
-                ],
-                hide_index=True,use_container_width=True,height=min(620,120+46*len(_frame_cmp))
-            )
+            if frame_cmp.empty:
+                st.info(
+                    'Bu taramada farklı kaynak ailelerinde yeterince güçlü aynı-olay / farklı-bakış '
+                    'eşleşmesi bulunmadı.'
+                )
 
-            with st.expander('🔎 Başlıkları ve bağlantıları yan yana incele',False):
-                _opts={
-                    f"{r['Olay / Aktör']} — {r['Kaynak A']} ↔ {r['Kaynak B']}":i
-                    for i,r in _frame_cmp.iterrows()
-                }
-                _lbl=st.selectbox('Karşılaştırma',list(_opts.keys()),key='v18_frame_pair')
-                _r=_frame_cmp.loc[_opts[_lbl]]
-                ca,cb=st.columns(2)
-                with ca:
-                    st.markdown(f"**{_r['Kaynak A']}**")
-                    st.write(_r['Başlık A'])
-                    st.caption(f"{_r['Grup A']} · {_r['Çerçeve A']} · {_r['Ton A']}")
-                    if str(_r.get('URL A','')).startswith('http'):
-                        st.markdown(f"[Haberi aç]({_r['URL A']})")
-                with cb:
-                    st.markdown(f"**{_r['Kaynak B']}**")
-                    st.write(_r['Başlık B'])
-                    st.caption(f"{_r['Grup B']} · {_r['Çerçeve B']} · {_r['Ton B']}")
-                    if str(_r.get('URL B','')).startswith('http'):
-                        st.markdown(f"[Haberi aç]({_r['URL B']})")
-                st.info(_r['Çerçeve Farkı'])
+            else:
+                f1,f2=st.columns(2)
+                f1.metric('Net karşılaştırma',len(frame_cmp))
+                f2.metric(
+                    'Yüksek/Orta güven',
+                    int(frame_cmp['Güven'].isin(['Yüksek','Orta']).sum())
+                )
+
+                simple=pd.DataFrame({
+                    'Seç':[False]*len(frame_cmp),
+                    'Olay / Aktör':frame_cmp['Olay / Aktör'],
+                    'Haber 1':[
+                        _v20_short_headline(r.get('Kaynak A',''),r.get('Başlık A',''))
+                        for _,r in frame_cmp.iterrows()
+                    ],
+                    'Haber 2':[
+                        _v20_short_headline(r.get('Kaynak B',''),r.get('Başlık B',''))
+                        for _,r in frame_cmp.iterrows()
+                    ],
+                    'Farkın Özeti':[
+                        _v20_pair_summary(r)
+                        for _,r in frame_cmp.iterrows()
+                    ],
+                    'Güven':frame_cmp['Güven']
+                })
+
+                edited=st.data_editor(
+                    simple,
+                    hide_index=True,
+                    use_container_width=True,
+                    height=min(560,125+42*len(simple)),
+                    column_config={
+                        'Seç':st.column_config.CheckboxColumn('Seç',default=False),
+                        'Haber 1':st.column_config.TextColumn('Haber 1',width='large'),
+                        'Haber 2':st.column_config.TextColumn('Haber 2',width='large'),
+                        'Farkın Özeti':st.column_config.TextColumn('Farkın Özeti',width='large')
+                    },
+                    disabled=[c for c in simple.columns if c!='Seç'],
+                    key='v20_pair_editor'
+                )
+
+                selected=list(edited.index[edited['Seç']==True])
+
+                if selected:
+                    st.markdown('#### Seçtiğiniz haberlerin yan yana karşılaştırması')
+
+                    for idx in selected:
+                        r=frame_cmp.iloc[int(idx)]
+
+                        st.markdown(
+                            f"**{r['Olay / Aktör']} — {r['Kaynak A']} ↔ {r['Kaynak B']}**"
+                        )
+
+                        ca,cb=st.columns(2)
+
+                        with ca:
+                            st.markdown(f"**{r['Kaynak A']}**")
+                            st.write(r['Başlık A'])
+                            st.caption(
+                                f"{r['Grup A']} · {r['Çerçeve A']} · {r['Ton A']}"
+                            )
+
+                            if str(r.get('URL A','')).startswith('http'):
+                                st.markdown(f"[Haberi aç]({r['URL A']})")
+
+                        with cb:
+                            st.markdown(f"**{r['Kaynak B']}**")
+                            st.write(r['Başlık B'])
+                            st.caption(
+                                f"{r['Grup B']} · {r['Çerçeve B']} · {r['Ton B']}"
+                            )
+
+                            if str(r.get('URL B','')).startswith('http'):
+                                st.markdown(f"[Haberi aç]({r['URL B']})")
+
+                        st.info(r['Çerçeve Farkı'])
+                        st.markdown('---')
 
         st.markdown('---')
         st.subheader('📰 Kronoloji / Olay / Trend İzleme')
