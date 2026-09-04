@@ -11900,6 +11900,165 @@ def _v12_social_coverage(df):
 # /V12
 # ============================================================
 
+# ============================================================
+# V13 — AKILLI HIZLI TARAMA
+#
+# V12'de yüzlerce site×motor işi oluşabiliyordu. V13 aynı kaynak
+# kapsamını korumaya çalışırken site domainlerini gruplar, sorgu diline
+# göre yalnız gerekli haber motorunu seçer ve 12 dakikalık "hot cache"
+# ile art arda aynı taramaların yeniden ağa çıkmasını önler.
+# ============================================================
+
+V13_MAX_ENGINE_WORKERS = 28
+V13_HOT_CACHE_MINUTES = 12
+
+def _v13_group_sites(domains, size=4):
+    ds=[str(x).strip().lower() for x in domains if str(x).strip()]
+    out=[]
+    for i in range(0,len(ds),size):
+        g=ds[i:i+size]
+        if g:
+            out.append('('+' OR '.join('site:'+d for d in g)+')')
+    return out
+
+def build_international_queries(when):
+    q=[
+        '"Turkey PKK peace process"',
+        '"Türkiye PKK peace process"',
+        '"PKK disarmament" Turkey',
+        '"PKK dissolution" Turkey',
+        'Ocalan Turkey PKK peace process',
+        '"Kurdish peace process" Turkey',
+        'Turkey SDF YPG PKK Syria',
+        'Turkey PKK Iraq Kurdistan Qandil',
+        'Turkey PKK legal framework disarmament',
+        'Turkey Ocalan parliament Kurdish issue',
+        'Türkei PKK Friedensprozess Öcalan',
+        'Türkei PKK Entwaffnung Auflösung',
+        'Turquie PKK processus de paix Öcalan',
+        'désarmement PKK Turquie Öcalan',
+        'تركيا حزب العمال الكردستاني أوجلان عملية السلام',
+        'نزع سلاح حزب العمال الكردستاني تركيا'
+    ]
+    direct=[
+        'reuters.com','apnews.com','bbc.com','ft.com','theguardian.com','economist.com',
+        'bloomberg.com','politico.eu','euronews.com','dw.com','france24.com','rfi.fr',
+        'spiegel.de','faz.net','aljazeera.com','al-monitor.com','middleeasteye.net',
+        'newarab.com','arabweekly.com','thenationalnews.com','aawsat.com','arabnews.com',
+        'jpost.com','timesofisrael.com','haaretz.com','ekathimerini.com','tovima.com',
+        'rferl.org','balkaninsight.com','eurasianet.org','iranintl.com','asia.nikkei.com'
+    ]
+    for sites in _v13_group_sites(direct,4):
+        q.append(f'("Turkey PKK" OR "PKK disarmament" OR Ocalan OR "Kurdish peace") {sites}')
+    return q
+
+def build_analysis_queries(when):
+    q=[
+        '"Turkey PKK peace process" policy analysis',
+        '"PKK disarmament" Turkey analysis',
+        '"PKK dissolution" Turkey policy brief',
+        'Ocalan Turkey Kurdish issue analysis',
+        'Turkey SDF YPG PKK policy',
+        'Turkey Kurdish peace process think tank',
+        'Turkey PKK reintegration policy brief',
+        'Turkey Kurdish issue legal framework analysis'
+    ]
+    for sites in _v13_group_sites(TT_THINK_TANK_V9,4):
+        q.append(f'("Turkey PKK" OR Ocalan OR "Kurdish peace process" OR "PKK disarmament") {sites}')
+    return q
+
+def build_kurdish_media_queries(when):
+    q=[
+        'Turkey PKK Ocalan peace process Kurdish',
+        '"PKK disarmament" Kurdistan Turkey',
+        'Ocalan Turkey peace Kurdish media',
+        'SDF YPG Turkey Kurdish peace'
+    ]
+    for sites in _v13_group_sites(TT_KURDISH_REGIONAL_V9,3):
+        q.append(f'(PKK OR Ocalan OR Öcalan OR "peace process" OR SDF OR YPG) Turkey {sites}')
+    return q
+
+def build_movement_queries(when):
+    q=[
+        '"Peace and Democratic Society" Ocalan PKK',
+        '"Barış ve Demokratik Toplum" Öcalan',
+        'PKK KCK Ocalan peace democratic society',
+        'Cemil Bayik Murat Karayilan Ocalan peace process',
+        'Duran Kalkan KCK Turkey peace process',
+        'PKK disarmament movement statement'
+    ]
+    for sites in _v13_group_sites(TT_MOVEMENT_V9,4):
+        q.append(f'(PKK OR KCK OR Ocalan OR Öcalan OR "peace process" OR "Barış ve Demokratik Toplum") {sites}')
+    q += [
+        '"ANF News" Ocalan PKK peace',
+        '"Stêrk TV" Ocalan PKK',
+        '"Medya News" Ocalan PKK',
+        '"Yeni Özgür Politika" Öcalan süreç'
+    ]
+    return q
+
+def build_commentary_queries(when):
+    return [
+        '("Terörsüz Türkiye" OR PKK OR Öcalan) (yazar OR yorum OR görüş OR analiz OR "köşe yazısı")',
+        '("Terörsüz Türkiye" OR PKK OR Öcalan) (söyleşi OR röportaj OR değerlendirme)',
+        '("Turkey PKK peace process" OR "PKK disarmament") (opinion OR commentary OR editorial)',
+        '(Ocalan Turkey Kurdish issue) (analysis OR opinion OR interview OR perspective)',
+        '("Kurdish peace process" Turkey) (expert OR essay OR viewpoint OR analysis)',
+        'Turkey PKK Ocalan "policy brief"'
+    ]
+
+def _v13_engines_for(mode, site_q=False, query=''):
+    q=str(query or '')
+    if mode=='foreign':
+        if site_q:
+            return ['DDGS','Bing Web']
+        if re.search(r'[\u0600-\u06FF]',q):
+            return ['Google News AR','DDGS','GDELT']
+        if 'Türkei' in q or 'Entwaffnung' in q or 'Friedensprozess' in q:
+            return ['Google News DE','DDGS','GDELT']
+        if 'Turquie' in q or 'désarmement' in q or 'processus de paix' in q:
+            return ['Google News FR','DDGS','GDELT']
+        return ['Google News US','Google News GB','Bing News US','DDGS','GDELT']
+    if mode=='thinktank':
+        return ['DDGS','Bing Web']
+    if mode in {'kurdish','movement'}:
+        return ['DDGS','Bing Web'] if site_q else ['DDGS','Bing Web','Google News US']
+    if mode=='commentary':
+        return ['DDGS','Bing Web','Google News US']
+    if mode=='social':
+        return ['DDGS','Bing Web']
+    return ['Google News TR']
+
+def _v13_engine_call(engine,query,mode,timespan,hours,cache_snapshot,site_q=False):
+    """
+    V12 motor çağrısı + 12 dakikalık sıcak cache.
+    Çok kısa aralıkla aynı tarama yeniden çalıştırılırsa başarılı aynı sorgu
+    ağa tekrar çıkmadan kullanılır. 12 dakika sonrasında canlı çağrı yapılır.
+    """
+    cache_key=_v11_cache_key(mode,engine,query,hours)
+    cached=cache_snapshot.get(cache_key)
+    if cached and cached.get('rows'):
+        try:
+            age=(time.time()-float(cached.get('ts',0)))/60.0
+        except Exception:
+            age=999
+        if age<=V13_HOT_CACHE_MINUTES:
+            rows=cached.get('rows') or []
+            return {
+                'rows':rows,
+                'diag':{
+                    'Motor':engine,'Mod':mode,'Sorgu':1,'Başarılı':1,
+                    'Boş/Başarısız':0,'Retry':0,'Cache Kullanıldı':1,
+                    'Sonuç':len(rows)
+                },
+                'cache_update':None
+            }
+    return _v12_engine_call(engine,query,mode,timespan,hours,cache_snapshot,site_q)
+
+# ============================================================
+# /V13 HIZ
+# ============================================================
+
 if run:
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
     when=period_window(hours)
@@ -11961,9 +12120,9 @@ if run:
 
     # 1) Türk ana taraması önce: kullanıcı ilk sonuçları en kısa sürede görsün.
     primary_label,primary_queries,primary_mode=batches[0]
-    status_box.write(f'{primary_label} — {len(primary_queries)} sorgu / 10 eşzamanlı')
+    status_box.write(f'{primary_label} — {len(primary_queries)} sorgu / 14 eşzamanlı')
     primary_raw=[]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(10,len(primary_queries))) as ex:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(14,len(primary_queries))) as ex:
         futures=[ex.submit(rss,q) for q in primary_queries]
         for f in concurrent.futures.as_completed(futures):
             try:
@@ -11990,19 +12149,19 @@ if run:
         for label,q,mode in jobs:
             mh=_v9_mode_hours(mode,hours,think_hours,movement_hours)
             site_q=_v9_is_site_query(q)
-            for engine in _v12_engines_for(mode,site_q):
+            for engine in _v13_engines_for(mode,site_q,q):
                 engine_jobs.append((label,q,mode,engine,mh,site_q))
 
-        workers=min(V12_MAX_ENGINE_WORKERS,max(1,len(engine_jobs)))
+        workers=min(V13_MAX_ENGINE_WORKERS,max(1,len(engine_jobs)))
         status_box.write(
             f'⚡ Tamamlayıcı kaynaklar — {len(jobs)} sorgu / {len(engine_jobs)} motor işi / '
-            f'{workers} eşzamanlı · hızlı mod + cache aktif'
+            f'{workers} eşzamanlı · V13 akıllı hızlı mod + hot cache aktif'
         )
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
             future_map={
                 ex.submit(
-                    _v12_engine_call,engine,q,mode,when,mh,
+                    _v13_engine_call,engine,q,mode,when,mh,
                     v11_cache_snapshot,site_q
                 ):(label,q,mode,engine)
                 for label,q,mode,engine,mh,site_q in engine_jobs
@@ -12511,6 +12670,365 @@ def _v68_analyst_command_center(df,limit=8):
 # /V10
 # ============================================================
 
+
+# ============================================================
+# V13 — DERİN HABER İÇERİĞİNDEN ANALİTİK BİLGİ NOTU
+#
+# Çıktı:
+# - haber başlığı belge içinde tekrarlanmaz;
+# - "Giriş / Gelişme / Sonuç" ara başlıkları yazılmaz;
+# - 1. paragraf: olayın özü ve bağlamı,
+# - 2. paragraf: haberin gelişimi, aktörler, açıklamalar, rakamlar,
+# - 3. paragraf: yalnız haber içeriğine dayalı analitik değerlendirme;
+# - mümkünse tam haber sayfası mutlaka okunur; 650 karakterlik özet
+#   nedeniyle web fetch'i atlama mantığı bu bilgi notunda kullanılmaz.
+# ============================================================
+
+V13_NOTE_BOILER = [
+    'çerez','cookie','abonelik','abone ol','reklam','gizlilik politikası',
+    'kullanım koşulları','tüm hakları saklıdır','google news','bildirimleri aç',
+    'uygulamamızı indirin','whatsapp','facebook','instagram','twitter',
+    'ilgili haberler','öne çıkan haberler','son dakika haberleri',
+    'yorumlar','etiketler','foto galeri','video galeri'
+]
+
+def _v13_note_sentences(title, body):
+    raw=_akt_clean_sentences(title,body)
+    out=[]
+    seen=[]
+    title_n=norm(title)
+    for sent in raw:
+        sent=_repair_mojibake_utf8(_clean_note_text(sent))
+        sn=norm(sent)
+        if not sn or sn==title_n or len(sent)<38:
+            continue
+        if any(x in sn for x in V13_NOTE_BOILER):
+            continue
+        toks={x for x in re.findall(r'\w+',sn) if len(x)>2}
+        if not toks:
+            continue
+        duplicate=False
+        for old in seen[-30:]:
+            union=len(toks|old)
+            if union and len(toks&old)/union>=0.76:
+                duplicate=True
+                break
+        if duplicate:
+            continue
+        out.append(sent.strip())
+        seen.append(toks)
+    return out
+
+def _v13_direct_body(url):
+    """article_detail kısa kaldıysa gerçek canonical sayfadan ikinci, hızlı gövde denemesi."""
+    u=str(url or '').strip()
+    if not u.startswith('http'):
+        return ''
+    try:
+        host=urlparse(u).netloc.lower()
+        if 'google.com' in host:
+            return ''
+        rr=requests.get(
+            u,
+            headers={
+                **HEADERS,
+                'Accept-Language':'tr-TR,tr;q=0.9,en;q=0.8',
+                'Accept':'text/html,application/xhtml+xml,*/*;q=0.8'
+            },
+            timeout=7,
+            allow_redirects=True
+        )
+        if rr.status_code>=400 or not rr.text:
+            return ''
+        soup=BeautifulSoup(rr.text,'html.parser')
+        for bad in soup(['script','style','nav','footer','aside','form','noscript']):
+            try: bad.decompose()
+            except Exception: pass
+
+        candidates=[]
+        selectors=[
+            '[itemprop="articleBody"]','article','[class*="article-body"]',
+            '[class*="article-content"]','[class*="story-body"]',
+            '[class*="post-content"]','[class*="entry-content"]','main'
+        ]
+        for sel in selectors:
+            for node in soup.select(sel)[:3]:
+                parts=[]
+                for p in node.find_all(['p','h2','h3','li']):
+                    txt=re.sub(r'\s+',' ',p.get_text(' ',strip=True)).strip()
+                    if len(txt)>=45:
+                        parts.append(txt)
+                if parts:
+                    text=' '.join(parts)
+                    if len(text)>=300:
+                        candidates.append(text)
+        if not candidates:
+            parts=[]
+            for p in soup.find_all('p'):
+                txt=re.sub(r'\s+',' ',p.get_text(' ',strip=True)).strip()
+                if len(txt)>=55:
+                    parts.append(txt)
+            if parts:
+                candidates.append(' '.join(parts))
+        return max(candidates,key=len)[:20000] if candidates else ''
+    except Exception:
+        return ''
+
+def _v13_full_detail(row):
+    detail=_v112_cached_article_detail(row) or {}
+    title=_clean_note_text(detail.get('title') or row.get('Başlık',''))
+    snippet=_clean_note_text(row.get('İçerik_Özeti',''))
+    text=_clean_note_text(detail.get('text') or '')
+    canonical=detail.get('canonical') or row.get('URL','')
+
+    # Gerçek tam metin ölçütü: başlık/snippet tekrarından belirgin biçimde uzun olmalı.
+    full_enough=(
+        len(text)>=700
+        and len(text)>=len(snippet)+250
+        and len(_v13_note_sentences(title,text))>=6
+    )
+    if not full_enough:
+        direct=_v13_direct_body(canonical)
+        if len(direct)>len(text):
+            detail=dict(detail)
+            detail['text']=direct
+    return detail
+
+def _v13_sentence_score(s):
+    n=norm(s)
+    score=0
+    if re.search(r'\b\d+(?:[.,]\d+)?\b',s): score+=3
+    if any(x in n for x in [
+        'öcalan','ocalan','pkk','kck','dem parti','bahçeli','bahceli',
+        'erdoğan','erdogan','tbmm','meclis','komisyon','sdf','sdg','ypg',
+        'kandil','qandil'
+    ]): score+=3
+    if any(x in n for x in [
+        'açıkladı','belirtti','ifade etti','vurguladı','çağrı','mesaj',
+        'şart','koşul','talep','silah bırak','silahsızlan','fesih','entegrasyon'
+    ]): score+=4
+    if any(x in n for x in [
+        'saldırı','çatışma','ateşkes','kriz','gerilim','risk','hukuki',
+        'yasa','düzenleme','barış','demokratik','müzakere','görüşme'
+    ]): score+=3
+    return score
+
+def _v13_pick_development(sentences, max_sentences=8):
+    if len(sentences)<=max_sentences:
+        return sentences
+    # İlk olay akışını koru + ortadaki bilgi yoğun cümleler + son durum.
+    chosen={0,1}
+    ranked=sorted(
+        [(i,_v13_sentence_score(s)) for i,s in enumerate(sentences[2:-2],start=2)],
+        key=lambda z:(z[1],-z[0]), reverse=True
+    )
+    for i,_ in ranked:
+        if len(chosen)>=max_sentences-2:
+            break
+        chosen.add(i)
+    chosen.update(range(max(0,len(sentences)-2),len(sentences)))
+    return [sentences[i] for i in sorted(chosen)][:max_sentences]
+
+def _v13_formal_paragraph(sentences, prefix=''):
+    text=_join_sentences_naturally([_clean_note_text(x) for x in sentences if _clean_note_text(x)])
+    text=_repair_mojibake_utf8(text)
+    if prefix and text:
+        text=prefix + (text[0].lower()+text[1:] if len(text)>1 else text.lower())
+    elif prefix:
+        text=prefix.rstrip()
+    return _v66_formalize_sentence_endings(text.strip())
+
+def _v13_analysis_paragraph(row, sentences):
+    text=norm(' '.join(sentences))
+    group=str(row.get('Kaynak_Grubu','') or '')
+    stance=str(row.get('Yaklaşım','') or '')
+    observations=[]
+
+    if ('öcalan' in text or 'ocalan' in text) and any(x in text for x in ['şart','koşul','talep','özgür','statü','tecrit']):
+        observations.append(
+            "haberde aktarılan söylemin, sürecin ilerleyişini Abdullah Öcalan'ın konumu veya koşullarına bağlayan şartlı bir yaklaşım içerdiği"
+        )
+    if any(x in text for x in ['silah bırak','silahsızlan','fesih','disarmament','dissolution']):
+        observations.append(
+            "silahsızlanma ve örgütsel fesih başlıklarının sürecin söylem aşamasından uygulama aşamasına geçişi bakımından belirleyici olduğu"
+        )
+    if any(x in text for x in ['tbmm','komisyon','yasa','hukuki','legal framework','parliament']):
+        observations.append(
+            "hukuki ve parlamenter adımların sürecin kurumsallaşması bakımından önem taşıdığı"
+        )
+    if any(x in text for x in ['sdf','sdg','ypg','suriye','syria']):
+        observations.append(
+            "Suriye ve SDG/YPG bağlantısının Türkiye içindeki süreçten bağımsız olmayan bölgesel bir değişken olarak öne çıktığı"
+        )
+    if any(x in text for x in ['saldırı','çatışma','ateşkes bozul','kriz','gerilim','provokasyon','sabotaj']):
+        observations.append(
+            "güvenlik kaynaklı gerilimlerin sürecin kırılganlığını artırabilecek bir unsur oluşturduğu"
+        )
+    if group=='🌍 Yabancı Basın':
+        observations.append(
+            "gelişmenin yabancı basında yer almasının sürecin uluslararası ve bölgesel etkilerinin yakından izlendiğini gösterdiği"
+        )
+    elif group=='🧠 Think Tank / Analiz Kuruluşu':
+        observations.append(
+            "içeriğin politika ve strateji perspektifinden ele alınmasının sürecin orta vadeli sonuçlarına ilişkin uluslararası analitik ilginin sürdüğünü gösterdiği"
+        )
+    elif group=='🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak':
+        observations.append(
+            "hareket çevresinde kullanılan ifadelerin örgüt içi beklenti, şart ve önceliklerin izlenmesi bakımından gösterge niteliği taşıdığı"
+        )
+    if stance in {'Eleştirel / Şüpheci','Karma / Tartışmalı'}:
+        observations.append(
+            "haber çerçevesindeki eleştirel veya ihtiyatlı yaklaşımın sürecin siyasi ve toplumsal kabulü bakımından belirsizliklerin sürdüğüne işaret ettiği"
+        )
+
+    if not observations:
+        observations.append(
+            "haberde yer alan açıklama ve gelişmelerin, Terörsüz Türkiye sürecinin siyasi, güvenlik ve toplumsal boyutlarının birlikte izlenmesi gerektiğine işaret ettiği"
+        )
+
+    observations=observations[:3]
+    if len(observations)==1:
+        core=observations[0]
+    elif len(observations)==2:
+        core=observations[0]+'; ayrıca '+observations[1]
+    else:
+        core=observations[0]+'; '+observations[1]+'; bunun yanında '+observations[2]
+
+    return (
+        "Haberde aktarılan unsurlar birlikte değerlendirildiğinde, "
+        + core
+        + " değerlendirilmektedir. Bu çerçevede, gelişmenin sonraki aşamalarda yeni açıklamalar, uygulamaya dönük adımlar ve farklı açık kaynaklardan sağlanacak teyitlerle birlikte izlenmesi önem taşımaktadır."
+    )
+
+def _v13_single_note_blocks(row, detail):
+    title=_clean_note_text(detail.get('title') or row.get('Başlık',''))
+    source=_clean_note_text(detail.get('source') or row.get('Kaynak','Açık Kaynak'))
+    published=_clean_note_text(detail.get('published') or row.get('Tarih',''))
+    body=_clean_note_text(detail.get('text') or row.get('İçerik_Özeti',''))
+    sentences=_v13_note_sentences(title,body)
+
+    if not sentences:
+        fallback=_clean_note_text(row.get('İçerik_Özeti',''))
+        sentences=_v13_note_sentences(title,fallback)
+
+    if sentences:
+        intro_s=sentences[:2]
+        rest=sentences[2:]
+        development=_v13_pick_development(rest if rest else sentences,8)
+
+        source_context=''
+        if source and published:
+            source_context=f"{source} tarafından {published} tarihinde yayımlanan haberde, "
+        elif source:
+            source_context=f"{source} tarafından yayımlanan haberde, "
+        else:
+            source_context="Açık kaynakta yer alan haberde, "
+
+        intro=_v13_formal_paragraph(intro_s,source_context)
+        detail_para=_v13_formal_paragraph(development)
+        analysis=_v66_formalize_sentence_endings(_v13_analysis_paragraph(row,sentences))
+
+        # Giriş ve gelişmenin birebir tekrar etmesini önle.
+        if norm(detail_para)==norm(intro):
+            detail_para=_v13_formal_paragraph(sentences[2:8] or sentences[-3:])
+
+        return [x for x in [intro,detail_para,analysis] if x]
+
+    # Sayfa erişilemezse başlığı kopyalamak yerine bunu açıkça belirt.
+    fallback=_clean_note_text(row.get('İçerik_Özeti',''))
+    p1=(
+        "Seçilen habere ilişkin tam metne erişilememiş; mevcut açık kaynak kaydında yer alan kısa içerik "
+        + (fallback if fallback else "sınırlı kalmıştır.")
+    )
+    p2="Bu nedenle haberdeki gelişmelerin ayrıntılı kronolojisi ve aktör açıklamaları tam metin üzerinden doğrulanamamıştır."
+    p3="Mevcut sınırlı bilgiler çerçevesinde kesin bir analitik sonuç üretmek yerine, haberin asıl yayın sayfasına erişim sağlandığında yeniden değerlendirilmesi uygun olacaktır."
+    return [p1,p2,p3]
+
+def make_analyst_docx(df, title='BİLGİ NOTU'):
+    """
+    V13 bilgi notu: başlıksız, düz yazı, tam haber içeriği temelli,
+    giriş -> gelişme -> analitik sonuç akışı.
+    """
+    doc=Document()
+    sec=doc.sections[0]
+    sec.top_margin=Cm(2); sec.bottom_margin=Cm(2)
+    sec.left_margin=Cm(2.5); sec.right_margin=Cm(2.5)
+    styles=doc.styles
+    styles['Normal'].font.name='Times New Roman'
+    styles['Normal'].font.size=Pt(12)
+    styles['Normal']._element.rPr.rFonts.set(qn('w:eastAsia'),'Times New Roman')
+
+    # Başlık yok; yalnız tarih sağ üstte.
+    p=doc.add_paragraph()
+    p.alignment=WD_ALIGN_PARAGRAPH.RIGHT
+    p.add_run(datetime.now().astimezone().strftime('%d.%m.%Y'))
+
+    x=df.copy() if df is not None else pd.DataFrame()
+    if not x.empty and 'Tarih_dt' in x.columns:
+        x['Tarih_dt']=pd.to_datetime(x['Tarih_dt'],utc=True,errors='coerce')
+        x=x.sort_values('Tarih_dt',ascending=True,na_position='last')
+    rows=x.to_dict('records') if not x.empty else []
+
+    # Bilgi notunda tam metin önceliklidir; birkaç seçili haber paralel okunur.
+    details=[None]*len(rows)
+    workers=min(6,max(1,len(rows)))
+    def one(i,row):
+        return i,_v13_full_detail(row)
+    if rows:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+            fmap={ex.submit(one,i,row):i for i,row in enumerate(rows)}
+            for fut in concurrent.futures.as_completed(fmap):
+                try:
+                    i,d=fut.result(); details[i]=d
+                except Exception:
+                    pass
+
+    source_rows=[]
+    for i,row in enumerate(rows):
+        detail=details[i] or {}
+        blocks=_v13_single_note_blocks(row,detail)
+        for block in blocks:
+            bp=doc.add_paragraph()
+            bp.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+            bp.paragraph_format.first_line_indent=Cm(1.25)
+            bp.paragraph_format.line_spacing=1.15
+            bp.paragraph_format.space_after=Pt(8)
+            bp.add_run(_repair_mojibake_utf8(_clean_note_text(block)))
+        source_rows.append((row,detail))
+
+    if not rows:
+        bp=doc.add_paragraph('Seçili haber bulunmamaktadır.')
+        bp.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+
+    endp=doc.add_paragraph()
+    endp.paragraph_format.space_before=Pt(8)
+    endp.add_run('Arz olunur.')
+
+    # Kaynak bilgisi belge sonunda sade biçimde korunur; haber başlığı yazılmaz.
+    if source_rows:
+        kp=doc.add_paragraph()
+        kp.paragraph_format.space_before=Pt(10)
+        kr=kp.add_run('Kaynak: ')
+        kr.bold=True
+        names=[]
+        for row,detail in source_rows:
+            source=_clean_note_text(detail.get('source') or row.get('Kaynak','Açık Kaynak'))
+            url=str(detail.get('canonical') or row.get('URL','') or '')
+            key=(source,url)
+            if key in names: continue
+            names.append(key)
+            if len(names)>1:
+                kp.add_run(' | ')
+            _word_hyperlink(kp,url,source or 'Açık Kaynak')
+
+    bio=BytesIO()
+    doc.save(bio)
+    bio.seek(0)
+    return bio.getvalue()
+
+# ============================================================
+# /V13 BİLGİ NOTU
+# ============================================================
 # V3 — SADELEŞTİRİLMİŞ TERÖRSÜZ TÜRKİYE ANALİST ARAYÜZÜ
 # Amaç: Yerli basın + sosyal medya/açık sosyal + yabancı basın + think tank
 # Ayrı sekmeler; yalnız Detaylı Bilgi Notu ve Analiz Sepeti işlemleri.
@@ -12543,7 +13061,7 @@ def _v3_make_note(selected,key_prefix):
     if selected is None or selected.empty:
         st.warning('Önce en az bir haber seçin.')
         return
-    with st.spinner(f'{len(selected)} seçili içerik için ayrıntılı bilgi notu hazırlanıyor...'):
+    with st.spinner(f'{len(selected)} seçili içerik için haber tam metni okunuyor ve analitik bilgi notu hazırlanıyor...'):
         try:
             b=make_analyst_docx(selected,title='TERÖRSÜZ TÜRKİYE BİLGİ NOTU')
             st.session_state[key_prefix+'_note_bytes']=b
