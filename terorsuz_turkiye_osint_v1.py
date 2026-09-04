@@ -11930,6 +11930,22 @@ def normalize_rows(raw, cutoff, mode, user_query):
 # /V17 ESKİ TARİH FİLTRESİ
 # ============================================================
 
+# ============================================================
+# V18 — V11 KAPSAMI KORUYAN HIZ OPTİMİZASYONU
+#
+# Sorgular, kaynak listeleri, motor seçimi ve tarih pencereleri DEĞİŞMEZ.
+# Yalnız yürütme biçimi değişir:
+# - V11'de bir sorgunun Google/Bing/DDGS/GDELT motorları sırayla çalışıyordu.
+# - V18 aynı motor işlerini tek ortak havuzda paralel çalıştırır.
+# - Böylece sonuç kapsamı aynı kalırken bekleme süresi azalır.
+# ============================================================
+
+V18_ENGINE_WORKERS = 24
+
+# ============================================================
+# /V18 HIZ
+# ============================================================
+
 if run:
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
     when=period_window(hours)
@@ -11991,9 +12007,9 @@ if run:
 
     # 1) Türk ana taraması önce: kullanıcı ilk sonuçları en kısa sürede görsün.
     primary_label,primary_queries,primary_mode=batches[0]
-    status_box.write(f'{primary_label} — {len(primary_queries)} sorgu / 10 eşzamanlı')
+    status_box.write(f'{primary_label} — {len(primary_queries)} sorgu / 14 eşzamanlı')
     primary_raw=[]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(10,len(primary_queries))) as ex:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(14,len(primary_queries))) as ex:
         futures=[ex.submit(rss,q) for q in primary_queries]
         for f in concurrent.futures.as_completed(futures):
             try:
@@ -12016,57 +12032,68 @@ if run:
 
     supplemental_raw_by_mode={}
     if jobs:
-        status_box.write(f'⚡ Tamamlayıcı kaynaklar — {len(jobs)} sorgu / 18 eşzamanlı · retry + cache fallback aktif')
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(18,len(jobs))) as ex:
+        # V18: V11'in AYNI motor matrisi kullanılır; yalnız motor işleri tek havuzda paraleldir.
+        engine_jobs=[]
+        for label,q,mode in jobs:
+            mh=_v9_mode_hours(mode,hours,think_hours,movement_hours)
+            site_q=_v9_is_site_query(q)
+            for engine in _v11_engines_for(mode,site_q):
+                engine_jobs.append((label,q,mode,engine,mh))
+
+        workers=min(V18_ENGINE_WORKERS,max(1,len(engine_jobs)))
+        status_box.write(
+            f'⚡ Tamamlayıcı kaynaklar — {len(jobs)} sorgu / {len(engine_jobs)} motor işi / '
+            f'{workers} eşzamanlı · V11 kapsamı + V18 hızlı yürütme'
+        )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
             future_map={
                 ex.submit(
-                    _v11_fetch_query,q,mode,when,
-                    _v9_mode_hours(mode,hours,think_hours,movement_hours),
-                    v11_cache_snapshot
-                ):(label,mode)
-                for label,q,mode in jobs
+                    _v11_engine_call,engine,q,mode,when,mh,v11_cache_snapshot
+                ):(label,q,mode,engine)
+                for label,q,mode,engine,mh in engine_jobs
             }
             for fut in concurrent.futures.as_completed(future_map):
-                label,mode=future_map[fut]
+                label,q,mode,engine=future_map[fut]
                 try:
                     fetched=fut.result() or {}
                     chunk=fetched.get('rows') or []
-                    v11_engine_diag_records.extend(fetched.get('diagnostics') or [])
-                    v11_cache_updates.extend(fetched.get('cache_updates') or [])
+                    diag=fetched.get('diag') or {}
+                    if diag:
+                        v11_engine_diag_records.append(diag)
+                    if fetched.get('cache_update'):
+                        v11_cache_updates.append(fetched['cache_update'])
                 except Exception:
                     chunk=[]
+
                 stat['Ham sonuç']+=len(chunk)
                 supplemental_raw_by_mode.setdefault(mode,[]).extend(chunk)
-
-                # ÖZEL KRİTİK SÜREÇ GELİŞMESİ ALARMI:
-                # SÜREÇ/SÜREÇ dışı süreç-saha yangın ve patlamalarında sorgu döner dönmez bildir.
-                if instant_alerts and chunk:
-                    quick_rows,_quick_reasons=normalize_rows(chunk,cutoff,mode,query)
-                    for qr in quick_rows:
-                        critical_label=critical_industrial_incident(qr.get('Başlık',''),qr.get('İçerik_Özeti',''))
-                        if critical_label:
-                            qkey=_alert_key(qr)
-                            if qkey not in alerted_keys:
-                                _register_alert(qr)
-                                icon='💥' if 'PATLAMA' in critical_label else '🔥'
-                                st.toast(
-                                    f'{critical_label}: {str(qr.get("Başlık",""))[:105]}',
-                                    icon=icon
-                                )
-                                live_alarm_box.error(
-                                    f'{icon} **KRİTİK SÜREÇ GELİŞMESİ ALARMI — {critical_label}** — '
-                                    f'{qr.get("Tarih","")} · {qr.get("Kaynak","Açık Kaynak")} · '
-                                    f'{str(qr.get("Başlık",""))[:140]}'
-                                )
 
     # Mode bazlı normalize + birleştirme.
     for mode,raw in supplemental_raw_by_mode.items():
         incoming=_merge_batch(raw,mode)
+
+        # V18: kritik eşik kontrolü motor başına değil, normalize edilmiş mod sonucu üzerinde bir kez çalışır.
+        if instant_alerts and incoming:
+            for qr in incoming:
+                critical_label=critical_industrial_incident(qr.get('Başlık',''),qr.get('İçerik_Özeti',''))
+                if critical_label:
+                    qkey=_alert_key(qr)
+                    if qkey not in alerted_keys:
+                        _register_alert(qr)
+                        st.toast(
+                            f'{critical_label}: {str(qr.get("Başlık",""))[:105]}',
+                            icon='🚨'
+                        )
+                        live_alarm_box.error(
+                            f'🚨 **KRİTİK SÜREÇ GELİŞMESİ ALARMI — {critical_label}** — '
+                            f'{qr.get("Tarih","")} · {qr.get("Kaynak","Açık Kaynak")} · '
+                            f'{str(qr.get("Başlık",""))[:140]}'
+                        )
+
         old_keys={_alert_key(x) for x in all_rows}
         all_rows=dedupe(all_rows+incoming)
         # Genel negatif/yüksek risk alarmı bu aşamada verilmez.
-        # Önce aşağıda gerçek haber sayfasının tam metni okunarak nihai sınıflandırma yapılır.
-        # Kritik sanayi yangın/patlama anlık alarmı yukarıdaki özel blokta aynen devam eder.
         stat['Sonuç']=len(all_rows)
 
     _groups=[str(r.get('Kaynak_Grubu','')) for r in all_rows]
@@ -13070,6 +13097,397 @@ def make_analyst_docx(df, title='BİLGİ NOTU'):
 # ============================================================
 # /V16 SADECE BİLGİ NOTU
 # ============================================================
+
+# ============================================================
+# V18 — AYNI OLAY / FARKLI KAYNAK / FARKLI ÇERÇEVE ANALİZİ
+#
+# Ağ isteği yapmaz. Tarama sırasında zaten elde edilmiş başlık + kısa içerik
+# üzerinden aynı olayı farklı kaynak ailelerinde eşleştirir ve hangi unsurun
+# öne çıkarıldığını karşılaştırır.
+# ============================================================
+
+V18_COMPARE_GROUPS = {
+    '🇹🇷 Yerli Basın',
+    '🌍 Yabancı Basın',
+    '🧠 Think Tank / Analiz Kuruluşu',
+    '🟣 Kürt Bölgesel Medyası',
+    '🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak'
+}
+
+V18_PERSON_RULES = {
+    'Cemil Bayık':['cemil bayık','cemil bayik','cemîl bayik','bayık','bayik'],
+    'Abdullah Öcalan':['abdullah öcalan','abdullah ocalan','öcalan','ocalan'],
+    'Devlet Bahçeli':['devlet bahçeli','devlet bahceli','bahçeli','bahceli'],
+    'Recep Tayyip Erdoğan':['recep tayyip erdoğan','recep tayyip erdogan','erdoğan','erdogan'],
+    'Mazlum Abdi':['mazlum abdi','mazloum abdi','mazlum kobani'],
+    'Murat Karayılan':['murat karayılan','murat karayilan','karayılan','karayilan'],
+    'Duran Kalkan':['duran kalkan'],
+    'Pervin Buldan':['pervin buldan'],
+    'Tuncer Bakırhan':['tuncer bakırhan','tuncer bakirhan'],
+    'Besê Hozat':['besê hozat','bese hozat']
+}
+
+V18_CONCEPT_RULES = {
+    'silahsızlanma / silah bırakma':[
+        'silah bırak','silahsızlan','silahları bırak','disarmament','lay down arms',
+        'laying down arms','disarm','weapons'
+    ],
+    'barış / süreç':[
+        'barış süreci','baris sureci','peace process','terörsüz türkiye','terror-free',
+        'çözüm süreci','cozum sureci'
+    ],
+    'demokratik siyasete geçiş':[
+        'demokratik siyaset','democratic politics','political participation',
+        'democratic political life','siyasal yaşama katıl'
+    ],
+    'Öcalan’ın konumu / özgürlüğü':[
+        'öcalan özgür','ocalan freedom','freedom essential','freedom of ocalan',
+        'öcalan’ın özgürlüğ','öcalanın özgürlüğ','imralı koşul','imrali kosul',
+        'öcalan statü','ocalan status'
+    ],
+    'şart / önkoşul':[
+        'şart','koşul','önkoşul','essential','necessary','must','unless',
+        'requires','required','condition','without'
+    ],
+    'karşılıklılık / müzakere':[
+        'tek taraflı','one-sided','not a one-sided','karşılıklı','reciprocal',
+        'müzakere','negotiation','trilateral','dialogue','diyalog'
+    ],
+    'hukuki çerçeve':[
+        'çerçeve yasa','framework law','legal framework','yasal düzenleme',
+        'hukuki düzenleme','parliament','tbmm','meclis','commission','komisyon'
+    ],
+    'Kürt hakları / statü':[
+        'kürt hak','kurdish rights','equal citizenship','eşit yurttaş',
+        'constitutional guarantee','anayasal güvence','local self-government',
+        'yerel yönetim','language and culture','dil ve kültür'
+    ],
+    'eleştiri / yetersizlik':[
+        'yetersiz','eksik','shortcoming','insufficient','criticized','eleştirdi',
+        'sorun','problem','stifled','başarısız','failure'
+    ],
+    'taahhüt / ilerleme iradesi':[
+        'irademiz net','irade nettir','kararlıyız','commitment','committed',
+        'accepted disarmament','kabul etmişiz','ready to','progress','ilerleme'
+    ],
+    'Suriye / SDG-YPG boyutu':[
+        'sdf','sdg','ypg','pyd','suriye','syria','damascus','şam'
+    ]
+}
+
+def _v18_norm_text(row):
+    return norm(f"{row.get('Başlık','')} {row.get('İçerik_Özeti','')}")
+
+def _v18_people(row):
+    text=_v18_norm_text(row)
+    out=set()
+    for canonical,variants in V18_PERSON_RULES.items():
+        if any(norm(v) in text for v in variants):
+            out.add(canonical)
+    return out
+
+def _v18_concepts(row):
+    text=_v18_norm_text(row)
+    out=set()
+    for concept,variants in V18_CONCEPT_RULES.items():
+        if any(norm(v) in text for v in variants):
+            out.add(concept)
+    return out
+
+def _v18_headline_frames(row):
+    # Başlığa daha fazla ağırlık ver; snippet yalnız destekleyicidir.
+    title=norm(row.get('Başlık',''))
+    full=_v18_norm_text(row)
+    frames=[]
+
+    def hit(keys):
+        return any(norm(k) in title for k in keys)
+
+    if hit(V18_CONCEPT_RULES['taahhüt / ilerleme iradesi']):
+        frames.append('Taahhüt / ilerleme')
+    if hit(V18_CONCEPT_RULES['Öcalan’ın konumu / özgürlüğü']):
+        frames.append('Öcalan’ın konumu / özgürlüğü')
+    if hit(V18_CONCEPT_RULES['şart / önkoşul']):
+        frames.append('Şart / önkoşul')
+    if hit(V18_CONCEPT_RULES['eleştiri / yetersizlik']):
+        frames.append('Eleştiri / yetersizlik')
+    if hit(V18_CONCEPT_RULES['karşılıklılık / müzakere']):
+        frames.append('Karşılıklılık / müzakere')
+    if hit(V18_CONCEPT_RULES['silahsızlanma / silah bırakma']):
+        frames.append('Silahsızlanma')
+    if hit(V18_CONCEPT_RULES['hukuki çerçeve']):
+        frames.append('Hukuki çerçeve')
+    if hit(V18_CONCEPT_RULES['Kürt hakları / statü']):
+        frames.append('Haklar / statü')
+
+    # Başlık tek başına yeterli değilse içerikten ilk güçlü çerçeveyi ekle.
+    if not frames:
+        concepts=_v18_concepts(row)
+        mapping={
+            'taahhüt / ilerleme iradesi':'Taahhüt / ilerleme',
+            'Öcalan’ın konumu / özgürlüğü':'Öcalan’ın konumu / özgürlüğü',
+            'şart / önkoşul':'Şart / önkoşul',
+            'eleştiri / yetersizlik':'Eleştiri / yetersizlik',
+            'karşılıklılık / müzakere':'Karşılıklılık / müzakere',
+            'silahsızlanma / silah bırakma':'Silahsızlanma',
+            'hukuki çerçeve':'Hukuki çerçeve',
+            'Kürt hakları / statü':'Haklar / statü'
+        }
+        for c in mapping:
+            if c in concepts:
+                frames.append(mapping[c])
+
+    return frames[:3] or ['Genel süreç']
+
+def _v18_tone(row):
+    title=norm(row.get('Başlık',''))
+    full=_v18_norm_text(row)
+
+    positive=any(x in title for x in [
+        'irademiz net','kararlıyız','kabul etmişiz','ilerleme','progress',
+        'commitment','committed','ready to'
+    ])
+    conditional=any(x in full for x in [
+        'essential','necessary','must','unless','requires','required',
+        'şart','koşul','önkoşul','one-sided','tek taraflı'
+    ])
+    critical=any(x in full for x in [
+        'insufficient','shortcoming','yetersiz','eksik','criticized','eleştirdi',
+        'stifled','failure','başarısız'
+    ])
+
+    if positive and (conditional or critical):
+        return 'Karma'
+    if positive:
+        return 'Olumlu / ilerleme odaklı'
+    if conditional or critical:
+        return 'Şartlı / eleştirel'
+    stance=str(row.get('Yaklaşım','') or '')
+    if stance=='Eleştirel / Şüpheci':
+        return 'Şartlı / eleştirel'
+    return 'Nötr / bilgi odaklı'
+
+def _v18_dt(row):
+    try:
+        return pd.to_datetime(row.get('Tarih_dt'),utc=True,errors='coerce')
+    except Exception:
+        return pd.NaT
+
+def _v18_same_event_score(a,b):
+    ga=str(a.get('Kaynak_Grubu','') or '')
+    gb=str(b.get('Kaynak_Grubu','') or '')
+    if not ga or not gb or ga==gb:
+        return 0.0
+
+    da=_v18_dt(a); db=_v18_dt(b)
+    if pd.notna(da) and pd.notna(db):
+        hours=abs((da-db).total_seconds())/3600.0
+        if hours>168:
+            return 0.0
+    else:
+        hours=999
+
+    pa=_v18_people(a); pb=_v18_people(b)
+    ca=_v18_concepts(a); cb=_v18_concepts(b)
+
+    same_oid=(
+        str(a.get('Olay_ID','')).strip()
+        and str(a.get('Olay_ID','')).strip()==str(b.get('Olay_ID','')).strip()
+    )
+
+    shared_people=pa & pb
+    shared_concepts=ca & cb
+
+    # En güvenilir eşleşme: aynı kişi + aynı konu veya mevcut Olay_ID.
+    if not same_oid:
+        if shared_people:
+            if not shared_concepts:
+                return 0.0
+        else:
+            # Kişi yoksa en az iki özgül kavram + yakın zaman gerekir.
+            if len(shared_concepts)<2 or hours>48:
+                return 0.0
+
+    score=0.0
+    if same_oid:
+        score += 0.40
+    if shared_people:
+        score += min(0.38,0.28+0.10*(len(shared_people)-1))
+    if shared_concepts:
+        score += min(0.32,0.16*len(shared_concepts))
+
+    # Başlık/özet token desteği, çapraz dilde düşük ağırlık.
+    sim=_event_similarity(a,b)
+    score += min(0.15,sim*0.15)
+
+    if hours<=24:
+        score += 0.10
+    elif hours<=72:
+        score += 0.06
+    elif hours<=168:
+        score += 0.03
+
+    return min(1.0,score)
+
+def _v18_focus_phrase(frames):
+    f=frames[0] if frames else 'Genel süreç'
+    mapping={
+        'Taahhüt / ilerleme':'silah bırakma/demokratik siyasete geçiş iradesini',
+        'Öcalan’ın konumu / özgürlüğü':'Öcalan’ın özgürlüğü ve süreçteki konumunu',
+        'Şart / önkoşul':'sürecin ilerlemesi için gerekli şartları',
+        'Eleştiri / yetersizlik':'mevcut çerçevenin eksik ve yetersiz görülen yönlerini',
+        'Karşılıklılık / müzakere':'silahsızlanmanın karşılıklı ve müzakere temelli olması gerektiğini',
+        'Silahsızlanma':'silahsızlanma ve silah bırakma boyutunu',
+        'Hukuki çerçeve':'Meclis ve hukuki düzenleme boyutunu',
+        'Haklar / statü':'Kürtlerin hakları ve statü tartışmasını',
+        'Genel süreç':'sürecin genel seyrini'
+    }
+    return mapping.get(f,'sürecin genel seyrini')
+
+def _v18_frame_difference(a,b):
+    fa=_v18_headline_frames(a); fb=_v18_headline_frames(b)
+    ta=_v18_tone(a); tb=_v18_tone(b)
+    sa=str(a.get('Kaynak','') or 'Birinci kaynak')
+    sb=str(b.get('Kaynak','') or 'İkinci kaynak')
+
+    focus_a=_v18_focus_phrase(fa)
+    focus_b=_v18_focus_phrase(fb)
+
+    if fa[0]!=fb[0]:
+        sentence=f"{sa} {focus_a} öne çıkarırken, {sb} {focus_b} öne çıkarmaktadır."
+    else:
+        sentence=f"Her iki kaynak da ağırlıklı olarak {focus_a} öne çıkarmaktadır."
+
+    if ta!=tb:
+        sentence += f" Ton farkı da bulunmaktadır: {sa} “{ta}”, {sb} ise “{tb}” çerçevesindedir."
+    return sentence
+
+def _v18_cross_source_comparisons(df,limit=20):
+    cols=[
+        'Tarih','Olay / Aktör','Kaynak A','Grup A','Başlık A','Çerçeve A','Ton A',
+        'Kaynak B','Grup B','Başlık B','Çerçeve B','Ton B','Çerçeve Farkı',
+        'Eşleşme','URL A','URL B'
+    ]
+    if df is None or df.empty:
+        return pd.DataFrame(columns=cols)
+
+    x=df.copy().reset_index(drop=True)
+    if 'Kaynak_Grubu' not in x.columns:
+        return pd.DataFrame(columns=cols)
+
+    x=x[x['Kaynak_Grubu'].astype(str).isin(V18_COMPARE_GROUPS)].copy().reset_index(drop=True)
+    if len(x)<2:
+        return pd.DataFrame(columns=cols)
+
+    # Aday üretimini hızlandırmak için kişi ve Olay_ID ters indeksleri.
+    people_cache={}
+    concept_cache={}
+    person_index={}
+    oid_index={}
+
+    for i,r in x.iterrows():
+        p=_v18_people(r); c=_v18_concepts(r)
+        people_cache[i]=p; concept_cache[i]=c
+        for person in p:
+            person_index.setdefault(person,set()).add(i)
+        oid=str(r.get('Olay_ID','') or '').strip()
+        if oid:
+            oid_index.setdefault(oid,set()).add(i)
+
+    candidate_pairs=set()
+
+    for ids in person_index.values():
+        ids=sorted(ids)
+        for a_idx in range(len(ids)):
+            for b_idx in range(a_idx+1,len(ids)):
+                candidate_pairs.add((ids[a_idx],ids[b_idx]))
+
+    for ids in oid_index.values():
+        ids=sorted(ids)
+        if len(ids)>1:
+            for a_idx in range(len(ids)):
+                for b_idx in range(a_idx+1,len(ids)):
+                    candidate_pairs.add((ids[a_idx],ids[b_idx]))
+
+    rows=[]
+    seen_pair_keys=set()
+
+    for i,j in candidate_pairs:
+        a=x.iloc[i]; b=x.iloc[j]
+        if str(a.get('Kaynak_Grubu',''))==str(b.get('Kaynak_Grubu','')):
+            continue
+
+        score=_v18_same_event_score(a,b)
+        if score<0.62:
+            continue
+
+        fa=_v18_headline_frames(a); fb=_v18_headline_frames(b)
+        ta=_v18_tone(a); tb=_v18_tone(b)
+
+        # Panelin amacı farklı çerçeveyi yakalamak; aynı ton+aynı ana çerçeve düşük öncelikli.
+        divergence=0
+        if fa[0]!=fb[0]: divergence+=3
+        if ta!=tb: divergence+=2
+        divergence += len(set(fa)^set(fb))
+        if divergence<2:
+            continue
+
+        # En yeni kaynak A olacak şekilde sırala.
+        da=_v18_dt(a); db=_v18_dt(b)
+        if pd.notna(db) and (pd.isna(da) or db>da):
+            a,b=b,a
+            fa,fb=fb,fa
+            ta,tb=tb,ta
+
+        pair_key=tuple(sorted([
+            str(a.get('URL','') or title_key(a.get('Başlık',''))),
+            str(b.get('URL','') or title_key(b.get('Başlık','')))
+        ]))
+        if pair_key in seen_pair_keys:
+            continue
+        seen_pair_keys.add(pair_key)
+
+        people=_v18_people(a)&_v18_people(b)
+        concepts=_v18_concepts(a)&_v18_concepts(b)
+        event_label=', '.join(sorted(people)) if people else ', '.join(sorted(concepts)[:2])
+        if not event_label:
+            event_label=str(a.get('Kategori','') or 'Aynı olay')
+
+        dt=max([d for d in [_v18_dt(a),_v18_dt(b)] if pd.notna(d)],default=pd.NaT)
+        date_text=dt.strftime('%d.%m.%Y %H:%M') if pd.notna(dt) else str(a.get('Tarih','') or '')
+
+        rows.append({
+            'Tarih':date_text,
+            'Olay / Aktör':event_label,
+            'Kaynak A':a.get('Kaynak',''),
+            'Grup A':a.get('Kaynak_Grubu',''),
+            'Başlık A':a.get('Başlık',''),
+            'Çerçeve A':' • '.join(fa),
+            'Ton A':ta,
+            'Kaynak B':b.get('Kaynak',''),
+            'Grup B':b.get('Kaynak_Grubu',''),
+            'Başlık B':b.get('Başlık',''),
+            'Çerçeve B':' • '.join(fb),
+            'Ton B':tb,
+            'Çerçeve Farkı':_v18_frame_difference(a,b),
+            'Eşleşme':int(round(score*100)),
+            'URL A':a.get('URL',''),
+            'URL B':b.get('URL',''),
+            '_div':divergence,
+            '_dt':dt
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=cols)
+
+    out=pd.DataFrame(rows)
+    out=out.sort_values(['_div','Eşleşme','_dt'],ascending=[False,False,False])
+    out=out.drop_duplicates(subset=['Olay / Aktör','Kaynak A','Kaynak B','Çerçeve A','Çerçeve B'],keep='first')
+    return out.head(limit).drop(columns=['_div','_dt'],errors='ignore')
+
+# ============================================================
+# /V18 ÇERÇEVE ANALİZİ
+# ============================================================
 # V3 — SADELEŞTİRİLMİŞ TERÖRSÜZ TÜRKİYE ANALİST ARAYÜZÜ
 # Amaç: Yerli basın + sosyal medya/açık sosyal + yabancı basın + think tank
 # Ayrı sekmeler; yalnız Detaylı Bilgi Notu ve Analiz Sepeti işlemleri.
@@ -13363,6 +13781,52 @@ else:
                 ['Seç','Tarih','Bölge','Kaynak','Kaynak_Grubu','Kategori','Yaklaşım','Çerçeve',
                  'İçerik Türü','Başlık','İçerik_Özeti','URL']
             )
+
+        # ---------------- AYNI OLAY / FARKLI ÇERÇEVE ----------------
+        st.markdown('---')
+        st.subheader('🪞 Aynı Olay — Farklı Kaynak / Farklı Çerçeve')
+        st.caption(
+            'Aynı gelişmenin yerli basın, yabancı basın, think tank, Kürt bölgesel medya veya '
+            'PKK/KCK çevresi açık kaynaklarda hangi farklı başlık ve vurgu tercihleriyle sunulduğunu karşılaştırır. '
+            'Ek web isteği yapmaz; mevcut tarama verisini kullanır.'
+        )
+        _frame_cmp=_v18_cross_source_comparisons(df,20)
+        if _frame_cmp.empty:
+            st.info('Bu taramada farklı kaynak ailelerinde yeterince güçlü aynı-olay / farklı-çerçeve eşleşmesi bulunmadı.')
+        else:
+            f1,f2=st.columns(2)
+            f1.metric('Karşılaştırılabilir çift',len(_frame_cmp))
+            f2.metric('Yüksek eşleşme (≥75)',int((_frame_cmp['Eşleşme']>=75).sum()))
+
+            st.dataframe(
+                _frame_cmp[
+                    ['Tarih','Olay / Aktör','Kaynak A','Çerçeve A','Ton A',
+                     'Kaynak B','Çerçeve B','Ton B','Çerçeve Farkı','Eşleşme']
+                ],
+                hide_index=True,use_container_width=True,height=min(620,120+46*len(_frame_cmp))
+            )
+
+            with st.expander('🔎 Başlıkları ve bağlantıları yan yana incele',False):
+                _opts={
+                    f"{r['Olay / Aktör']} — {r['Kaynak A']} ↔ {r['Kaynak B']}":i
+                    for i,r in _frame_cmp.iterrows()
+                }
+                _lbl=st.selectbox('Karşılaştırma',list(_opts.keys()),key='v18_frame_pair')
+                _r=_frame_cmp.loc[_opts[_lbl]]
+                ca,cb=st.columns(2)
+                with ca:
+                    st.markdown(f"**{_r['Kaynak A']}**")
+                    st.write(_r['Başlık A'])
+                    st.caption(f"{_r['Grup A']} · {_r['Çerçeve A']} · {_r['Ton A']}")
+                    if str(_r.get('URL A','')).startswith('http'):
+                        st.markdown(f"[Haberi aç]({_r['URL A']})")
+                with cb:
+                    st.markdown(f"**{_r['Kaynak B']}**")
+                    st.write(_r['Başlık B'])
+                    st.caption(f"{_r['Grup B']} · {_r['Çerçeve B']} · {_r['Ton B']}")
+                    if str(_r.get('URL B','')).startswith('http'):
+                        st.markdown(f"[Haberi aç]({_r['URL B']})")
+                st.info(_r['Çerçeve Farkı'])
 
         st.markdown('---')
         st.subheader('📰 Kronoloji / Olay / Trend İzleme')
