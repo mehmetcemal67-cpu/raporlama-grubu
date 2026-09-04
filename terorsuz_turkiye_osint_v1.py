@@ -12599,6 +12599,451 @@ def _v20_snapshot_load(mode,window_hours):
 # /V20 TARAMA
 # ============================================================
 
+# ============================================================
+# V21 — HIZ + KARARLI/DOYGUN KAYNAK TOPLAMA
+#
+# V20'deki "Aynı Olay — Farklı Bakış" bölümü DEĞİŞTİRİLMEMİŞTİR.
+#
+# Bu sürüm yalnız tarama katmanını iyileştirir:
+# 1) Yerli basın artık yalnız Google News RSS'ye bağlı değildir:
+#    Google News TR + DDGS + Bing News TR birlikte kullanılır.
+# 2) Yabancı/think tank/Kürt/PKK-KCK sorgularında V11 sorgu kapsamı
+#    korunur; ancak sorgunun diline ve site-hedefli olup olmamasına göre
+#    gereksiz motor çağrıları azaltılır.
+# 3) Çok yüksek eşzamanlı DDGS çağrılarının rate-limit üretmesini önlemek
+#    için motor bazlı eşzamanlılık sınırı uygulanır.
+# 4) Sosyal medya:
+#    DDGS + Bing Web + Reddit Public + Bluesky Public katmanları korunur;
+#    sosyal sonuçlar daha uzun kararlı havuzda tutulur.
+# 5) Aynı tarama penceresinin sağlıklı son sonucu kısa süreli snapshot
+#    olarak kullanılabilir. İlk "soğuk" tarama yine en uzun taramadır;
+#    sonraki aynı-pencere taramaları belirgin biçimde hızlanır.
+# ============================================================
+
+import threading as _v21_threading
+
+V21_ENGINE_WORKERS = 28
+V21_POOL_RETENTION_HOURS = 192   # 8 gün: 1 haftalık sosyal/yabancı tarama için kararlılık
+
+# V19 havuz temizliği çağrı anında bu global değeri kullanır.
+V19_POOL_RETENTION_HOURS = V21_POOL_RETENTION_HOURS
+
+# Motor başına paralellik sınırları.
+# Özellikle DDGS'yi çok yüksek eşzamanlı çalıştırmak sonuç sayısını düşürebiliyor.
+_V21_LIMITS = {
+    'DDGS': 6,
+    'DDGS Local': 5,
+    'Google News US': 8,
+    'Google News GB': 6,
+    'Google News DE': 4,
+    'Google News FR': 4,
+    'Google News AR': 4,
+    'Google News TR': 8,
+    'Bing News US': 6,
+    'Bing News GB': 4,
+    'Bing News TR': 6,
+    'Bing Web': 7,
+    'GDELT': 4,
+    'Reddit Public': 3,
+    'Bluesky Public': 3
+}
+_V21_SEMAPHORES = {
+    name:_v21_threading.BoundedSemaphore(value=max(1,int(limit)))
+    for name,limit in _V21_LIMITS.items()
+}
+
+V21_FRESH_SNAPSHOT_MIN = {
+    'turkish': 10,
+    'foreign': 12,
+    'social': 15,
+    'thinktank': 120,
+    'kurdish': 60,
+    'movement': 60,
+    'commentary': 45,
+    'official': 15,
+    'statistics': 60,
+    'negative': 15
+}
+
+V21_STALE_FALLBACK_MIN = {
+    'turkish': 360,
+    'foreign': 360,
+    'social': 720,
+    'thinktank': 720,
+    'kurdish': 720,
+    'movement': 720,
+    'commentary': 360,
+    'official': 180,
+    'statistics': 360,
+    'negative': 180
+}
+
+V21_HEALTHY_MIN = {
+    'turkish': 40,
+    'foreign': 18,
+    'social': 6,
+    'thinktank': 6,
+    'kurdish': 5,
+    'movement': 8,
+    'commentary': 8,
+    'official': 2,
+    'statistics': 2,
+    'negative': 3
+}
+
+def _v21_snapshot_init():
+    try:
+        with _history_connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS mode_snapshot_v21(
+                    mode TEXT NOT NULL,
+                    window_hours INTEGER NOT NULL,
+                    refreshed_at TEXT NOT NULL,
+                    row_count INTEGER NOT NULL,
+                    rows_json TEXT NOT NULL,
+                    PRIMARY KEY(mode,window_hours)
+                )
+            """)
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+def _v21_row_json_ready(row):
+    d={}
+    for k,v in dict(row).items():
+        try:
+            if pd.isna(v):
+                d[k]=None
+                continue
+        except Exception:
+            pass
+        if isinstance(v,(datetime,pd.Timestamp)):
+            try:
+                d[k]=v.isoformat()
+            except Exception:
+                d[k]=str(v)
+        else:
+            d[k]=v
+    return d
+
+def _v21_snapshot_save(mode,window_hours,rows):
+    if len(rows or []) < V21_HEALTHY_MIN.get(mode,999999):
+        return
+    if not _v21_snapshot_init():
+        return
+    try:
+        payload=[_v21_row_json_ready(r) for r in rows]
+        with _history_connect() as conn:
+            conn.execute("""
+                INSERT INTO mode_snapshot_v21(mode,window_hours,refreshed_at,row_count,rows_json)
+                VALUES(?,?,?,?,?)
+                ON CONFLICT(mode,window_hours) DO UPDATE SET
+                    refreshed_at=excluded.refreshed_at,
+                    row_count=excluded.row_count,
+                    rows_json=excluded.rows_json
+            """,(
+                mode,
+                int(window_hours),
+                datetime.now(timezone.utc).isoformat(),
+                len(payload),
+                json.dumps(payload,ensure_ascii=False,default=str)
+            ))
+            conn.commit()
+    except Exception:
+        pass
+
+def _v21_filter_snapshot_rows(rows,mode,window_hours):
+    cutoff=(datetime.now(timezone.utc)-timedelta(hours=int(window_hours))).astimezone(timezone.utc)
+    out=[]
+    for r in rows or []:
+        dt=_to_utc_datetime(r.get('Tarih_dt'))
+        inferred,_=_v17_extract_explicit_date(
+            r.get('Başlık',''),
+            r.get('İçerik_Özeti',''),
+            r.get('URL','')
+        )
+        effective=dt or inferred
+
+        # Bilinen tarih pencerenin dışındaysa alma.
+        if effective and effective < cutoff:
+            continue
+
+        # Tarih yoksa snapshot'ın kendi kısa kullanım ömrü ayrıca kontrol edilir.
+        if dt:
+            r['Tarih_dt']=dt
+        elif inferred:
+            r['Tarih_dt']=inferred
+            r['Tarih']=fmt_dt(inferred)
+
+        out.append(r)
+    return out
+
+def _v21_snapshot_load(mode,window_hours,max_age_min):
+    if not _v21_snapshot_init():
+        return []
+    try:
+        with _history_connect() as conn:
+            rec=conn.execute(
+                "SELECT refreshed_at,row_count,rows_json FROM mode_snapshot_v21 "
+                "WHERE mode=? AND window_hours=?",
+                (mode,int(window_hours))
+            ).fetchone()
+    except Exception:
+        return []
+
+    if not rec:
+        return []
+
+    refreshed,row_count,raw=rec
+    if int(row_count or 0) < V21_HEALTHY_MIN.get(mode,999999):
+        return []
+
+    dt=_to_utc_datetime(refreshed)
+    if not dt or dt < datetime.now(timezone.utc)-timedelta(minutes=int(max_age_min)):
+        return []
+
+    try:
+        rows=json.loads(raw)
+    except Exception:
+        return []
+
+    return _v21_filter_snapshot_rows(rows,mode,window_hours)
+
+def _v21_pool_load(mode,cutoff):
+    """
+    V19 havuzunun daha kararlı sürümü.
+    Tarihi bilinen öğeler seçili pencereye göre; tarihi bilinmeyenler ise
+    pencere uzunluğu kadar (en çok 8 gün) tutulur.
+    """
+    allowed={'turkish','foreign','social','thinktank','kurdish','movement','commentary',
+             'official','statistics','negative'}
+    if mode not in allowed or not _v19_pool_init():
+        return []
+
+    now=datetime.now(timezone.utc)
+    cutoff_utc=_v17_cutoff_utc(cutoff)
+    try:
+        window_hours=max(1,int((now-cutoff_utc).total_seconds()/3600)) if cutoff_utc else 168
+    except Exception:
+        window_hours=168
+
+    seen_after=(now-timedelta(hours=V21_POOL_RETENTION_HOURS)).isoformat()
+
+    try:
+        with _history_connect() as conn:
+            rows=conn.execute(
+                "SELECT first_seen,row_json FROM source_stability_pool "
+                "WHERE mode=? AND last_seen>=?",
+                (mode,seen_after)
+            ).fetchall()
+    except Exception:
+        return []
+
+    out=[]
+    unknown_keep_hours=min(V21_POOL_RETENTION_HOURS,max(6,window_hours))
+
+    for first_seen,raw in rows:
+        try:
+            r=json.loads(raw)
+        except Exception:
+            continue
+
+        dt=_to_utc_datetime(r.get('Tarih_dt'))
+        inferred,_=_v17_extract_explicit_date(
+            r.get('Başlık',''),
+            r.get('İçerik_Özeti',''),
+            r.get('URL','')
+        )
+        effective=dt or inferred
+
+        if effective and cutoff_utc and effective < cutoff_utc:
+            continue
+
+        if not effective:
+            fs=_to_utc_datetime(first_seen)
+            if fs and fs < now-timedelta(hours=unknown_keep_hours):
+                continue
+
+        if dt:
+            r['Tarih_dt']=dt
+        elif inferred:
+            r['Tarih_dt']=inferred
+            r['Tarih']=fmt_dt(inferred)
+
+        out.append(r)
+
+    return out
+
+def _v21_pool_upsert(mode,rows):
+    """
+    V19 tablo yapısını kullanır; artık yerli/official/statistics/negative de
+    kısa süreli kararlı havuza alınabilir.
+    """
+    allowed={'turkish','foreign','social','thinktank','kurdish','movement','commentary',
+             'official','statistics','negative'}
+    if mode not in allowed or not rows or not _v19_pool_init():
+        return
+
+    now=datetime.now(timezone.utc).isoformat()
+    vals=[]
+
+    for r in rows:
+        vals.append((
+            mode,
+            _v19_pool_key(r),
+            now,
+            now,
+            _v19_json_row(r)
+        ))
+
+    try:
+        with _history_connect() as conn:
+            conn.executemany("""
+                INSERT INTO source_stability_pool(mode,item_key,first_seen,last_seen,row_json)
+                VALUES(?,?,?,?,?)
+                ON CONFLICT(mode,item_key) DO UPDATE SET
+                    last_seen=excluded.last_seen,
+                    row_json=excluded.row_json
+            """,vals)
+
+            limit=(datetime.now(timezone.utc)-timedelta(hours=V21_POOL_RETENTION_HOURS)).isoformat()
+            conn.execute("DELETE FROM source_stability_pool WHERE last_seen < ?",(limit,))
+            conn.commit()
+    except Exception:
+        pass
+
+def _v21_query_language(query):
+    q=str(query or '')
+    if re.search(r'[\u0600-\u06FF]',q):
+        return 'ar'
+    nq=norm(q)
+    if any(x in nq for x in ['turkei','friedensprozess','entwaffnung']):
+        return 'de'
+    if any(x in nq for x in ['turquie','processus de paix','desarmement']):
+        return 'fr'
+    # Belirgin Türkçe karakter/ifade
+    if any(x in q for x in ['Terörsüz','Öcalan','İmralı','silahsızlanma','söyleşi','röportaj']):
+        return 'tr'
+    return 'en'
+
+def _v21_engines_for(mode,site_q=False,query=''):
+    """
+    V11 sorguları aynen kalır; yalnız gereksiz motor kombinasyonları azaltılır.
+    """
+    lang=_v21_query_language(query)
+
+    if mode=='foreign':
+        if site_q:
+            # Exact site sweep: DDGS + ilgili ana Google News penceresi yeterli.
+            return ['DDGS','Google News US']
+
+        if lang=='ar':
+            return ['Google News AR','DDGS','GDELT']
+        if lang=='de':
+            return ['Google News DE','DDGS','GDELT']
+        if lang=='fr':
+            return ['Google News FR','DDGS','GDELT']
+
+        return ['Google News US','Google News GB','Bing News US','DDGS','GDELT']
+
+    if mode=='thinktank':
+        return ['DDGS'] if site_q else ['DDGS','Google News US','Bing News US']
+
+    if mode in {'kurdish','movement'}:
+        if site_q:
+            return ['DDGS']
+        return ['DDGS','Google News US','Bing News US','Google News DE']
+
+    if mode=='commentary':
+        if lang=='tr':
+            return ['DDGS','Google News TR','Bing News US']
+        return ['DDGS','Google News US','Bing News US']
+
+    if mode=='social':
+        # Sosyal platformlarda News motorları yerine web indeksleri.
+        engines=['DDGS','Bing Web']
+        q=str(query or '').lower()
+        if 'reddit.com' in q or 'reddit' in q:
+            engines.append('Reddit Public')
+        if 'bsky.app' in q or 'bluesky' in q:
+            engines.append('Bluesky Public')
+        return list(dict.fromkeys(engines))
+
+    return ['Google News TR']
+
+def _v21_local_engine_call(engine,query,hours,cache_snapshot):
+    cache_key=_v11_cache_key('turkish',engine,query,hours)
+    cached=cache_snapshot.get(cache_key)
+    diag={
+        'Motor':engine,'Mod':'turkish','Sorgu':1,'Başarılı':0,'Boş/Başarısız':0,
+        'Retry':0,'Cache Kullanıldı':0,'Sonuç':0
+    }
+
+    if cached and cached.get('rows'):
+        try:
+            age=(time.time()-float(cached.get('ts',0)))/60.0
+        except Exception:
+            age=999
+        if age<=15:
+            rows=cached.get('rows') or []
+            diag['Başarılı']=1
+            diag['Cache Kullanıldı']=1
+            diag['Sonuç']=len(rows)
+            return {'rows':rows,'diag':diag,'cache_update':None}
+
+    def invoke():
+        if engine=='Google News TR':
+            return rss(query)
+        if engine=='DDGS Local':
+            return _v9_ddgs_raw(query,75,hours)
+        if engine=='Bing News TR':
+            return _v8_bing_news_rss(query,'tr-TR')
+        return []
+
+    sem=_V21_SEMAPHORES.get(engine)
+    try:
+        if sem:
+            with sem:
+                rows=invoke() or []
+        else:
+            rows=invoke() or []
+    except Exception:
+        rows=[]
+
+    if rows:
+        diag['Başarılı']=1
+        diag['Sonuç']=len(rows)
+        return {
+            'rows':rows,
+            'diag':diag,
+            'cache_update':(cache_key,{'ts':time.time(),'rows':rows})
+        }
+
+    if cached and cached.get('rows'):
+        rows=cached.get('rows') or []
+        diag['Cache Kullanıldı']=1
+        diag['Sonuç']=len(rows)
+        return {'rows':rows,'diag':diag,'cache_update':None}
+
+    diag['Boş/Başarısız']=1
+    return {'rows':[],'diag':diag,'cache_update':None}
+
+def _v21_engine_call(engine,query,mode,timespan,hours,cache_snapshot):
+    """
+    V20 motor fonksiyonunu motor-bazlı concurrency sınırı altında çalıştırır.
+    Böylece özellikle DDGS rate-limit/boş sonuç dalgalanması azalır.
+    """
+    sem=_V21_SEMAPHORES.get(engine)
+    if sem:
+        with sem:
+            return _v20_engine_call(engine,query,mode,timespan,hours,cache_snapshot)
+    return _v20_engine_call(engine,query,mode,timespan,hours,cache_snapshot)
+
+# ============================================================
+# /V21 TARAMA
+# ============================================================
+
 if run:
     st.session_state.pop('_v20_frame_cmp_rows',None)
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
@@ -12659,25 +13104,95 @@ if run:
         stat['Kaynak dışı']+=reasons['kaynak']
         return norm_rows
 
-    # 1) Türk ana taraması önce: kullanıcı ilk sonuçları en kısa sürede görsün.
+    # 1) Türk ana taraması — V21 çoklu motor + kararlı snapshot.
     primary_label,primary_queries,primary_mode=batches[0]
-    status_box.write(f'{primary_label} — {len(primary_queries)} sorgu / 16 eşzamanlı')
-    primary_raw=[]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(16,len(primary_queries))) as ex:
-        futures=[ex.submit(rss,q) for q in primary_queries]
-        for f in concurrent.futures.as_completed(futures):
-            try:
-                primary_raw.extend(f.result() or [])
-            except Exception:
-                pass
-    stat['Ham sonuç']+=len(primary_raw)
-    all_rows=dedupe(_merge_batch(primary_raw,primary_mode))
-    stat['Sonuç']=len(all_rows)
+
+    fresh_local=_v21_snapshot_load(
+        'turkish',
+        hours,
+        V21_FRESH_SNAPSHOT_MIN['turkish']
+    )
+
+    if fresh_local:
+        status_box.write(f'⚡ {primary_label} — sağlıklı yakın dönem snapshot ({len(fresh_local)})')
+        all_rows=dedupe(fresh_local)
+        stat['Sonuç']=len(all_rows)
+
+    else:
+        status_box.write(
+            f'{primary_label} — {len(primary_queries)} sorgu / '
+            'Google News TR + DDGS + Bing News TR'
+        )
+
+        local_jobs=[]
+        for q in primary_queries:
+            for engine in ['Google News TR','DDGS Local','Bing News TR']:
+                local_jobs.append((q,engine))
+
+        primary_raw=[]
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(18,max(1,len(local_jobs)))
+        ) as ex:
+
+            fmap={
+                ex.submit(
+                    _v21_local_engine_call,
+                    engine,
+                    q,
+                    hours,
+                    v11_cache_snapshot
+                ):(q,engine)
+                for q,engine in local_jobs
+            }
+
+            for fut in concurrent.futures.as_completed(fmap):
+                try:
+                    fetched=fut.result() or {}
+                    chunk=fetched.get('rows') or []
+                    diag=fetched.get('diag') or {}
+
+                    if diag:
+                        v11_engine_diag_records.append(diag)
+
+                    if fetched.get('cache_update'):
+                        v11_cache_updates.append(fetched['cache_update'])
+
+                    primary_raw.extend(chunk)
+
+                except Exception:
+                    pass
+
+        stat['Ham sonuç']+=len(primary_raw)
+
+        live_local=dedupe(_merge_batch(primary_raw,primary_mode))
+        local_cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
+        pooled_local=_v21_pool_load('turkish',local_cutoff)
+
+        if pooled_local:
+            live_local=dedupe(pooled_local+live_local)
+
+        # Canlı sonuç olağandışı düşükse son sağlıklı snapshot'ı fallback olarak birleştir.
+        if len(live_local)<V21_HEALTHY_MIN['turkish']:
+            stale=_v21_snapshot_load(
+                'turkish',
+                hours,
+                V21_STALE_FALLBACK_MIN['turkish']
+            )
+            if stale:
+                live_local=dedupe(stale+live_local)
+
+        all_rows=dedupe(live_local)
+
+        _v21_pool_upsert('turkish',all_rows)
+        _v21_snapshot_save('turkish',hours,all_rows)
+
+        stat['Sonuç']=len(all_rows)
 
     # V44: Hızlı İlk Bakış kaldırıldı.
     # Tarama sonuçları doğrudan aşağıdaki ana Görünüm ekranında (Kronolojik/Negatif/Yüksek Risk vb.) açılır.
 
-    # 2) Tamamlayıcı kaynaklar — V20 hızlı/kararlı yürütme.
+    # 2) Tamamlayıcı kaynaklar — V21 query-aware motorlar + kararlı fallback.
     supplemental=batches[1:]
     jobs=[]
     snapshot_by_mode={}
@@ -12688,10 +13203,15 @@ if run:
             ordered_modes.append(mode)
 
         mh=_v9_mode_hours(mode,hours,think_hours,movement_hours)
-        snap=_v20_snapshot_load(mode,mh)
 
-        if snap:
-            snapshot_by_mode[mode]=snap
+        fresh=_v21_snapshot_load(
+            mode,
+            mh,
+            V21_FRESH_SNAPSHOT_MIN.get(mode,15)
+        )
+
+        if fresh:
+            snapshot_by_mode[mode]=fresh
             continue
 
         for q in queries:
@@ -12701,7 +13221,7 @@ if run:
 
     if snapshot_by_mode:
         status_box.write(
-            '⚡ Sağlıklı yakın dönem snapshot yeniden kullanıldı: '
+            '⚡ Yakın dönem sağlıklı sonuç yeniden kullanıldı: '
             + ', '.join(f'{m} ({len(v)})' for m,v in snapshot_by_mode.items())
         )
 
@@ -12712,29 +13232,50 @@ if run:
             mh=_v9_mode_hours(mode,hours,think_hours,movement_hours)
             site_q=_v9_is_site_query(q)
 
-            for engine in _v20_engines_for(mode,site_q,q):
+            for engine in _v21_engines_for(mode,site_q,q):
                 engine_jobs.append((label,q,mode,engine,mh))
 
-        priority={'social':0,'foreign':1,'thinktank':2,'movement':3,'kurdish':4,'commentary':5}
-        engine_jobs.sort(key=lambda z:(priority.get(z[2],9),z[2],z[3]))
+        # Sosyal/yabancı önce; DDGS'nin kendi concurrency limiti ayrıca uygulanır.
+        priority={
+            'social':0,
+            'foreign':1,
+            'thinktank':2,
+            'movement':3,
+            'kurdish':4,
+            'commentary':5,
+            'negative':6,
+            'official':7,
+            'statistics':8
+        }
 
-        workers=min(V20_ENGINE_WORKERS,max(1,len(engine_jobs)))
+        engine_jobs.sort(
+            key=lambda z:(priority.get(z[2],9),z[2],z[3])
+        )
+
+        workers=min(V21_ENGINE_WORKERS,max(1,len(engine_jobs)))
 
         status_box.write(
-            f'⚡ Tamamlayıcı kaynaklar — {len(jobs)} sorgu / {len(engine_jobs)} motor işi / '
-            f'{workers} eşzamanlı · V20 hızlı/kararlı tarama'
+            f'⚡ Tamamlayıcı kaynaklar — {len(jobs)} sorgu / '
+            f'{len(engine_jobs)} motor işi / {workers} worker · '
+            'motor-bazlı rate-limit koruması aktif'
         )
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
-            future_map={
+            fmap={
                 ex.submit(
-                    _v20_engine_call,engine,q,mode,when,mh,v11_cache_snapshot
+                    _v21_engine_call,
+                    engine,
+                    q,
+                    mode,
+                    when,
+                    mh,
+                    v11_cache_snapshot
                 ):(label,q,mode,engine)
                 for label,q,mode,engine,mh in engine_jobs
             }
 
-            for fut in concurrent.futures.as_completed(future_map):
-                label,q,mode,engine=future_map[fut]
+            for fut in concurrent.futures.as_completed(fmap):
+                label,q,mode,engine=fmap[fut]
 
                 try:
                     fetched=fut.result() or {}
@@ -12753,9 +13294,58 @@ if run:
                 stat['Ham sonuç']+=len(chunk)
                 supplemental_raw_by_mode.setdefault(mode,[]).extend(chunk)
 
-    stat['Snapshot Modları']={m:len(v) for m,v in snapshot_by_mode.items()}
+    # Sosyal açık uçları sabit birkaç güçlü sorguyla ayrıca besle.
+    if 'social' in ordered_modes and 'social' not in snapshot_by_mode:
+        direct_social_queries=[
+            '"Terörsüz Türkiye"',
+            'PKK Ocalan Turkey peace process',
+            '"PKK disarmament" Turkey',
+            'Öcalan PKK Türkiye'
+        ]
 
-    # Mode bazlı normalize + kararlı havuz + snapshot.
+        extra_jobs=[]
+
+        for q in direct_social_queries:
+            extra_jobs.append((q,'Reddit Public'))
+            extra_jobs.append((q,'Bluesky Public'))
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+            fmap={
+                ex.submit(
+                    _v21_engine_call,
+                    engine,
+                    q,
+                    'social',
+                    when,
+                    hours,
+                    v11_cache_snapshot
+                ):(q,engine)
+                for q,engine in extra_jobs
+            }
+
+            for fut in concurrent.futures.as_completed(fmap):
+                try:
+                    fetched=fut.result() or {}
+                    chunk=fetched.get('rows') or []
+                    diag=fetched.get('diag') or {}
+
+                    if diag:
+                        v11_engine_diag_records.append(diag)
+
+                    if fetched.get('cache_update'):
+                        v11_cache_updates.append(fetched['cache_update'])
+
+                    supplemental_raw_by_mode.setdefault('social',[]).extend(chunk)
+                    stat['Ham sonuç']+=len(chunk)
+
+                except Exception:
+                    pass
+
+    stat['Snapshot Modları']={
+        m:len(v) for m,v in snapshot_by_mode.items()
+    }
+
+    # Mode bazlı normalize + kararlı kaynak havuzu.
     for mode in ordered_modes:
         mh=_v9_mode_hours(mode,hours,think_hours,movement_hours)
         used_snapshot=mode in snapshot_by_mode
@@ -12768,22 +13358,33 @@ if run:
             incoming=_merge_batch(raw,mode) if raw else []
             current_incoming=list(incoming)
 
-        mode_cutoff=(datetime.now(timezone.utc)-timedelta(hours=mh)).astimezone(timezone.utc)
+        mode_cutoff=(
+            datetime.now(timezone.utc)-timedelta(hours=mh)
+        ).astimezone(timezone.utc)
 
-        # V19 kararlı kaynak havuzu korunur.
-        pooled=_v19_pool_load(mode,mode_cutoff)
+        pooled=_v21_pool_load(mode,mode_cutoff)
 
         if pooled:
             incoming=dedupe(pooled+incoming)
 
+        # Canlı sonuç sağlıklı eşik altındaysa daha eski ama geçerli son snapshot'ı birleştir.
+        if not used_snapshot and len(incoming)<V21_HEALTHY_MIN.get(mode,0):
+            stale=_v21_snapshot_load(
+                mode,
+                mh,
+                V21_STALE_FALLBACK_MIN.get(mode,360)
+            )
+
+            if stale:
+                incoming=dedupe(stale+incoming)
+
         if current_incoming:
-            _v19_pool_upsert(mode,current_incoming)
+            _v21_pool_upsert(mode,current_incoming)
 
-        # Yalnız sağlıklı/doygun sonuç snapshot olur.
-        if not used_snapshot and incoming:
-            _v20_snapshot_save(mode,mh,incoming)
+        if incoming:
+            _v21_snapshot_save(mode,mh,incoming)
 
-        # Kritik eşik kontrolü yalnız bir kez.
+        # Kritik eşik kontrolü bir kez.
         if instant_alerts and incoming:
             for qr in incoming:
                 critical_label=critical_industrial_incident(
