@@ -16035,6 +16035,553 @@ def _v23_gephi_interpretation(summary_df):
 # ============================================================
 # /V23 GEPHI
 # ============================================================
+
+# ============================================================
+# V24 — GEPHI ÇERÇEVE SINIFLANDIRMASI 2.0
+#
+# YALNIZ GEPHI katmanını güçlendirir.
+# V23 tarama motoru, sosyal medya, tarih filtresi, bilgi notu,
+# İlk Bakış, Şu An Ne Konuşuluyor, Kim Ne Diyor ve
+# Aynı Olay — Farklı Bakış bölümlerine dokunmaz.
+#
+# Başlıca iyileştirmeler:
+# - Öcalan’s / Öcalan'ın / Ocalan's gibi iyelik varyasyonlarını normalize eder.
+# - Türkçe karakterler ile ASCII karşılıklarını aynılaştırır.
+# - İngilizce yanında Almanca, Fransızca ve temel Arapça çerçeve terimlerini yakalar.
+# - Tek kelimelik "status" gibi zayıf eşleşmeler yerine aktör+bağlam kuralları kullanır.
+# - Başlığa içerikten daha yüksek puan verir.
+# - GEXF / Edges CSV içine hangi kelimelerin ve örnek başlıkların bağlantıyı
+#   oluşturduğunu kanıt alanı olarak yazar.
+# ============================================================
+
+V24_FRAME_PATTERNS = {
+    "Öcalan'ın Statüsü / Özgürlüğü": {
+        'phrases': [
+            'ocalan freedom','freedom of ocalan','freedom for ocalan',
+            'ocalan status','status of ocalan','ocalan release','release of ocalan',
+            'ocalan conditions','conditions for ocalan','imrali conditions',
+            'right to hope','isolation of ocalan','ocalan isolation',
+            'ocalan ozgurluk','ocalanin ozgurlugu','ocalan statu','ocalanin statusu',
+            'imrali kosul','umut hakki','tecrit',
+            'freiheit ocalan','ocalans freiheit','freilassung ocalan','status ocalan',
+            'liberte ocalan','liberte d ocalan','statut ocalan','liberation ocalan',
+            'حرية أوجلان','إطلاق سراح أوجلان','وضع أوجلان','عزلة أوجلان'
+        ],
+        'actors':['ocalan','imrali','أوجلان'],
+        'context':['freedom','free','release','liberty','status','condition','isolation',
+                   'right to hope','ozgurluk','serbest','statu','kosul','tecrit','umut hakki',
+                   'freiheit','freilassung','statut','liberte','liberation',
+                   'حرية','إطلاق سراح','وضع','عزلة']
+    },
+    "Hukuki Güvence / Meclis": {
+        'phrases':[
+            'hukuki guvence','hukuki cerceve','cerceve yasa','yasal duzenleme',
+            'anayasal guvence','anayasal duzenleme','legal guarantee','legal safeguards',
+            'legal framework','framework law','constitutional guarantee',
+            'constitutional safeguards','parliamentary commission','parliamentary committee',
+            'rechtlicher rahmen','gesetzlicher rahmen','rechtliche garantie',
+            'cadre juridique','garantie juridique','garanties constitutionnelles',
+            'إطار قانوني','ضمانات قانونية','ضمانات دستورية'
+        ],
+        'any':['tbmm','meclis','parliament','commission','komisyon','legislation','legislative',
+               'kanun','yasa','law','gesetz','parlement','loi','البرلمان','قانون']
+    },
+    "Silahsızlanma / Fesih": {
+        'phrases':[
+            'silah birak','silahlari birak','silahsizlan','orgutun feshi','pkk fesih',
+            'disarmament','lay down arms','laying down arms','surrender weapons',
+            'dissolution','dissolve the pkk','disbandment','disband the pkk',
+            'entwaffnung','waffen niederlegen','auflosung der pkk','auflösung der pkk',
+            'desarmement','désarmement','deposer les armes','déposer les armes',
+            'dissolution du pkk','نزع السلاح','إلقاء السلاح','حل حزب العمال الكردستاني'
+        ]
+    },
+    "Demokratik Siyaset / Entegrasyon": {
+        'phrases':[
+            'demokratik siyaset','demokratik siyasi','siyasal yasama katil','siyasi yasama katil',
+            'democratic politics','democratic political life','political participation',
+            'democratic participation','integration into politics','political integration',
+            'demokratische politik','politische integration','politische teilhabe',
+            'politique democratique','politique démocratique','participation politique',
+            'integration politique','intégration politique','المشاركة السياسية','السياسة الديمقراطية'
+        ],
+        'any':['entegrasyon','integration']
+    },
+    "Şart / Karşılıklılık / Müzakere": {
+        'phrases':[
+            'on kosul','on kosulu','tek tarafli','karsilikli adim','karsiliklilik',
+            'one sided','not a one sided','precondition','pre condition','reciprocal steps',
+            'reciprocity','trilateral negotiation','three way negotiation',
+            'gegenseitigkeit','vorbedingung','nicht einseitig','verhandlungen',
+            'reciprocite','réciprocité','condition prealable','condition préalable',
+            'pas unilateral','pas unilatéral','negociations','négociations',
+            'شرط مسبق','ليس أحادي الجانب','مفاوضات','متبادلة'
+        ],
+        'conditional':['essential','necessary','requires','required','must','unless','condition',
+                       'sart','kosul','gereklidir','gerekli','zorunlu','bedingt','notwendig',
+                       'necessaire','nécessaire','شرط','ضروري'],
+        'process':['peace process','baris sureci','cozum sureci','disarmament','silahsizlanma',
+                   'pkk','ocalan','müzakere','muzakere','negotiation','dialogue','diyalog']
+    },
+    "Taahhüt / İlerleme": {
+        'phrases':[
+            'irademiz net','irade nettir','kararliyiz','taahhut ediyor','olumlu adim',
+            'commitment is clear','committed to','commitment to','ready to','will proceed',
+            'accepted disarmament','positive step','progress made','moving forward',
+            'entschlossen','verpflichtet sich','fortschritt','engage a','engagé à',
+            'progres','progrès','ملتزمون','تقدم','خطوة إيجابية'
+        ]
+    },
+    "Siyasi Süreç / Diyalog": {
+        'phrases':[
+            'terorsuz turkiye','terror free turkey','baris sureci','peace process',
+            'cozum sureci','political process','siyasi surec','diyalog sureci','dialogue process',
+            'friedensprozess','politischer prozess','dialogprozess','processus de paix',
+            'processus politique','dialogue','عملية السلام','عملية سياسية','حوار'
+        ],
+        'any':['gorusme','meeting','temas','contact','heyet','delegation']
+    },
+    "Kürt Hakları / Statü": {
+        'phrases':[
+            'kurt haklari','kurdish rights','equal citizenship','esit yurttas',
+            'yerel yonetim','local self government','local government rights',
+            'dil ve kultur','language and culture','constitutional recognition of kurds',
+            'kurdische rechte','gleichberechtigte staatsburgerschaft','autonomierechte',
+            'droits kurdes','droits des kurdes','citoyennete egale','citoyenneté égale',
+            'حقوق الأكراد','المواطنة المتساوية','الحكم المحلي'
+        ],
+        'actors':['kurt','kurd','kurdish','kurdisch','kurde','kurdes','الأكراد'],
+        'context':['hak','rights','recht','rechte','droits','status','statu','statut','citizenship',
+                   'yurttas','language','dil','culture','kultur','حقوق','وضع','لغة','ثقافة']
+    },
+    "Suriye / SDG-YPG": {
+        'any':['suriye','syria','syrien','syrie','سوريا','sdf','sdg','ypg','pyd',
+               'damascus','sam','دمشق','syrian democratic forces']
+    },
+    "Irak / IKBY / Kandil": {
+        'any':['irak','iraq','irakisch','irakien','العراق','ikby','krg','kandil','qandil',
+               'erbil','اربيل','أربيل','suleymaniye','sulaymaniyah','السليمانية']
+    },
+    "Eleştiri / Risk / Gerilim": {
+        'phrases':['guven krizi','security concern','risk of collapse','process stalled',
+                   'confidence crisis','sicherheitsrisiko','risque securitaire','risque sécuritaire',
+                   'مخاطر أمنية','أزمة ثقة'],
+        'any':['elestiri','elestirdi','yetersiz','eksik','risk','kaygi','gerilim','kriz','catisma',
+               'saldiri','criticized','criticism','insufficient','shortcoming','concern','tension',
+               'crisis','conflict','attack','stalled','failure','kritik','risiko','spannung',
+               'critique','insuffisant','tension','crise','conflit','مخاطر','انتقاد','توتر','أزمة']
+    },
+    "Toplumsal Tepki / Kamuoyu": {
+        'phrases':['sehit aile','public opinion','victim families','opinion poll',
+                   'offentliche meinung','öffentliche meinung','opinion publique','الرأي العام'],
+        'any':['kamuoyu','toplumsal','gazi','tepki','anket','society','societal','reaction','survey',
+               'gesellschaft','reaktion','societe','société','reaction','réaction','استطلاع','ردود فعل']
+    }
+}
+
+
+def _v24_frame_norm(value):
+    import unicodedata as _ud
+    import html as _html
+    text=_html.unescape(str(value or ''))
+    text=_repair_mojibake_utf8(text)
+    text=_ud.normalize('NFKC',text)
+    text=(text.replace('’',"'").replace('‘',"'").replace('`',"'")
+              .replace('´',"'").replace('–','-').replace('—','-'))
+    text=text.lower()
+
+    # İngilizce iyelik eki: Öcalan's / Ocalan’s -> ocalan
+    text=re.sub(r"\b([a-zçğıöşü]+)'s\b",r'\1',text,flags=re.I)
+
+    # Türkçe karakterleri ASCII eşdeğerine indir; Arapça vb. karakterler korunur.
+    trans=str.maketrans({'ç':'c','ğ':'g','ı':'i','ö':'o','ş':'s','ü':'u','İ':'i','Ç':'c','Ğ':'g','Ö':'o','Ş':'s','Ü':'u'})
+    text=text.translate(trans)
+
+    # Noktalama farklılıklarını kelime aralığına dönüştür.
+    text=re.sub(r"[\"“”'/:;,.!?()\[\]{}|_+=*]+",' ',text)
+    text=re.sub(r'-+',' ',text)
+    text=re.sub(r'\s+',' ',text).strip()
+    return text
+
+
+def _v24_contains(text,phrase):
+    p=_v24_frame_norm(phrase)
+    if not p:
+        return False
+    # Kelime sınırlarıyla eşleştir; kısa/generic parçalarda substring hatasını azaltır.
+    pat=r'(?<!\w)'+re.escape(p).replace(r'\ ',r'\s+')+r'(?!\w)'
+    try:
+        return re.search(pat,text,re.I) is not None
+    except Exception:
+        return p in text
+
+
+def _v24_frame_match_details(row):
+    title_raw=str(row.get('Başlık','') or '')
+    summary_raw=str(row.get('İçerik_Özeti','') or '')
+    extra_raw=f"{row.get('Çerçeve','')} {row.get('Kategori','')}"
+
+    title=_v24_frame_norm(title_raw)
+    body=_v24_frame_norm(f'{title_raw} {summary_raw} {extra_raw}')
+
+    matches=[]
+
+    for frame,rules in V24_FRAME_PATTERNS.items():
+        score=0
+        evidence=[]
+
+        # Çok kelimeli özgül ifadeler: başlık 4, içerik 2.
+        for phrase in rules.get('phrases',[]):
+            if _v24_contains(title,phrase):
+                score += 4
+                evidence.append('başlık:'+str(phrase))
+            elif _v24_contains(body,phrase):
+                score += 2
+                evidence.append('metin:'+str(phrase))
+
+        # Tekil ama nispeten güvenilir anahtarlar: başlık 2, içerik 1.
+        for term in rules.get('any',[]):
+            if _v24_contains(title,term):
+                score += 2
+                evidence.append('başlık:'+str(term))
+            elif _v24_contains(body,term):
+                score += 1
+                evidence.append('metin:'+str(term))
+
+        # Aktör + bağlam birlikte bulunmalı. Örn. "Öcalan’s Freedom".
+        actors=rules.get('actors',[])
+        context=rules.get('context',[])
+        if actors and context:
+            actor_hit=[a for a in actors if _v24_contains(body,a)]
+            context_hit=[c for c in context if _v24_contains(body,c)]
+            if actor_hit and context_hit:
+                title_pair=(
+                    any(_v24_contains(title,a) for a in actor_hit)
+                    and any(_v24_contains(title,c) for c in context_hit)
+                )
+                score += 7 if title_pair else 4
+                evidence.append('bağlam:'+actor_hit[0]+' + '+context_hit[0])
+
+        # Şart/karşılıklılıkta conditional kelime tek başına yetmez;
+        # süreç/aktör/disarmament bağlamı da aranır.
+        conditional=rules.get('conditional',[])
+        process=rules.get('process',[])
+        if conditional and process:
+            cond_hit=[c for c in conditional if _v24_contains(body,c)]
+            proc_hit=[p for p in process if _v24_contains(body,p)]
+            if cond_hit and proc_hit:
+                title_pair=(
+                    any(_v24_contains(title,c) for c in cond_hit)
+                    and any(_v24_contains(title,p) for p in proc_hit)
+                )
+                score += 6 if title_pair else 3
+                evidence.append('bağlam:'+cond_hit[0]+' + '+proc_hit[0])
+
+        if score>0:
+            # aynı kanıtı tekrarlama
+            evidence=list(dict.fromkeys(evidence))
+            matches.append({
+                'frame':frame,
+                'score':int(score),
+                'evidence':evidence[:8]
+            })
+
+    # Özgül çerçeveleri genel süreçten önce tut.
+    priority={
+        "Öcalan'ın Statüsü / Özgürlüğü":5,
+        "Hukuki Güvence / Meclis":5,
+        "Silahsızlanma / Fesih":5,
+        "Kürt Hakları / Statü":5,
+        "Şart / Karşılıklılık / Müzakere":5,
+        "Demokratik Siyaset / Entegrasyon":4,
+        "Suriye / SDG-YPG":4,
+        "Irak / IKBY / Kandil":4,
+        "Taahhüt / İlerleme":4,
+        "Eleştiri / Risk / Gerilim":3,
+        "Toplumsal Tepki / Kamuoyu":3,
+        "Siyasi Süreç / Diyalog":1
+    }
+    matches.sort(key=lambda x:(x['score'],priority.get(x['frame'],0),x['frame']),reverse=True)
+
+    # Gürültüyü azalt: zayıf tek sinyalli çerçeveleri ancak başka hiç sonuç yoksa tut.
+    strong=[m for m in matches if m['score']>=2]
+    if strong:
+        matches=strong
+
+    # Genel siyasi süreç güçlü özgül çerçeveleri boğmasın.
+    specific=[m for m in matches if m['frame']!='Siyasi Süreç / Diyalog']
+    if specific:
+        generic=[m for m in matches if m['frame']=='Siyasi Süreç / Diyalog' and m['score']>=5]
+        matches=specific+generic
+        matches.sort(key=lambda x:(x['score'],priority.get(x['frame'],0)),reverse=True)
+
+    # En fazla 4; V23'te 3'tü. Çapraz dil metinlerde bir yan çerçeveyi kaçırmamak için 4.
+    matches=matches[:4]
+
+    if not matches:
+        existing=_v24_frame_norm(row.get('Çerçeve',''))
+        fallback_map={
+            'hukuki cerceve':"Hukuki Güvence / Meclis",
+            'siyasi strateji':"Siyasi Süreç / Diyalog",
+            'genel surec':"Siyasi Süreç / Diyalog",
+            'bolgesel jeopolitik':"Suriye / SDG-YPG",
+            'toplumsal tepki':"Toplumsal Tepki / Kamuoyu"
+        }
+        frame=fallback_map.get(existing,"Siyasi Süreç / Diyalog")
+        matches=[{'frame':frame,'score':1,'evidence':['fallback:'+str(row.get('Çerçeve','') or 'Genel')]}]
+
+    return matches
+
+
+def _v23_frame_scores(row):
+    """V24 override: V23 ağ kurucusu aynı kalır, sınıflandırıcı güçlenir."""
+    return [m['frame'] for m in _v24_frame_match_details(row)]
+
+
+def _v23_gephi_network(df,network_type='family',min_weight=1):
+    """V24 override: güçlendirilmiş sınıflandırma + kenar kanıtları."""
+    if df is None or df.empty:
+        return pd.DataFrame(),pd.DataFrame(),pd.DataFrame()
+
+    rows=[]
+    for _,r in df.iterrows():
+        family=_v23_source_family(r)
+        source_key,source_label=_v23_source_identity(r)
+
+        if network_type=='family':
+            source_key='family::'+family
+            source_label=family
+            node_type='SourceFamily'
+        else:
+            source_key='source::'+str(source_key)
+            node_type='Source'
+
+        article_id=str(r.get('URL','') or title_key(r.get('Başlık','')))
+        event_id=str(r.get('Olay_ID','') or title_key(r.get('Başlık','')))
+        title=str(r.get('Başlık','') or '')
+        url=str(r.get('URL','') or '')
+
+        try:
+            tone=_v18_tone(r)
+        except Exception:
+            tone=str(r.get('Yaklaşım','') or 'Nötr / bilgi odaklı')
+
+        for m in _v24_frame_match_details(r):
+            rows.append({
+                'SourceKey':source_key,
+                'SourceLabel':source_label,
+                'SourceFamily':family,
+                'NodeType':node_type,
+                'Frame':m['frame'],
+                'FrameScore':m['score'],
+                'Evidence':' | '.join(m['evidence']),
+                'ArticleID':article_id,
+                'EventID':event_id,
+                'Title':title,
+                'URL':url,
+                'Tone':tone
+            })
+
+    if not rows:
+        return pd.DataFrame(),pd.DataFrame(),pd.DataFrame()
+
+    work=pd.DataFrame(rows)
+    edge_rows=[]
+
+    for keys,g in work.groupby(
+        ['SourceKey','SourceLabel','SourceFamily','NodeType','Frame'],dropna=False
+    ):
+        source_key,source_label,family,node_type,frame=keys
+        article_count=g['ArticleID'].nunique()
+        event_count=g['EventID'].nunique()
+
+        evidence=[]
+        for ev in g.sort_values('FrameScore',ascending=False)['Evidence'].tolist():
+            for part in str(ev).split(' | '):
+                if part and part not in evidence:
+                    evidence.append(part)
+
+        samples=[]
+        sample_urls=[]
+        for _,rr in g.sort_values('FrameScore',ascending=False).iterrows():
+            t=str(rr.get('Title','') or '').strip()
+            u=str(rr.get('URL','') or '').strip()
+            if t and t not in samples:
+                samples.append(t)
+                sample_urls.append(u)
+            if len(samples)>=3:
+                break
+
+        edge_rows.append({
+            'SourceKey':source_key,
+            'SourceLabel':source_label,
+            'SourceFamily':family,
+            'NodeType':node_type,
+            'Frame':frame,
+            'Weight':int(article_count),
+            'ArticleCount':int(article_count),
+            'EventCount':int(event_count),
+            'MeanFrameScore':round(float(g['FrameScore'].mean()),2),
+            'MaxFrameScore':int(g['FrameScore'].max()),
+            'EvidenceTerms':' || '.join(evidence[:12]),
+            'SampleTitles':' || '.join(samples),
+            'SampleURLs':' || '.join(sample_urls),
+            'DominantTone':_v23_mode_value(g['Tone'].tolist(),'Nötr / bilgi odaklı')
+        })
+
+    edges=pd.DataFrame(edge_rows)
+    edges=edges[edges['Weight']>=max(1,int(min_weight))].copy()
+    if edges.empty:
+        return pd.DataFrame(),pd.DataFrame(),pd.DataFrame()
+
+    source_totals=edges.groupby('SourceKey')['Weight'].sum().to_dict()
+    edges['ShareOfSourceFrameLinksPct']=edges.apply(
+        lambda r:round(100*float(r['Weight'])/max(1,float(source_totals.get(r['SourceKey'],1))),1),axis=1
+    )
+
+    def nid(prefix,value):
+        return prefix+hashlib.sha1(str(value).encode('utf-8','ignore')).hexdigest()[:14]
+
+    source_id_map={k:nid('S_',k) for k in edges['SourceKey'].drop_duplicates()}
+    frame_id_map={f:nid('F_',f) for f in edges['Frame'].drop_duplicates()}
+
+    node_rows=[]
+    for source_key,g in edges.groupby('SourceKey'):
+        label=str(g['SourceLabel'].iloc[0])
+        family=str(g['SourceFamily'].iloc[0])
+        node_type=str(g['NodeType'].iloc[0])
+        source_work=work[work['SourceKey']==source_key]
+        node_rows.append({
+            'Id':source_id_map[source_key],
+            'Label':label,
+            'NodeType':node_type,
+            'ColorGroup':family,
+            'SourceFamily':family,
+            'ArticleCount':int(source_work['ArticleID'].nunique()),
+            'EventCount':int(source_work['EventID'].nunique()),
+            'DominantTone':_v23_mode_value(source_work['Tone'].tolist(),''),
+            'Frame':''
+        })
+
+    for frame,g in edges.groupby('Frame'):
+        frame_work=work[work['Frame']==frame]
+        node_rows.append({
+            'Id':frame_id_map[frame],
+            'Label':frame,
+            'NodeType':'Frame',
+            'ColorGroup':'ÇERÇEVE',
+            'SourceFamily':'',
+            'ArticleCount':int(frame_work['ArticleID'].nunique()),
+            'EventCount':int(frame_work['EventID'].nunique()),
+            'DominantTone':_v23_mode_value(frame_work['Tone'].tolist(),''),
+            'Frame':frame
+        })
+
+    nodes=pd.DataFrame(node_rows)
+
+    gephi_edges=[]
+    for i,r in edges.reset_index(drop=True).iterrows():
+        gephi_edges.append({
+            'Id':f'E_{i+1}',
+            'Source':source_id_map[r['SourceKey']],
+            'Target':frame_id_map[r['Frame']],
+            'Type':'Undirected',
+            'Weight':int(r['Weight']),
+            'ArticleCount':int(r['ArticleCount']),
+            'EventCount':int(r['EventCount']),
+            'MeanFrameScore':float(r['MeanFrameScore']),
+            'MaxFrameScore':int(r['MaxFrameScore']),
+            'ShareOfSourceFrameLinksPct':float(r['ShareOfSourceFrameLinksPct']),
+            'DominantTone':str(r['DominantTone']),
+            'SourceLabel':str(r['SourceLabel']),
+            'SourceFamily':str(r['SourceFamily']),
+            'Frame':str(r['Frame']),
+            'EvidenceTerms':str(r['EvidenceTerms']),
+            'SampleTitles':str(r['SampleTitles']),
+            'SampleURLs':str(r['SampleURLs'])
+        })
+
+    gephi_edges=pd.DataFrame(gephi_edges)
+
+    family_edges=edges.groupby(['SourceFamily','Frame'],as_index=False)['Weight'].sum()
+    summary=[]
+    for family,g in family_edges.groupby('SourceFamily'):
+        g=g.sort_values('Weight',ascending=False).reset_index(drop=True)
+        total=max(1,int(g['Weight'].sum()))
+        top=g.head(3)
+        rec={'Kaynak Ailesi':family,'Toplam Bağ':total}
+        for ix in range(3):
+            if ix<len(top):
+                rec[f'{ix+1}. Çerçeve']=str(top.iloc[ix]['Frame'])
+                rec[f'{ix+1}. Pay %']=round(100*int(top.iloc[ix]['Weight'])/total,1)
+            else:
+                rec[f'{ix+1}. Çerçeve']=''
+                rec[f'{ix+1}. Pay %']=0.0
+        summary.append(rec)
+
+    summary_df=pd.DataFrame(summary).sort_values('Toplam Bağ',ascending=False).reset_index(drop=True)
+    return nodes,gephi_edges,summary_df
+
+
+def _v23_gephi_gexf(nodes,edges,description='Terörsüz Türkiye Kaynak-Çerçeve Ağı'):
+    """V24 override: GEXF edge attributes içinde sınıflandırma kanıtlarını da taşır."""
+    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'})
+    meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')})
+    ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT V24'
+    ET.SubElement(meta,'description').text=description
+    graph=ET.SubElement(root,'graph',{'mode':'static','defaultedgetype':'undirected'})
+
+    node_attrs=[
+        ('0','NodeType','string'),('1','ColorGroup','string'),('2','SourceFamily','string'),
+        ('3','ArticleCount','integer'),('4','EventCount','integer'),('5','DominantTone','string'),
+        ('6','Frame','string')
+    ]
+    edge_attrs=[
+        ('0','ArticleCount','integer'),('1','EventCount','integer'),
+        ('2','ShareOfSourceFrameLinksPct','double'),('3','DominantTone','string'),
+        ('4','SourceLabel','string'),('5','SourceFamily','string'),('6','Frame','string'),
+        ('7','MeanFrameScore','double'),('8','MaxFrameScore','integer'),
+        ('9','EvidenceTerms','string'),('10','SampleTitles','string'),('11','SampleURLs','string')
+    ]
+
+    na=ET.SubElement(graph,'attributes',{'class':'node'})
+    for aid,title,typ in node_attrs:
+        ET.SubElement(na,'attribute',{'id':aid,'title':title,'type':typ})
+    ea=ET.SubElement(graph,'attributes',{'class':'edge'})
+    for aid,title,typ in edge_attrs:
+        ET.SubElement(ea,'attribute',{'id':aid,'title':title,'type':typ})
+
+    ns=ET.SubElement(graph,'nodes')
+    node_attr_map={title:aid for aid,title,_ in node_attrs}
+    for _,r in nodes.iterrows():
+        n=ET.SubElement(ns,'node',{'id':str(r['Id']),'label':str(r['Label'])})
+        av=ET.SubElement(n,'attvalues')
+        for col in ['NodeType','ColorGroup','SourceFamily','ArticleCount','EventCount','DominantTone','Frame']:
+            val=r.get(col,'')
+            if pd.isna(val): val=''
+            ET.SubElement(av,'attvalue',{'for':node_attr_map[col],'value':str(val)})
+
+    es=ET.SubElement(graph,'edges')
+    edge_attr_map={title:aid for aid,title,_ in edge_attrs}
+    for _,r in edges.iterrows():
+        e=ET.SubElement(es,'edge',{
+            'id':str(r['Id']),'source':str(r['Source']),'target':str(r['Target']),
+            'weight':str(float(r['Weight']))
+        })
+        av=ET.SubElement(e,'attvalues')
+        for col in ['ArticleCount','EventCount','ShareOfSourceFrameLinksPct','DominantTone',
+                    'SourceLabel','SourceFamily','Frame','MeanFrameScore','MaxFrameScore',
+                    'EvidenceTerms','SampleTitles','SampleURLs']:
+            val=r.get(col,'')
+            if pd.isna(val): val=''
+            ET.SubElement(av,'attvalue',{'for':edge_attr_map[col],'value':str(val)})
+
+    return ET.tostring(root,encoding='utf-8',xml_declaration=True)
+
+# ============================================================
+# /V24 GEPHI ÇERÇEVE 2.0
+# ============================================================
+
 # V3 — SADELEŞTİRİLMİŞ TERÖRSÜZ TÜRKİYE ANALİST ARAYÜZÜ
 # Amaç: Yerli basın + sosyal medya/açık sosyal + yabancı basın + think tank
 # Ayrı sekmeler; yalnız Detaylı Bilgi Notu ve Analiz Sepeti işlemleri.
@@ -16249,7 +16796,7 @@ else:
 st.subheader('🕸️ Gephi Ağ Analizi — Kaynak / Çerçeve Ağı')
 st.caption(
     'Bu bölüm tarama sırasında çalışmaz ve tarama hızını etkilemez. '
-    'Yalnız düğmeye bastığınızda mevcut V22 tarama verisinden Gephi dosyaları üretir.'
+    'Yalnız düğmeye bastığınızda mevcut V23 tarama verisinden güçlendirilmiş Gephi dosyaları üretir.'
 )
 
 _gephi_type=st.radio(
