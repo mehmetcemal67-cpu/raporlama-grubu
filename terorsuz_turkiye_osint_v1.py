@@ -10037,6 +10037,27 @@ with st.sidebar:
                                help='Tarama devam ederken yeni negatif veya yüksek riskli içerik yakalanırsa ekranda anlık bildirim gösterir.')
     period=st.selectbox('🕒 Haber dönemi',['⚡ Son 3 saat','📅 Son 24 saat','📆 Son 48 saat','📆 Son 1 hafta','🗓️ Son 1 ay'],index=1)
     hours={'⚡ Son 3 saat':3,'📅 Son 24 saat':24,'📆 Son 48 saat':48,'📆 Son 1 hafta':168,'🗓️ Son 1 ay':720}[period]
+
+    st.markdown('---')
+    st.caption('Derin kaynaklar günlük basından daha seyrek yayın yaptığı için bağımsız tarama penceresi kullanılabilir.')
+    think_period=st.selectbox(
+        '🧠 Think Tank tarama derinliği',
+        ['📆 Son 1 ay','🗓️ Son 3 ay','🗓️ Son 6 ay'],
+        index=1
+    )
+    think_hours={'📆 Son 1 ay':720,'🗓️ Son 3 ay':2160,'🗓️ Son 6 ay':4320}[think_period]
+
+    movement_period=st.selectbox(
+        '🛰️ Kürt/PKK-KCK çevresi açık kaynak derinliği',
+        ['Ana haber dönemiyle aynı','📆 Son 1 ay','🗓️ Son 3 ay'],
+        index=1
+    )
+    movement_hours={
+        'Ana haber dönemiyle aynı':hours,
+        '📆 Son 1 ay':720,
+        '🗓️ Son 3 ay':2160
+    }[movement_period]
+
     run=st.button('🔍 TARAMAYI BAŞLAT / YENİLE',type='primary',use_container_width=True)
 
 if 'rows' not in st.session_state: st.session_state.rows=None
@@ -11072,6 +11093,488 @@ def normalize_rows(raw, cutoff, mode, user_query):
 # /V8
 # ============================================================
 
+# ============================================================
+# V9 — DERİN ULUSLARARASI / THINK TANK / HAREKET ÇEVRESİ OSINT
+#
+# V8 kaynak ayrımını korur. V9 kapsamı büyütür:
+# - yabancı medya: daha geniş domain havuzu + kaynak-bazlı doğrudan tarama
+# - think tank: daha geniş kurum havuzu + bağımsız 1/3/6 aylık derinlik
+# - Kürt bölgesel medya ile PKK/KCK çevresi/hareket söylemi ayrı kanallar
+# - ANF'nin çok dilli alan adları, Stêrk TV, Ronahî TV, Medya News,
+#   Yeni Özgür Politika, JINNEWS vb. açık kaynaklar
+# - Telegram, Bluesky, Threads, TikTok gibi indekslenebilen açık sosyal alanlar
+# - yazar / söyleşi / yorum / politika analizi sorguları genişletildi
+# - kaynak kapsama özeti eklendi
+# ============================================================
+
+TT_FOREIGN_V9 = list(dict.fromkeys(TT_FOREIGN_EXPANDED + [
+    # Kuzey Amerika / Birleşik Krallık
+    'axios.com','thehill.com','usatoday.com','latimes.com','politico.com',
+    'foreignpolicy.com','semafor.com','theconversation.com',
+    # Avrupa
+    'guardian.ng','irishtimes.com','independent.ie','dutchnews.nl',
+    'nltimes.nl','brusselstimes.com','letemps.ch','rfi.fr','liberation.fr',
+    'deutschlandfunk.de','handelsblatt.com','n-tv.de','dwnews.com',
+    'corriere.it','repubblica.it','ilsole24ore.com','rainews.it',
+    'efe.com','rtve.es','publico.es','lavanguardia.com',
+    'ekathimerini.com','tovima.com','naftemporiki.gr','greekcitytimes.com',
+    # Orta Doğu / bölgesel
+    'thecradle.co','newarab.com','arabweekly.com','majalla.com',
+    'alaraby.co.uk','alhurra.com','rudaw.net','kurdistan24.net',
+    'iraqinews.com','964media.com','thenewregion.com',
+    'israelhayom.com','ynetnews.com','i24news.tv',
+    # Kafkasya / Rusya / Avrasya
+    'eurasianet.org','oc-media.org','civilnet.am','jam-news.net',
+    'tass.com','interfax.com','novayagazeta.eu',
+    # Asya-Pasifik
+    'asia.nikkei.com','japantimes.co.jp','channelnewsasia.com',
+    'straitstimes.com','scmp.com','abc.net.au'
+]))
+TT_GLOBAL_MAIN = list(dict.fromkeys(TT_GLOBAL_MAIN + TT_FOREIGN_V9))
+
+TT_THINK_TANK_V9 = [
+    'chathamhouse.org','cfr.org','crisisgroup.org','carnegieendowment.org',
+    'ecfr.eu','csis.org','brookings.edu','washingtoninstitute.org','rusi.org',
+    'iiss.org','wilsoncenter.org','rand.org','fpri.org','cepa.org',
+    'clingendael.org','swp-berlin.org','dgap.org','ifri.org','ispionline.it',
+    'iai.it','eliamep.gr','mei.edu','mecouncil.org','atlanticcouncil.org',
+    'usip.org','sipri.org','jamestown.org','hudson.org','stimson.org',
+    'quincyinst.org','responsiblestatecraft.org','fdd.org','gmfus.org',
+    'giga-hamburg.de','icct.nl','arabcenterdc.org','arabcenterwashington.org',
+    'setav.org','orsam.org.tr','edam.org.tr','tepav.org.tr'
+]
+TT_THINK_TANK = list(dict.fromkeys(TT_THINK_TANK + TT_THINK_TANK_V9))
+
+# Bölgesel Kürt medyası: doğrudan "PKK medyası" etiketi verilmez.
+TT_KURDISH_REGIONAL_V9 = [
+    'rudaw.net','kurdistan24.net','shafaq.com','basnews.com',
+    'kurdistan24.net','thenewregion.com'
+]
+
+# PKK/KCK söylemi, örgüt yöneticilerinin açıklamaları veya Kürt hareketi
+# çevresindeki görüşleri düzenli taşıyan açık kaynak havuzu.
+# Hepsinin hukuki/editoryal statüsü aynı varsayılmaz.
+TT_MOVEMENT_V9 = [
+    'anfenglish.com','anf-news.com','anfturkce.com','anfdeutsch.com',
+    'anfarabic.com','anfrussian.com','anfpersian.com','anfespanol.com',
+    'anfkurdi.com','anfsorani.com','anfkirmancki.com',
+    'hawarnews.com','medyanews.net','ozgurpolitika.com',
+    'sterktv.org','ronahi.tv',
+    'jinnews.net','jinnews.org','jinnews21.com',
+    'mezopotamyaajansi35.com','yeniyasamgazetesi9.com'
+]
+
+# Daha dar "örgüt söylemine doğrudan yer veren" alt grup.
+TT_MOVEMENT_DIRECT_V9 = [
+    'anfenglish.com','anf-news.com','anfturkce.com','anfdeutsch.com',
+    'anfarabic.com','anfrussian.com','anfpersian.com','anfespanol.com',
+    'anfkurdi.com','anfsorani.com','anfkirmancki.com','sterktv.org'
+]
+
+TT_KURDISH_MEDIA = list(dict.fromkeys(TT_KURDISH_REGIONAL_V9 + TT_MOVEMENT_V9))
+TT_MOVEMENT_OSINT = list(dict.fromkeys(TT_MOVEMENT_OSINT + TT_MOVEMENT_V9))
+
+# Açık sosyal kaynak havuzu genişletilir.
+SOCIAL = list(dict.fromkeys(SOCIAL + [
+    't.me','telegram.me','bsky.app','threads.net','tiktok.com'
+]))
+
+def _tt_is_kurdish_regional_domain(d):
+    return _tt_domain_match(d,TT_KURDISH_REGIONAL_V9)
+
+def _tt_is_movement_osint_domain(d):
+    return _tt_domain_match(d,TT_MOVEMENT_V9)
+
+def _tt_is_movement_direct_domain(d):
+    return _tt_domain_match(d,TT_MOVEMENT_DIRECT_V9)
+
+def _tt_is_kurdish_media_domain(d):
+    return _tt_is_kurdish_regional_domain(d) or _tt_is_movement_osint_domain(d)
+
+def _tt_is_foreign_press_domain(d):
+    d=_tt_norm_domain(d)
+    return (
+        _tt_domain_match(d,TT_GLOBAL_MAIN)
+        or _tt_domain_match(d,TT_MENA)
+        or _tt_domain_match(d,TT_FOREIGN_PRIORITY)
+        or _tt_domain_match(d,TT_FOREIGN_EXPANDED)
+        or _tt_domain_match(d,TT_FOREIGN_V9)
+    )
+
+def _tt_is_thinktank_domain(d):
+    return _tt_domain_match(d,TT_THINK_TANK)
+
+def source_group(d):
+    d=_tt_norm_domain(d)
+    if _tt_is_social_domain(d):
+        return '📱 Sosyal Medya / Açık Sosyal'
+    if _tt_is_thinktank_domain(d):
+        return '🧠 Think Tank / Analiz Kuruluşu'
+    if _tt_is_movement_osint_domain(d):
+        return '🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak'
+    if _tt_is_kurdish_regional_domain(d):
+        return '🟣 Kürt Bölgesel Medyası'
+    if _tt_is_foreign_press_domain(d):
+        return '🌍 Yabancı Basın'
+    if _tt_is_local_domain(d):
+        return '🇹🇷 Yerli Basın'
+    return '❔ Kaynağı Belirsiz / Diğer'
+
+def _tt_region(d):
+    d=_tt_norm_domain(d)
+    if _tt_is_social_domain(d): return 'Sosyal Medya'
+    if _tt_is_movement_osint_domain(d): return 'Kürt Hareketi / Örgüt Söylemi Açık Kaynak'
+    if _tt_is_kurdish_regional_domain(d): return 'Irak Kürdistanı / Kürt Bölgesel'
+    if _tt_is_thinktank_domain(d): return 'Uluslararası Analiz'
+    if _tt_is_local_domain(d): return 'Türkiye'
+    if _tt_domain_match(d,TT_MENA): return 'Ortadoğu / Bölge'
+    if d in {'dw.com','spiegel.de','faz.net','tagesschau.de','deutschlandfunk.de','n-tv.de'}:
+        return 'Almanya'
+    if d in {'france24.com','lemonde.fr','lefigaro.fr','rfi.fr','liberation.fr'}:
+        return 'Fransa'
+    if d in {'bbc.com','bbc.co.uk','theguardian.com','ft.com','economist.com','independent.co.uk'}:
+        return 'Birleşik Krallık'
+    if d in {'reuters.com','apnews.com','cnn.com','nytimes.com','washingtonpost.com',
+             'bloomberg.com','npr.org','voanews.com','axios.com','thehill.com'}:
+        return 'ABD / Anglo-Amerikan'
+    if _tt_is_foreign_press_domain(d): return 'Diğer Uluslararası'
+    return 'Kaynak Belirsiz'
+
+def _v9_ddgs_timelimit(hours):
+    try: h=int(hours)
+    except Exception: h=168
+    if h<=24: return 'd'
+    if h<=168: return 'w'
+    if h<=744: return 'm'
+    return 'y'
+
+def _v9_ddgs_raw(query,max_results=50,hours=168):
+    """Dünya geneli DDGS; derin think-tank pencerelerinde yıla kadar indeks açar."""
+    q=_v6_clean_query(query)
+    try:
+        from ddgs import DDGS
+    except Exception:
+        try:
+            from duckduckgo_search import DDGS
+        except Exception:
+            return []
+    try:
+        with DDGS() as engine:
+            try:
+                items=list(engine.text(
+                    q,region='wt-wt',timelimit=_v9_ddgs_timelimit(hours),
+                    safesearch='moderate',max_results=max_results
+                ))
+            except TypeError:
+                items=list(engine.text(
+                    q,region='wt-wt',timelimit=_v9_ddgs_timelimit(hours),
+                    max_results=max_results
+                ))
+    except Exception:
+        return []
+    out=[]
+    for item in items:
+        url=str(item.get('href') or item.get('url') or '').strip()
+        title=str(item.get('title') or '').strip()
+        if not url or not title:
+            continue
+        d=_tt_norm_domain(url)
+        out.append({
+            'title':title,'url':url,
+            'date':item.get('date') or item.get('published') or '',
+            'snippet':str(item.get('body') or item.get('snippet') or item.get('description') or ''),
+            'source':d,'source_url':('https://'+d if d else '')
+        })
+    return out
+
+def _v9_is_site_query(q):
+    return bool(re.search(r'\bsite:[^\s)]+',str(q or ''),flags=re.I))
+
+def _v9_topic_bundle():
+    return [
+        '"Turkey PKK peace process"',
+        '"PKK disarmament" Turkey',
+        '"PKK dissolution" Turkey',
+        'Ocalan Turkey Kurdish peace',
+        'Turkey SDF YPG PKK Syria',
+        'Turkey PKK Iraq Kurdistan'
+    ]
+
+def build_international_queries(when):
+    # Genel keşif sorguları + yüksek değerli yayınlara doğrudan site sweep.
+    q=[
+        '"Turkey PKK peace process"',
+        '"Türkiye PKK peace process"',
+        '"PKK disarmament" Turkey',
+        '"PKK dissolution" Turkey',
+        '"PKK disbandment" Turkey',
+        'Ocalan Turkey PKK peace process',
+        '"Kurdish peace process" Turkey',
+        '"Kurdish question" Turkey Ocalan',
+        'Turkey SDF YPG PKK Syria',
+        'Turkey PKK Iraq Kurdistan Qandil',
+        'Turkey PKK legal framework disarmament',
+        'Turkey PKK reintegration militants',
+        'Turkey Ocalan parliament Kurdish issue',
+        'Turkey Kurdish peace law DEM Party',
+        # Almanca / Fransızca / Arapça varyantlar
+        'Türkei PKK Friedensprozess Öcalan',
+        'Türkei PKK Entwaffnung Auflösung',
+        'Turquie PKK processus de paix Öcalan',
+        'désarmement PKK Turquie Öcalan',
+        'تركيا حزب العمال الكردستاني أوجلان عملية السلام',
+        'نزع سلاح حزب العمال الكردستاني تركيا'
+    ]
+    direct_domains=[
+        'reuters.com','apnews.com','bbc.com','ft.com','theguardian.com','economist.com',
+        'bloomberg.com','politico.eu','euronews.com','dw.com','france24.com',
+        'rfi.fr','spiegel.de','faz.net','aljazeera.com','al-monitor.com',
+        'middleeasteye.net','newarab.com','arabweekly.com','thenationalnews.com',
+        'aawsat.com','arabnews.com','jpost.com','timesofisrael.com','haaretz.com',
+        'ekathimerini.com','tovima.com','rferl.org','balkaninsight.com',
+        'eurasianet.org','thecradle.co','iranintl.com','asia.nikkei.com'
+    ]
+    for d in direct_domains:
+        q.append(f'("Turkey PKK" OR "PKK disarmament" OR Ocalan OR "Kurdish peace") site:{d}')
+    return q
+
+def build_analysis_queries(when):
+    q=[
+        '"Turkey PKK peace process" policy analysis',
+        '"PKK disarmament" Turkey analysis',
+        '"PKK dissolution" Turkey policy brief',
+        'Ocalan Turkey Kurdish issue analysis',
+        'Turkey SDF YPG PKK policy',
+        'Turkey Kurdish peace process think tank',
+        'Turkey PKK reintegration policy brief',
+        'Turkey PKK transitional justice',
+        'Turkey Kurdish issue legal framework analysis',
+        'Turkey PKK regional implications Syria Iraq'
+    ]
+    for d in TT_THINK_TANK_V9:
+        q.append(f'("Turkey PKK" OR Ocalan OR "Kurdish peace process" OR "PKK disarmament") site:{d}')
+    return q
+
+def build_kurdish_media_queries(when):
+    q=[
+        'Turkey PKK Ocalan peace process Kurdish',
+        '"PKK disarmament" Kurdistan Turkey',
+        'Ocalan Turkey peace Kurdish media',
+        'SDF YPG Turkey Kurdish peace',
+        'Iraq Kurdistan Turkey PKK peace'
+    ]
+    for d in TT_KURDISH_REGIONAL_V9:
+        q.append(f'(PKK OR Ocalan OR Öcalan OR "peace process" OR silahsızlanma) site:{d}')
+        q.append(f'(SDF OR YPG OR Syria OR Iraq OR Qandil) Turkey site:{d}')
+    return q
+
+def build_movement_queries(when):
+    q=[
+        '"Peace and Democratic Society" Ocalan PKK',
+        '"Barış ve Demokratik Toplum" Öcalan',
+        'PKK KCK Ocalan peace democratic society',
+        'Cemil Bayik Ocalan peace process',
+        'Murat Karayilan Ocalan peace process',
+        'Duran Kalkan peace process Ocalan',
+        'PKK disarmament movement statement',
+        'KCK statement Turkey peace process'
+    ]
+    for d in TT_MOVEMENT_V9:
+        q.append(f'(PKK OR KCK OR Ocalan OR Öcalan OR "peace process" OR "Barış ve Demokratik Toplum") site:{d}')
+    # Rotating-domain sources can still be found by publication name.
+    q.extend([
+        '"ANF News" Ocalan PKK peace',
+        '"Firat News Agency" Ocalan PKK',
+        '"Stêrk TV" Ocalan PKK',
+        '"Medya News" Ocalan PKK',
+        '"Yeni Özgür Politika" Öcalan süreç',
+        '"Ronahî TV" Öcalan PKK',
+        '"JINNEWS" Öcalan barış'
+    ])
+    return q
+
+def build_commentary_queries(when):
+    return [
+        '("Terörsüz Türkiye" OR PKK OR Öcalan) (yazar OR yorum OR görüş OR analiz OR "köşe yazısı")',
+        '("Terörsüz Türkiye" OR PKK OR Öcalan) (söyleşi OR röportaj OR değerlendirme OR dosya)',
+        '("Turkey PKK peace process" OR "PKK disarmament") (opinion OR commentary OR columnist OR editorial)',
+        '(Ocalan Turkey Kurdish issue) (analysis OR opinion OR interview OR perspective)',
+        '("PKK peace process") Turkey ("expert comment" OR interview OR viewpoint)',
+        '("Kurdish peace process" Turkey) (essay OR viewpoint OR analysis)',
+        'Turkey PKK Ocalan "guest commentary"',
+        'Turkey Kurdish peace "policy brief"',
+        'Turkey PKK "long read" analysis',
+        'Öcalan PKK süreç (akademisyen OR uzman OR araştırmacı OR yazar)'
+    ]
+
+def build_social_queries(when):
+    return [
+        '"Terörsüz Türkiye" site:x.com',
+        'PKK Öcalan "Terörsüz Türkiye" site:x.com',
+        '"Turkey PKK peace process" site:x.com',
+        '"Terörsüz Türkiye" site:instagram.com',
+        'PKK Öcalan site:instagram.com',
+        '"Terörsüz Türkiye" site:facebook.com',
+        'PKK Öcalan site:facebook.com',
+        '"Terörsüz Türkiye" site:youtube.com',
+        '"Turkey PKK peace process" site:youtube.com',
+        '"PKK disarmament" Turkey site:reddit.com',
+        '"Terörsüz Türkiye" site:t.me',
+        'PKK Öcalan site:t.me',
+        '"Turkey PKK peace process" site:t.me',
+        'Öcalan PKK site:bsky.app',
+        '"Turkey PKK" site:bsky.app',
+        'Öcalan PKK site:threads.net',
+        '"Terörsüz Türkiye" site:tiktok.com'
+    ]
+
+def _v9_fetch_query(query,mode,timespan,hours):
+    """
+    Site-hedefli sorgular daha hafif; genel keşif sorguları daha çok motor kullanır.
+    Bu sayede kapsam artarken Streamlit Cloud üzerinde gereksiz ağ yükü sınırlanır.
+    """
+    site_q=_v9_is_site_query(query)
+
+    if mode=='foreign':
+        out=[]
+        out.extend(rss_google_locale(query,'en-US','US','US:en'))
+        out.extend(rss_google_locale(query,'en-GB','GB','GB:en'))
+        out.extend(_v8_bing_news_rss(query,'en-US'))
+        out.extend(_v9_ddgs_raw(query,60 if not site_q else 30,hours))
+        if not site_q:
+            out.extend(rss_google_locale(query,'de','DE','DE:de'))
+            out.extend(rss_google_locale(query,'fr','FR','FR:fr'))
+            out.extend(rss_google_locale(query,'ar','SA','SA:ar'))
+            out.extend(_v8_bing_news_rss(query,'en-GB'))
+            out.extend(_v6_gdelt_raw(query,timespan))
+        return out
+
+    if mode=='thinktank':
+        out=[]
+        out.extend(_v9_ddgs_raw(query,60 if not site_q else 35,hours))
+        out.extend(rss_google_locale(query,'en-US','US','US:en'))
+        out.extend(_v8_bing_news_rss(query,'en-US'))
+        return out
+
+    if mode in {'kurdish','movement'}:
+        out=[]
+        out.extend(_v9_ddgs_raw(query,55 if not site_q else 35,hours))
+        out.extend(rss_google_locale(query,'en-US','US','US:en'))
+        out.extend(_v8_bing_news_rss(query,'en-US'))
+        if not site_q:
+            out.extend(rss_google_locale(query,'de','DE','DE:de'))
+        return out
+
+    if mode=='commentary':
+        out=[]
+        out.extend(_v9_ddgs_raw(query,60,hours))
+        out.extend(rss_google_locale(query,'en-US','US','US:en'))
+        out.extend(rss_google_locale(query,'tr','TR','TR:tr'))
+        out.extend(_v8_bing_news_rss(query,'en-US'))
+        return out
+
+    if mode=='social':
+        return _v9_ddgs_raw(query,60,hours)
+
+    return rss(query)
+
+# V9 normalize: movement ve Kurdish-regional kanalları ayrılır.
+_TT_V9_BASE_NORMALIZE = _TT_V8_BASE_NORMALIZE
+def normalize_rows(raw, cutoff, mode, user_query):
+    rows,reasons=_TT_V9_BASE_NORMALIZE(raw,cutoff,mode,user_query)
+    kept=[]
+    for r in rows:
+        d=infer_source(
+            r.get('Yayıncı','') or r.get('Kaynak',''),
+            r.get('Yayıncı_URL',''),
+            r.get('URL','')
+        )
+        d=_tt_norm_domain(d or r.get('Domain','') or r.get('URL',''))
+        r['Domain']=d
+        r['Tarama Kanalı']=mode
+        r['Bölge']=_tt_region(d)
+        full=f"{r.get('Başlık','')} {r.get('İçerik_Özeti','')} {r.get('URL','')}"
+        r['Yaklaşım']=_tt_stance(full)
+        r['Çerçeve']=_tt_frame(full)
+        r['İçerik Türü']=_v7_content_type(r.get('Başlık',''),r.get('İçerik_Özeti',''),r.get('URL',''))
+
+        if mode=='foreign':
+            if _tt_is_foreign_press_domain(d):
+                r['Kaynak_Grubu']='🌍 Yabancı Basın'
+                r['Kaynak Perspektifi']='Tanımlı yabancı medya'
+            elif _tt_foreign_discovery_allowed(d):
+                r['Kaynak_Grubu']='🌍 Yabancı Basın'
+                r['Kaynak Perspektifi']='Yabancı medya — keşif'
+            else:
+                reasons['kaynak']+=1; continue
+
+        elif mode=='thinktank':
+            if not _tt_is_thinktank_domain(d):
+                reasons['kaynak']+=1; continue
+            r['Kaynak_Grubu']='🧠 Think Tank / Analiz Kuruluşu'
+            r['Kaynak Perspektifi']='Düşünce kuruluşu / politika analizi'
+
+        elif mode=='kurdish':
+            if not _tt_is_kurdish_regional_domain(d):
+                reasons['kaynak']+=1; continue
+            r['Kaynak_Grubu']='🟣 Kürt Bölgesel Medyası'
+            r['Kaynak Perspektifi']='Kürt bölgesel medya'
+
+        elif mode=='movement':
+            if not _tt_is_movement_osint_domain(d):
+                reasons['kaynak']+=1; continue
+            r['Kaynak_Grubu']='🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak'
+            r['Kaynak Perspektifi']=(
+                'PKK/KCK söylemine doğrudan yer veren açık kaynak'
+                if _tt_is_movement_direct_domain(d)
+                else 'Kürt hareketi odaklı / hareket çevresi açık kaynak'
+            )
+
+        elif mode=='social':
+            if not _tt_is_social_domain(d):
+                reasons['kaynak']+=1; continue
+            r['Kaynak_Grubu']='📱 Sosyal Medya / Açık Sosyal'
+            r['Kaynak Perspektifi']='Kamuya açık / arama motorunca indekslenmiş sosyal içerik'
+
+        elif mode=='commentary':
+            if r['İçerik Türü']=='📰 Haber':
+                reasons['konu']+=1; continue
+            r['Kaynak_Grubu']=source_group(d)
+            r['Kaynak Perspektifi']=r.get('Kaynak Perspektifi','Yazar / yorum / analiz')
+
+        elif mode in {'turkish','official','statistics','negative'}:
+            if (_tt_is_foreign_press_domain(d) or _tt_is_thinktank_domain(d)
+                    or _tt_is_social_domain(d) or _tt_is_kurdish_media_domain(d)):
+                reasons['kaynak']+=1; continue
+            r['Kaynak_Grubu']='🇹🇷 Yerli Basın' if d else '❔ Kaynağı Belirsiz / Diğer'
+
+        else:
+            r['Kaynak_Grubu']=source_group(d)
+
+        kept.append(r)
+    return kept,reasons
+
+def _v9_mode_hours(mode,main_hours,think_hours,movement_hours):
+    if mode=='thinktank':
+        return int(think_hours)
+    if mode in {'kurdish','movement'}:
+        return int(movement_hours)
+    return int(main_hours)
+
+def _v9_source_coverage(df,group_value,limit=15):
+    if df is None or df.empty or 'Kaynak_Grubu' not in df.columns:
+        return pd.DataFrame(columns=['Kaynak','İçerik'])
+    x=df[df['Kaynak_Grubu'].astype(str)==group_value].copy()
+    if x.empty:
+        return pd.DataFrame(columns=['Kaynak','İçerik'])
+    src=x.get('Kaynak',pd.Series('Bilinmiyor',index=x.index)).fillna('Bilinmiyor').astype(str)
+    out=src.value_counts().head(limit).rename_axis('Kaynak').reset_index(name='İçerik')
+    return out
+
+# ============================================================
+# /V9
+# ============================================================
+
 if run:
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
     when=period_window(hours)
@@ -11083,7 +11586,8 @@ if run:
     if greek: batches.append(('🌍 Uluslararası basın',build_international_queries(when),'foreign'))
     if social: batches.append(('📱 Açık sosyal / indeks',build_social_queries(when),'social'))
     if global_on: batches.append(('🧠 Uluslararası analiz / think tank',build_analysis_queries(when),'thinktank'))
-    batches.append(('🟣 Kürt medyası / hareket çevresi açık kaynak',build_kurdish_media_queries(when),'kurdish'))
+    batches.append(('🟣 Kürt bölgesel medyası',build_kurdish_media_queries(when),'kurdish'))
+    batches.append(('🛰️ PKK/KCK çevresi / hareket söylemi açık kaynak',build_movement_queries(when),'movement'))
     batches.append(('✍️ Yazar / yorum / görüş taraması',build_commentary_queries(when),'commentary'))
     all_rows=[]; stat={'Ham sonuç':0,'Zaman dışı':0,'Konu dışı':0,'Yunan dışı':0,'Kaynak dışı':0,'Sonuç':0,'Olay':0}
     live_alarm_box=st.empty()
@@ -11118,7 +11622,9 @@ if run:
 
     def _merge_batch(raw,mode):
         nonlocal_dummy=None
-        norm_rows,reasons=normalize_rows(raw,cutoff,mode,query)
+        _mh=_v9_mode_hours(mode,hours,think_hours,movement_hours)
+        _mode_cutoff=(datetime.now(timezone.utc)-timedelta(hours=_mh)).astimezone(timezone.utc)
+        norm_rows,reasons=normalize_rows(raw,_mode_cutoff,mode,query)
         stat['Zaman dışı']+=reasons['zaman']
         stat['Konu dışı']+=reasons['konu']
         stat['Yunan dışı']+=reasons['yunan']
@@ -11152,9 +11658,15 @@ if run:
 
     supplemental_raw_by_mode={}
     if jobs:
-        status_box.write(f'⚡ Tamamlayıcı kaynaklar — {len(jobs)} sorgu / 12 eşzamanlı')
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(12,len(jobs))) as ex:
-            future_map={ex.submit(_v8_fetch_query,q,mode,when,hours):(label,mode) for label,q,mode in jobs}
+        status_box.write(f'⚡ Tamamlayıcı kaynaklar — {len(jobs)} sorgu / 18 eşzamanlı')
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(18,len(jobs))) as ex:
+            future_map={
+                ex.submit(
+                    _v9_fetch_query,q,mode,when,
+                    _v9_mode_hours(mode,hours,think_hours,movement_hours)
+                ):(label,mode)
+                for label,q,mode in jobs
+            }
             for fut in concurrent.futures.as_completed(future_map):
                 label,mode=future_map[fut]
                 try:
@@ -11204,7 +11716,8 @@ if run:
     )
     stat['Sosyal Medya']=sum(x=='📱 Sosyal Medya / Açık Sosyal' for x in _groups)
     stat['Think Tank']=sum(x=='🧠 Think Tank / Analiz Kuruluşu' for x in _groups)
-    stat['Kürt Medyası / Hareket Çevresi']=sum(x=='🟣 Kürt Medyası / Hareket Çevresi Açık Kaynak' for x in _groups)
+    stat['Kürt Bölgesel Medyası']=sum(x=='🟣 Kürt Bölgesel Medyası' for x in _groups)
+    stat['PKK/KCK Çevresi Açık Kaynak']=sum(x=='🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak' for x in _groups)
     stat['Yazar / Yorum']=sum(str(r.get('İçerik Türü','')).startswith(('✍️','🎙️','📑')) for r in all_rows)
     stat['Kaynağı Belirsiz']=sum(x=='❔ Kaynağı Belirsiz / Diğer' for x in _groups)
 
@@ -11444,16 +11957,18 @@ else:
         social_mask=df['Kaynak_Grubu'].astype(str).eq('📱 Sosyal Medya / Açık Sosyal')
         think_mask=df['Kaynak_Grubu'].astype(str).eq('🧠 Think Tank / Analiz Kuruluşu')
         foreign_mask=df['Kaynak_Grubu'].astype(str).eq('🌍 Yabancı Basın')
-        kurdish_mask=df['Kaynak_Grubu'].astype(str).eq('🟣 Kürt Medyası / Hareket Çevresi Açık Kaynak')
+        kurdish_mask=df['Kaynak_Grubu'].astype(str).eq('🟣 Kürt Bölgesel Medyası')
+        movement_mask=df['Kaynak_Grubu'].astype(str).eq('🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak')
         commentary_mask=df.get('İçerik Türü',pd.Series('',index=df.index)).astype(str).str.startswith(('✍️','🎙️','📑'))
 
-        m1,m2,m3,m4,m5,m6=st.columns(6)
+        m1,m2,m3,m4,m5,m6,m7=st.columns(7)
         m1.metric('Toplam İçerik',total)
         m2.metric('Tekil Olay',events)
         m3.metric('Yerli Basın',int(local_mask.sum()))
         m4.metric('Yabancı Basın',int(foreign_mask.sum()))
         m5.metric('Think Tank',int(think_mask.sum()))
-        m6.metric('Kürt/Açık Sosyal',int(kurdish_mask.sum()+social_mask.sum()))
+        m6.metric('Kürt/PKK-KCK OSINT',int(kurdish_mask.sum()+movement_mask.sum()))
+        m7.metric('Sosyal Medya',int(social_mask.sum()))
 
         unclassified_mask=df['Kaynak_Grubu'].astype(str).eq('❔ Kaynağı Belirsiz / Diğer')
         if int(unclassified_mask.sum())>0:
@@ -11463,32 +11978,57 @@ else:
                     hide_index=True,use_container_width=True,height=260
                 )
 
+        with st.expander('📡 Kaynak Kapsama Özeti',False):
+            st.caption('Her kaynak ailesinde hangi yayınların gerçekten yakalandığını gösterir; yalnız toplam sayıya bakılmasını önler.')
+            c1,c2,c3=st.columns(3)
+            with c1:
+                st.markdown('**🌍 Yabancı Basın**')
+                st.dataframe(_v9_source_coverage(df,'🌍 Yabancı Basın',15),hide_index=True,use_container_width=True)
+            with c2:
+                st.markdown('**🧠 Think Tank**')
+                st.dataframe(_v9_source_coverage(df,'🧠 Think Tank / Analiz Kuruluşu',15),hide_index=True,use_container_width=True)
+            with c3:
+                st.markdown('**🛰️ PKK/KCK Çevresi Açık Kaynak**')
+                st.dataframe(_v9_source_coverage(df,'🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak',15),hide_index=True,use_container_width=True)
+
         st.subheader('🗞️ Kaynak Bazlı İzleme')
-        tab_local,tab_social,tab_foreign,tab_think,tab_kurdish,tab_commentary=st.tabs([
+        tab_local,tab_social,tab_foreign,tab_think,tab_kurdish,tab_movement,tab_commentary=st.tabs([
             '🇹🇷 Yerli Basın','📱 Sosyal Medya / Açık Sosyal',
             '🌍 Yabancı Basın','🧠 Think Tank / Analiz Kuruluşları',
-            '🟣 Kürt Medyası / Açık Kaynak','✍️ Yazar / Yorum / Görüş'
+            '🟣 Kürt Bölgesel Medyası','🛰️ PKK/KCK Çevresi Açık Kaynak',
+            '✍️ Yazar / Yorum / Görüş'
         ])
         with tab_local:
             st.caption('Türkiye merkezli medya kaynaklarında Terörsüz Türkiye gündemi.')
             _v3_source_table('local_press',df[local_mask])
         with tab_social:
-            st.caption('Arama motorlarınca indekslenebilen X, Instagram, Facebook, YouTube ve Reddit içerikleri.')
+            st.caption('Arama motorlarınca indekslenebilen X, Instagram, Facebook, YouTube, Reddit, Telegram, Bluesky, Threads ve TikTok içerikleri.')
             _v3_source_table('social_media',df[social_mask])
         with tab_foreign:
-            st.caption('Reuters, AP, BBC, FT, Guardian, DW, France24, Al Jazeera, Al-Monitor ve diğer yabancı/bölgesel yayınlar.')
+            st.caption('Küresel, Avrupa, Ortadoğu, İsrail, Kafkasya ve Asya-Pasifik medyasında süreçle ilgili içerikler.')
             _v3_source_table(
                 'foreign_press',df[foreign_mask],
                 ['Seç','Tarih','Bölge','Kaynak','Kaynak Perspektifi','Kategori','Yaklaşım',
                  'Çerçeve','İçerik Türü','Başlık','İçerik_Özeti','Risk_Skoru','URL']
             )
         with tab_think:
-            st.caption('Chatham House, CFR, Crisis Group, Carnegie, ECFR, CSIS, Brookings, RUSI, MEI ve diğer politika/analiz kuruluşları.')
-            _v3_source_table('think_tank',df[think_mask])
+            st.caption(f'Think tank taraması bağımsız derinlik kullanmaktadır: {think_period}.')
+            _v3_source_table(
+                'think_tank',df[think_mask],
+                ['Seç','Tarih','Bölge','Kaynak','Kategori','Yaklaşım','Çerçeve',
+                 'İçerik Türü','Başlık','İçerik_Özeti','URL']
+            )
         with tab_kurdish:
-            st.caption('Rudaw, Kurdistan24, Shafaq, Basnews, ANHA/Hawar, ANF, Mezopotamya Ajansı ve Yeni Yaşam gibi Kürt gündemini veya hareket çevresi söylemlerini yansıtan açık kaynaklar. Kaynakların editoryal çizgileri aynı kabul edilmez.')
+            st.caption('Rudaw, Kurdistan24, Shafaq, Basnews ve diğer Kürt/bölgesel medya kaynakları. Bu sekme hareket/örgüt çevresi kaynaklarından ayrı tutulur.')
             _v3_source_table(
                 'kurdish_media',df[kurdish_mask],
+                ['Seç','Tarih','Kaynak','Kaynak Perspektifi','Kategori','Yaklaşım','Çerçeve',
+                 'İçerik Türü','Başlık','İçerik_Özeti','Risk_Skoru','URL']
+            )
+        with tab_movement:
+            st.caption(f'ANF çok dilli yayınları, Stêrk TV, Ronahî TV, Medya News, Yeni Özgür Politika, JINNEWS ve benzeri hareket/örgüt söylemini izlemeye yarayan açık kaynaklar. Tarama derinliği: {movement_period}. Kaynakların statüsü aynı kabul edilmez.')
+            _v3_source_table(
+                'movement_osint',df[movement_mask],
                 ['Seç','Tarih','Kaynak','Kaynak Perspektifi','Kategori','Yaklaşım','Çerçeve',
                  'İçerik Türü','Başlık','İçerik_Özeti','Risk_Skoru','URL']
             )
@@ -11616,13 +12156,14 @@ else:
         st.markdown('---')
         st.subheader('📋 Gün Sonu Performans Özeti')
         today=df.copy()
-        p1,p2,p3,p4,p5,p6=st.columns(6)
+        p1,p2,p3,p4,p5,p6,p7=st.columns(7)
         p1.metric('Toplam İçerik',len(today))
         p2.metric('Tekil Olay',today['Olay_ID'].nunique() if 'Olay_ID' in today.columns else len(today))
         p3.metric('Yerli Basın',int(local_mask.sum()))
         p4.metric('Yabancı Basın',int(foreign_mask.sum()))
-        p5.metric('Think/Kürt',int(think_mask.sum()+kurdish_mask.sum()))
-        p6.metric('Analiz Sepeti',len(_v3_analysis_basket()))
+        p5.metric('Think Tank',int(think_mask.sum()))
+        p6.metric('Kürt/PKK-KCK OSINT',int(kurdish_mask.sum()+movement_mask.sum()))
+        p7.metric('Analiz Sepeti',len(_v3_analysis_basket()))
         st.caption('Performans özeti artık kaldırılan ÖGN/AKT/Sunum sepetlerini değil, tarama kapsamını ve Analiz Sepetini esas alır.')
 
         # ---------------- SEÇİLİ HABERLERDEN ÇIKTI ----------------
@@ -11653,4 +12194,4 @@ else:
                     mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                     use_container_width=True,key='v3_output_note_download')
 
-st.caption('İlk açılışta otomatik ana tarama yapılmaz. Yerli basın, açık sosyal kaynaklar, yabancı basın, think tank, Kürt medyası/hareket çevresi açık kaynaklar ve yazar-yorum içerikleri ayrı izlenir; olay tekilleştirme, trend, takip listesi ve ayrıntılı bilgi notu üretimi korunur.')
+st.caption('İlk açılışta otomatik ana tarama yapılmaz. Yerli basın, açık sosyal kaynaklar, yabancı basın, think tank, Kürt bölgesel medyası, PKK/KCK çevresi/hareket söylemi açık kaynakları ve yazar-yorum içerikleri ayrı izlenir; olay tekilleştirme, trend, takip listesi ve ayrıntılı bilgi notu üretimi korunur.')
