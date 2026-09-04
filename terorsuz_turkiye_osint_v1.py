@@ -11705,7 +11705,7 @@ def _v11_fetch_query(query,mode,timespan,hours,cache_snapshot):
     all_rows=[]
     diagnostics=[]
     cache_updates=[]
-    for engine in _v11_engines_for(mode,site_q):
+    for engine in _v19_engines_for(mode,site_q):
         result=_v11_engine_call(engine,query,mode,timespan,hours,cache_snapshot)
         all_rows.extend(result.get('rows') or [])
         diagnostics.append(result.get('diag') or {})
@@ -11946,6 +11946,320 @@ V18_ENGINE_WORKERS = 24
 # /V18 HIZ
 # ============================================================
 
+# ============================================================
+# V19 — KARARLI / DOYGUN TARAMA + SOSYAL MEDYA GENİŞLETME
+#
+# İlkeler:
+# 1) V11'in beğenilen yabancı basın / think tank / Kürt / PKK-KCK
+#    sorgu ve motor kapsamı korunur.
+# 2) Site-hedefli sorgularda boş sonuç için gereksiz ikinci deneme yapılmaz.
+# 3) Başarılı aynı sorgular kısa süreli "hot cache" ile tekrar kullanılabilir.
+# 4) Sosyal medya DDGS + Bing Web ile iki ayrı açık-web indeksinden taranır.
+# 5) Son başarılı kaynak havuzu SQLite'ta kısa süre tutulur; aynı dönem tekrar
+#    tarandığında arama motoru dalgalanması nedeniyle sonuçlar bir anda kaybolmaz.
+# ============================================================
+
+V19_ENGINE_WORKERS = 30
+V19_POOL_RETENTION_HOURS = 18
+
+_V19_BASE_ENGINES_FOR = _v11_engines_for
+
+# Sosyal platform havuzu: yalnız kamuya açık ve arama motorlarınca indekslenebilen içerikler.
+SOCIAL = list(dict.fromkeys(SOCIAL + [
+    'x.com','twitter.com','instagram.com','facebook.com','tiktok.com',
+    'youtube.com','reddit.com','t.me','telegram.me','threads.net','bsky.app',
+    'linkedin.com','mastodon.social','mastodon.online','vk.com'
+]))
+
+def build_social_queries(when):
+    """
+    Büyük platformlar ayrı, ikincil platformlar gruplu aranır.
+    Sorgu sayısı sınırsız büyütülmeden sosyal kapsam genişletilir.
+    """
+    return [
+        # X / Twitter
+        '"Terörsüz Türkiye" (site:x.com OR site:twitter.com)',
+        '(PKK OR KCK OR Öcalan OR Ocalan) Türkiye (site:x.com OR site:twitter.com)',
+        '("Turkey PKK peace process" OR "PKK disarmament") (site:x.com OR site:twitter.com)',
+
+        # Instagram
+        '"Terörsüz Türkiye" site:instagram.com',
+        '(PKK OR KCK OR Öcalan OR Ocalan) Türkiye site:instagram.com',
+
+        # Facebook
+        '"Terörsüz Türkiye" site:facebook.com',
+        '(PKK OR KCK OR Öcalan OR Ocalan) Türkiye site:facebook.com',
+
+        # TikTok
+        '"Terörsüz Türkiye" site:tiktok.com',
+        '(PKK OR Öcalan OR Ocalan) Türkiye site:tiktok.com',
+
+        # YouTube
+        '"Terörsüz Türkiye" site:youtube.com',
+        '("Turkey PKK peace process" OR PKK OR Öcalan OR Ocalan) site:youtube.com',
+
+        # Reddit / Telegram
+        '("Turkey PKK peace process" OR "PKK disarmament" OR Ocalan) site:reddit.com',
+        '("Terörsüz Türkiye" OR PKK OR KCK OR Öcalan OR Ocalan) (site:t.me OR site:telegram.me)',
+
+        # Threads / Bluesky
+        '(PKK OR Öcalan OR Ocalan OR "Turkey peace process") (site:threads.net OR site:bsky.app)',
+
+        # LinkedIn / Mastodon / VK
+        '("Terörsüz Türkiye" OR "Turkey PKK peace process" OR Ocalan) (site:linkedin.com OR site:mastodon.social OR site:mastodon.online OR site:vk.com)'
+    ]
+
+def _v19_bing_web_rss(query, timeout=6):
+    """Haber değil genel web indeksini RSS biçiminde kullanır; sosyal sayfalarda daha faydalıdır."""
+    try:
+        r=requests.get(
+            'https://www.bing.com/search',
+            params={'q':_v6_clean_query(query),'format':'rss','setlang':'tr'},
+            headers=HEADERS,timeout=timeout
+        )
+        r.raise_for_status()
+        root=ET.fromstring(r.content)
+        out=[]
+        for it in root.findall('.//item'):
+            url=(it.findtext('link') or '').strip()
+            title=html.unescape(it.findtext('title') or '')
+            desc=BeautifulSoup(it.findtext('description') or '','html.parser').get_text(' ',strip=True)
+            if not url or not title:
+                continue
+            d=_tt_norm_domain(url)
+            out.append({
+                'title':title,'url':url,'date':it.findtext('pubDate') or '',
+                'snippet':desc,'source':d,'source_url':('https://'+d if d else '')
+            })
+        return out
+    except Exception:
+        return []
+
+def _v19_engines_for(mode,site_q=False):
+    if mode=='social':
+        return ['DDGS','Bing Web']
+    return _V19_BASE_ENGINES_FOR(mode,site_q)
+
+def _v19_hot_minutes(mode):
+    # Haber hızlı değişir; think tank ve hareket kaynakları daha seyrek güncellenir.
+    return {
+        'foreign':15,
+        'social':15,
+        'thinktank':60,
+        'kurdish':30,
+        'movement':30,
+        'commentary':30,
+        'official':15,
+        'statistics':30,
+        'negative':15,
+        'turkish':10
+    }.get(mode,15)
+
+def _v19_engine_call(engine,query,mode,timespan,hours,cache_snapshot):
+    """
+    V11 motor davranışını korur.
+    Farklar:
+    - başarılı çok yeni cache varsa ağa tekrar çıkmaz,
+    - site: sorgularında ikinci boş retry yapılmaz,
+    - Bing Web sosyal taramaya eklenmiştir.
+    """
+    cache_key=_v11_cache_key(mode,engine,query,hours)
+    diag={
+        'Motor':engine,'Mod':mode,'Sorgu':1,'Başarılı':0,'Boş/Başarısız':0,
+        'Retry':0,'Cache Kullanıldı':0,'Sonuç':0
+    }
+
+    cached=cache_snapshot.get(cache_key)
+    if cached and cached.get('rows'):
+        try:
+            age_min=(time.time()-float(cached.get('ts',0)))/60.0
+        except Exception:
+            age_min=999
+        if age_min <= _v19_hot_minutes(mode):
+            rows=cached.get('rows') or []
+            diag['Başarılı']=1
+            diag['Cache Kullanıldı']=1
+            diag['Sonuç']=len(rows)
+            return {'rows':rows,'diag':diag,'cache_update':None}
+
+    site_q=_v9_is_site_query(query)
+    attempts=1 if site_q else 2
+
+    def invoke():
+        if engine=='Bing Web':
+            return _v19_bing_web_rss(query)
+        if engine=='Google News US':
+            return rss_google_locale(query,'en-US','US','US:en')
+        if engine=='Google News GB':
+            return rss_google_locale(query,'en-GB','GB','GB:en')
+        if engine=='Google News DE':
+            return rss_google_locale(query,'de','DE','DE:de')
+        if engine=='Google News FR':
+            return rss_google_locale(query,'fr','FR','FR:fr')
+        if engine=='Google News AR':
+            return rss_google_locale(query,'ar','SA','SA:ar')
+        if engine=='Google News TR':
+            return rss(query)
+        if engine=='Bing News US':
+            return _v8_bing_news_rss(query,'en-US')
+        if engine=='Bing News GB':
+            return _v8_bing_news_rss(query,'en-GB')
+        if engine=='DDGS':
+            mx=75 if mode=='social' else (35 if site_q else 60)
+            return _v9_ddgs_raw(query,mx,hours)
+        if engine=='GDELT':
+            return _v6_gdelt_raw(query,timespan)
+        return []
+
+    rows=[]
+    for attempt in range(attempts):
+        try:
+            rows=invoke() or []
+        except Exception:
+            rows=[]
+        if rows:
+            diag['Başarılı']=1
+            diag['Sonuç']=len(rows)
+            return {
+                'rows':rows,
+                'diag':diag,
+                'cache_update':(cache_key,{'ts':time.time(),'rows':rows})
+            }
+        if attempt+1<attempts:
+            diag['Retry']+=1
+            time.sleep(0.20)
+
+    # V11 fallback davranışı korunur.
+    if cached and cached.get('rows'):
+        rows=cached.get('rows') or []
+        diag['Cache Kullanıldı']=1
+        diag['Sonuç']=len(rows)
+        return {'rows':rows,'diag':diag,'cache_update':None}
+
+    diag['Boş/Başarısız']=1
+    return {'rows':[],'diag':diag,'cache_update':None}
+
+def _v19_pool_init():
+    try:
+        with _history_connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS source_stability_pool(
+                    mode TEXT NOT NULL,
+                    item_key TEXT NOT NULL,
+                    first_seen TEXT NOT NULL,
+                    last_seen TEXT NOT NULL,
+                    row_json TEXT NOT NULL,
+                    PRIMARY KEY(mode,item_key)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_source_pool_seen ON source_stability_pool(mode,last_seen)")
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+def _v19_pool_key(row):
+    url=str(row.get('URL','') or '').strip()
+    if url:
+        raw='U|'+url
+    else:
+        raw='T|'+str(row.get('Kaynak','') or '')+'|'+title_key(row.get('Başlık',''))
+    return hashlib.sha1(raw.encode('utf-8','ignore')).hexdigest()
+
+def _v19_json_row(row):
+    d={}
+    for k,v in dict(row).items():
+        try:
+            if pd.isna(v):
+                d[k]=None
+                continue
+        except Exception:
+            pass
+        if isinstance(v,(datetime,pd.Timestamp)):
+            try: d[k]=v.isoformat()
+            except Exception: d[k]=str(v)
+        else:
+            # numpy scalar ve benzeri tipler json.dumps(default=str) ile güvenli.
+            d[k]=v
+    return json.dumps(d,ensure_ascii=False,default=str)
+
+def _v19_pool_upsert(mode,rows):
+    if mode not in {'foreign','social','thinktank','kurdish','movement','commentary'}:
+        return
+    if not rows or not _v19_pool_init():
+        return
+    now=datetime.now(timezone.utc).isoformat()
+    vals=[]
+    for r in rows:
+        vals.append((mode,_v19_pool_key(r),now,now,_v19_json_row(r)))
+    try:
+        with _history_connect() as conn:
+            conn.executemany("""
+                INSERT INTO source_stability_pool(mode,item_key,first_seen,last_seen,row_json)
+                VALUES(?,?,?,?,?)
+                ON CONFLICT(mode,item_key) DO UPDATE SET
+                    last_seen=excluded.last_seen,
+                    row_json=excluded.row_json
+            """,vals)
+            # Eski havuzu düzenli temizle.
+            limit=(datetime.now(timezone.utc)-timedelta(hours=V19_POOL_RETENTION_HOURS)).isoformat()
+            conn.execute("DELETE FROM source_stability_pool WHERE last_seen < ?",(limit,))
+            conn.commit()
+    except Exception:
+        pass
+
+def _v19_pool_load(mode,cutoff):
+    if mode not in {'foreign','social','thinktank','kurdish','movement','commentary'}:
+        return []
+    if not _v19_pool_init():
+        return []
+    seen_after=(datetime.now(timezone.utc)-timedelta(hours=V19_POOL_RETENTION_HOURS)).isoformat()
+    try:
+        with _history_connect() as conn:
+            rows=conn.execute(
+                "SELECT first_seen,row_json FROM source_stability_pool WHERE mode=? AND last_seen>=?",
+                (mode,seen_after)
+            ).fetchall()
+    except Exception:
+        return []
+
+    out=[]
+    cutoff_utc=_v17_cutoff_utc(cutoff)
+
+    for first_seen,raw in rows:
+        try:
+            r=json.loads(raw)
+        except Exception:
+            continue
+
+        dt=_to_utc_datetime(r.get('Tarih_dt'))
+        inferred,_=_v17_extract_explicit_date(r.get('Başlık',''),r.get('İçerik_Özeti',''),r.get('URL',''))
+
+        # Bilinen haber tarihi seçili pencerenin dışında kalıyorsa havuzdan getirme.
+        effective=dt or inferred
+        if effective and cutoff_utc and effective < cutoff_utc:
+            continue
+
+        # Tarihi hiç bilinmeyen öğeyi yalnız kısa süre tut.
+        if not effective:
+            fs=_to_utc_datetime(first_seen)
+            if fs and fs < datetime.now(timezone.utc)-timedelta(hours=V19_POOL_RETENTION_HOURS):
+                continue
+
+        if dt:
+            r['Tarih_dt']=dt
+        elif inferred:
+            r['Tarih_dt']=inferred
+            r['Tarih']=fmt_dt(inferred)
+
+        out.append(r)
+
+    return out
+
+# ============================================================
+# /V19 TARAMA
+# ============================================================
+
 if run:
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
     when=period_window(hours)
@@ -12040,16 +12354,17 @@ if run:
             for engine in _v11_engines_for(mode,site_q):
                 engine_jobs.append((label,q,mode,engine,mh))
 
-        workers=min(V18_ENGINE_WORKERS,max(1,len(engine_jobs)))
+        engine_jobs.sort(key=lambda z: (0 if z[2]=='social' else 1, z[2], z[3]))
+        workers=min(V19_ENGINE_WORKERS,max(1,len(engine_jobs)))
         status_box.write(
             f'⚡ Tamamlayıcı kaynaklar — {len(jobs)} sorgu / {len(engine_jobs)} motor işi / '
-            f'{workers} eşzamanlı · V11 kapsamı + V18 hızlı yürütme'
+            f'{workers} eşzamanlı · V19 kararlı/doygun tarama'
         )
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
             future_map={
                 ex.submit(
-                    _v11_engine_call,engine,q,mode,when,mh,v11_cache_snapshot
+                    _v19_engine_call,engine,q,mode,when,mh,v11_cache_snapshot
                 ):(label,q,mode,engine)
                 for label,q,mode,engine,mh in engine_jobs
             }
@@ -12073,7 +12388,16 @@ if run:
     for mode,raw in supplemental_raw_by_mode.items():
         incoming=_merge_batch(raw,mode)
 
-        # V18: kritik eşik kontrolü motor başına değil, normalize edilmiş mod sonucu üzerinde bir kez çalışır.
+        # V19: aynı dönem tekrar taramalarında arama motoru dalgalanmasını azalt.
+        _mh=_v9_mode_hours(mode,hours,think_hours,movement_hours)
+        _mode_cutoff=(datetime.now(timezone.utc)-timedelta(hours=_mh)).astimezone(timezone.utc)
+        pooled=_v19_pool_load(mode,_mode_cutoff)
+        current_incoming=list(incoming)
+        if pooled:
+            incoming=dedupe(pooled+incoming)
+        _v19_pool_upsert(mode,current_incoming)
+
+        # Kritik eşik kontrolü normalize edilmiş mod sonucu üzerinde bir kez çalışır.
         if instant_alerts and incoming:
             for qr in incoming:
                 critical_label=critical_industrial_incident(qr.get('Başlık',''),qr.get('İçerik_Özeti',''))
@@ -13488,6 +13812,233 @@ def _v18_cross_source_comparisons(df,limit=20):
 # ============================================================
 # /V18 ÇERÇEVE ANALİZİ
 # ============================================================
+
+# ============================================================
+# V19 — AYNI OLAY / FARKLI ÇERÇEVE EŞLEŞTİRME 2.0
+#
+# V18'de aday çiftler yalnız kişi veya Olay_ID indeksinden üretiliyordu.
+# Bu, tam da farklı dil/başlık kullanılan haberlerin eşleşmesini kaçırabiliyordu.
+# V19:
+# - kişi,
+# - çapraz dil kavram,
+# - mevcut Olay_ID,
+# - yakın yayın zamanı
+# birlikte kullanır.
+# ============================================================
+
+def _v19_process_relevant(row):
+    text=_v18_norm_text(row)
+    return bool(
+        _v18_people(row)
+        or _v18_concepts(row)
+        or any(x in text for x in [
+            'pkk','kck','öcalan','ocalan','terörsüz','peace process',
+            'disarmament','silahsızlan','demokratik siyaset','kurdish'
+        ])
+    )
+
+def _v19_same_event_score(a,b):
+    ga=str(a.get('Kaynak_Grubu','') or '')
+    gb=str(b.get('Kaynak_Grubu','') or '')
+    if not ga or not gb or ga==gb:
+        return 0.0
+
+    da=_v18_dt(a); db=_v18_dt(b)
+    hours=999
+    if pd.notna(da) and pd.notna(db):
+        hours=abs((da-db).total_seconds())/3600.0
+        if hours>168:
+            return 0.0
+
+    pa=_v18_people(a); pb=_v18_people(b)
+    ca=_v18_concepts(a); cb=_v18_concepts(b)
+    shared_people=pa & pb
+    shared_concepts=ca & cb
+
+    oid_a=str(a.get('Olay_ID','') or '').strip()
+    oid_b=str(b.get('Olay_ID','') or '').strip()
+    same_oid=bool(oid_a and oid_b and oid_a==oid_b)
+
+    if not _v19_process_relevant(a) or not _v19_process_relevant(b):
+        return 0.0
+
+    score=0.0
+
+    if same_oid:
+        score += 0.42
+
+    # Aynı aktör farklı çerçeveyle haberleştirildiğinde ortak kelime aranmaz.
+    if shared_people:
+        score += min(0.46,0.36+0.10*(len(shared_people)-1))
+
+    # Çapraz dil kavram eşleştirmesi.
+    if shared_concepts:
+        score += min(0.36,0.14*len(shared_concepts))
+
+    # Aynı kişi yoksa en az iki ortak süreç kavramı gerekir.
+    if not same_oid and not shared_people and len(shared_concepts)<2:
+        return 0.0
+
+    # Aynı kişi varsa kavramların farklı olması bir kusur değil; panel zaten çerçeve farkını arıyor.
+    if shared_people and not shared_concepts:
+        score += 0.06
+
+    if hours<=18:
+        score += 0.14
+    elif hours<=36:
+        score += 0.11
+    elif hours<=72:
+        score += 0.07
+    elif hours<=168:
+        score += 0.03
+
+    # Yüzeysel benzerlik yalnız destekleyici.
+    try:
+        sim=_event_similarity(a,b)
+    except Exception:
+        sim=0.0
+    score += min(0.10,sim*0.10)
+
+    return min(1.0,score)
+
+def _v19_cross_source_comparisons(df,limit=25):
+    cols=[
+        'Tarih','Olay / Aktör','Kaynak A','Grup A','Başlık A','Çerçeve A','Ton A',
+        'Kaynak B','Grup B','Başlık B','Çerçeve B','Ton B','Çerçeve Farkı',
+        'Eşleşme','Güven','URL A','URL B'
+    ]
+    if df is None or df.empty or 'Kaynak_Grubu' not in df.columns:
+        return pd.DataFrame(columns=cols)
+
+    x=df[df['Kaynak_Grubu'].astype(str).isin(V18_COMPARE_GROUPS)].copy().reset_index(drop=True)
+    if len(x)<2:
+        return pd.DataFrame(columns=cols)
+
+    person_index={}
+    concept_index={}
+    oid_index={}
+
+    for i,r in x.iterrows():
+        for p in _v18_people(r):
+            person_index.setdefault(p,set()).add(i)
+        for c in _v18_concepts(r):
+            concept_index.setdefault(c,set()).add(i)
+        oid=str(r.get('Olay_ID','') or '').strip()
+        if oid:
+            oid_index.setdefault(oid,set()).add(i)
+
+    candidate_pairs=set()
+
+    def add_pairs(ids):
+        ids=sorted(ids)
+        for ai in range(len(ids)):
+            for bi in range(ai+1,len(ids)):
+                candidate_pairs.add((ids[ai],ids[bi]))
+
+    for ids in person_index.values():
+        add_pairs(ids)
+    for ids in oid_index.values():
+        add_pairs(ids)
+
+    # V19 farkı: ortak kavramlardan da aday üret.
+    for concept,ids in concept_index.items():
+        if concept in {
+            'silahsızlanma / silah bırakma','barış / süreç',
+            'Öcalan’ın konumu / özgürlüğü','şart / önkoşul',
+            'karşılıklılık / müzakere','hukuki çerçeve',
+            'Kürt hakları / statü','taahhüt / ilerleme iradesi',
+            'Suriye / SDG-YPG boyutu'
+        }:
+            add_pairs(ids)
+
+    rows=[]
+    seen=set()
+
+    for i,j in candidate_pairs:
+        a=x.iloc[i]; b=x.iloc[j]
+
+        if str(a.get('Kaynak_Grubu',''))==str(b.get('Kaynak_Grubu','')):
+            continue
+
+        score=_v19_same_event_score(a,b)
+        if score<0.48:
+            continue
+
+        fa=_v18_headline_frames(a); fb=_v18_headline_frames(b)
+        ta=_v18_tone(a); tb=_v18_tone(b)
+
+        divergence=0
+        if fa[0]!=fb[0]: divergence+=3
+        if ta!=tb: divergence+=2
+        divergence += min(3,len(set(fa)^set(fb)))
+
+        # Aynı olay olsa bile çerçeve gerçekten farklı değilse gösterme.
+        if divergence<2:
+            continue
+
+        da=_v18_dt(a); db=_v18_dt(b)
+        if pd.notna(db) and (pd.isna(da) or db>da):
+            a,b=b,a
+            fa,fb=fb,fa
+            ta,tb=tb,ta
+
+        key=tuple(sorted([
+            str(a.get('URL','') or title_key(a.get('Başlık',''))),
+            str(b.get('URL','') or title_key(b.get('Başlık','')))
+        ]))
+        if key in seen:
+            continue
+        seen.add(key)
+
+        people=_v18_people(a)&_v18_people(b)
+        if people:
+            label=', '.join(sorted(people))
+        else:
+            shared=_v18_concepts(a)&_v18_concepts(b)
+            label=', '.join(sorted(shared)[:2]) if shared else str(a.get('Kategori','') or 'Aynı olay')
+
+        dt=max([d for d in [_v18_dt(a),_v18_dt(b)] if pd.notna(d)],default=pd.NaT)
+        date_text=dt.strftime('%d.%m.%Y %H:%M') if pd.notna(dt) else str(a.get('Tarih','') or '')
+
+        pct=int(round(score*100))
+        confidence='Yüksek' if pct>=72 else ('Orta' if pct>=58 else 'Muhtemel')
+
+        rows.append({
+            'Tarih':date_text,
+            'Olay / Aktör':label,
+            'Kaynak A':a.get('Kaynak',''),
+            'Grup A':a.get('Kaynak_Grubu',''),
+            'Başlık A':a.get('Başlık',''),
+            'Çerçeve A':' • '.join(fa),
+            'Ton A':ta,
+            'Kaynak B':b.get('Kaynak',''),
+            'Grup B':b.get('Kaynak_Grubu',''),
+            'Başlık B':b.get('Başlık',''),
+            'Çerçeve B':' • '.join(fb),
+            'Ton B':tb,
+            'Çerçeve Farkı':_v18_frame_difference(a,b),
+            'Eşleşme':pct,
+            'Güven':confidence,
+            'URL A':a.get('URL',''),
+            'URL B':b.get('URL',''),
+            '_div':divergence,
+            '_dt':dt
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=cols)
+
+    out=pd.DataFrame(rows)
+    out=out.sort_values(['_div','Eşleşme','_dt'],ascending=[False,False,False])
+    out=out.drop_duplicates(
+        subset=['Olay / Aktör','Kaynak A','Kaynak B','Başlık A','Başlık B'],
+        keep='first'
+    )
+    return out.head(limit).drop(columns=['_div','_dt'],errors='ignore')
+
+# ============================================================
+# /V19 ÇERÇEVE EŞLEŞTİRME
+# ============================================================
 # V3 — SADELEŞTİRİLMİŞ TERÖRSÜZ TÜRKİYE ANALİST ARAYÜZÜ
 # Amaç: Yerli basın + sosyal medya/açık sosyal + yabancı basın + think tank
 # Ayrı sekmeler; yalnız Detaylı Bilgi Notu ve Analiz Sepeti işlemleri.
@@ -13613,7 +14164,7 @@ else:
 st.markdown('---')
 
 # ---------------- ANALİST KOMUTA MERKEZİ ----------------
-st.subheader('🎛️ Analist Komuta Merkezi')
+st.subheader('👁️ İlk Bakış Analizi')
 st.caption('Kritik süreç eşikleri, yabancı basında yankı, PKK/KCK çevresi söylemi, think tank/uzman analizleri, resmî açıklamalar ve eleştirel çerçeveler birlikte puanlanır.')
 _cmd_rows=st.session_state.get('rows')
 if _cmd_rows:
@@ -13627,7 +14178,7 @@ if _cmd_rows:
     if _cmd.empty:
         st.success('Şu anda ayrıca işlem önerilecek yüksek öncelikli bir gelişme bulunmamaktadır.')
     else:
-        st.caption('Komuta Merkezi haberleri sistem tarafından öneri listesine alınır; “Seç” kutuları otomatik işaretlenmez. İşlem yapmak istediğiniz satırları siz seçersiniz.')
+        st.caption('İlk Bakış Analizi, sistemin öncelikli gördüğü gelişmeleri öneri listesine alır; “Seç” kutuları otomatik işaretlenmez.')
         # V10: Komuta Merkezi'nin kendi karar gerekçelerini görünür biçimde koru.
         cmd_full=[]
         for _,r in _cmd.iterrows():
@@ -13654,7 +14205,7 @@ if _cmd_rows:
             height=min(650,130+62*len(cmd_full))
         )
 else:
-    st.info('İlk ana tarama tamamlandığında Analist Komuta Merkezi otomatik olarak çalışacaktır.')
+    st.info('İlk ana tarama tamamlandığında İlk Bakış Analizi otomatik olarak çalışacaktır.')
 
 st.markdown('---')
 
@@ -13790,18 +14341,18 @@ else:
             'PKK/KCK çevresi açık kaynaklarda hangi farklı başlık ve vurgu tercihleriyle sunulduğunu karşılaştırır. '
             'Ek web isteği yapmaz; mevcut tarama verisini kullanır.'
         )
-        _frame_cmp=_v18_cross_source_comparisons(df,20)
+        _frame_cmp=_v19_cross_source_comparisons(df,25)
         if _frame_cmp.empty:
-            st.info('Bu taramada farklı kaynak ailelerinde yeterince güçlü aynı-olay / farklı-çerçeve eşleşmesi bulunmadı.')
+            st.info('Bu taramada mevcut içerikler arasında güvenilir bir çapraz-kaynak eşleşmesi bulunamadı. V19 kişi + çapraz dil kavram + zaman yakınlığını birlikte kullanır.')
         else:
             f1,f2=st.columns(2)
             f1.metric('Karşılaştırılabilir çift',len(_frame_cmp))
-            f2.metric('Yüksek eşleşme (≥75)',int((_frame_cmp['Eşleşme']>=75).sum()))
+            f2.metric('Yüksek/Orta güven',int(_frame_cmp['Güven'].isin(['Yüksek','Orta']).sum()))
 
             st.dataframe(
                 _frame_cmp[
                     ['Tarih','Olay / Aktör','Kaynak A','Çerçeve A','Ton A',
-                     'Kaynak B','Çerçeve B','Ton B','Çerçeve Farkı','Eşleşme']
+                     'Kaynak B','Çerçeve B','Ton B','Çerçeve Farkı','Eşleşme','Güven']
                 ],
                 hide_index=True,use_container_width=True,height=min(620,120+46*len(_frame_cmp))
             )
