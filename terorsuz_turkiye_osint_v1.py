@@ -11781,6 +11781,367 @@ if run:
     )
 
 
+
+# ============================================================
+# V10 — ANALİST KOMUTA MERKEZİ / DEĞER SKORU TAM UYARLAMA
+#
+# Düzeltmeler:
+# 1) Eski sanayi-teknoloji stratejik kelimeleri tamamen devre dışı.
+# 2) Kaynak sayımı çıplak domainlerde (_tt_norm_domain) doğru çalışır.
+# 3) Kritik gelişme kaynak türünden önce değerlendirilir.
+# 4) Yabancı basın, think tank, PKK/KCK çevresi, resmî kaynak,
+#    yazar/yorum ve çok-kaynak yankısı ayrı öncelik kriterleridir.
+# 5) Eski ÖGN / AKT / Sunum durumları Komuta Merkezi'nden çıkarılır.
+#    Yalnız Analiz Sepeti ve Bilgi Notu durumu gösterilir.
+# 6) "Neden Burada?" alanı açık ve izlenebilir hale getirilir.
+# ============================================================
+
+V10_STRATEGIC_TERMS = [
+    # Sürecin doğrudan eşikleri
+    'terörsüz türkiye','terorsuz turkiye','silah bırakma','silahsızlanma',
+    'fesih','tasfiye','örgütün feshi','örgüt feshi','disarmament','dissolution',
+    'disbandment','reintegration','entegrasyon',
+
+    # Öcalan / İmralı ve örgüt söylemi
+    'öcalan','ocalan','imralı','imrali','çağrı','mesaj',
+    'barış ve demokratik toplum','peace and democratic society',
+    'kck','pkk','cemil bayık','cemil bayik','murat karayılan','murat karayilan',
+    'duran kalkan',
+
+    # Hukuki / siyasi süreç
+    'tbmm','meclis komisyonu','komisyon','yasal düzenleme','hukuki çerçeve',
+    'legal framework','parliament','milli dayanışma','toplumsal bütünleşme',
+    'dem parti','mhp','ak parti','bahçeli','bahceli','erdoğan','erdogan',
+
+    # Bölgesel bağlantılar
+    'sdf','sdg','ypg','pyd','suriye','syria','ırak','iraq','ikby','krg',
+    'kandil','qandil','erbil','şam','damascus',
+
+    # Kriz / güvenlik eşiği
+    'ateşkes','ceasefire','saldırı','attack','çatışma','clash',
+    'süreç askıya alındı','süreç çöktü','görüşmeler kesildi',
+    'provokasyon','sabotaj'
+]
+
+V10_CRITICAL_PHRASES = [
+    'silah bırakma başladı','silahlar teslim edildi','silah teslimi',
+    'pkk feshetti','pkk kendini feshetti','örgüt feshedildi',
+    'pkk disarmament began','pkk dissolution','pkk disbandment',
+    'öcalan çağrı yaptı','öcalan mesajı','ocalan call','ocalan appeal',
+    'meclis yasayı kabul etti','parliament approved','legal framework adopted',
+    'süreç askıya alındı','süreç sona erdi','süreç çöktü',
+    'görüşmeler kesildi','ateşkes bozuldu','silah bırakma durdu',
+    'terör saldırısı','saldırı düzenlendi','çatışma çıktı','şehit oldu',
+    'ceasefire collapsed','peace process collapsed'
+]
+
+def _v10_is_official_row(r):
+    d=_tt_norm_domain(r.get('Domain') or r.get('URL',''))
+    return _tt_domain_match(d,TT_TR_OFFICIAL)
+
+# Eski yardımcı adı kullanan diğer fonksiyonların da çıplak domain hatasını düzelt.
+def _is_official_radar_row(r):
+    return _v10_is_official_row(r)
+
+def _v10_event_domains(g):
+    vals=[]
+    if 'Domain' in g.columns:
+        vals.extend(g['Domain'].fillna('').astype(str).tolist())
+    if 'URL' in g.columns:
+        vals.extend(g['URL'].fillna('').astype(str).tolist())
+    out=set()
+    for x in vals:
+        d=_tt_norm_domain(x)
+        if d:
+            out.add(d)
+    return out
+
+def _v10_source_family_for_group(g):
+    families=set()
+    if 'Kaynak_Grubu' in g.columns:
+        families={str(x) for x in g['Kaynak_Grubu'].fillna('').tolist() if str(x).strip()}
+    return families
+
+def _v10_event_value_table(df,n=35):
+    """
+    Terörsüz Türkiye için olay bazlı 0-100 değer skoru.
+    Amaç Komuta Merkezi'ne aday havuzu üretmektir; skor editoryal karar değildir.
+    """
+    cols=['Sıra','Değer_Skoru','Tarih','Gelişme','Neden_Değerli',
+          'Kaynak_Sayısı','Haber_Sayısı','Resmî_Teyit','Risk','URL']
+    if df is None or df.empty:
+        return pd.DataFrame(columns=cols)
+
+    x=df.copy()
+    if 'Tarih_dt' in x.columns:
+        x['Tarih_dt']=pd.to_datetime(x['Tarih_dt'],utc=True,errors='coerce')
+    now=pd.Timestamp.now(tz='UTC')
+    items=[]
+
+    groups=x.groupby('Olay_ID',dropna=False) if 'Olay_ID' in x.columns else [(f'ROW-{i}',x.iloc[[i]]) for i in range(len(x))]
+
+    for _,g in groups:
+        g=g.sort_values('Tarih_dt',ascending=False,na_position='last').copy()
+        rep=g.iloc[0]
+        maxrisk=int(pd.to_numeric(g.get('Risk_Skoru',0),errors='coerce').fillna(0).max() or 0)
+        domains=_v10_event_domains(g)
+        source_count=max(1,len(domains))
+        news_count=len(g)
+        official=any(_v10_is_official_row(r) for _,r in g.iterrows())
+        families=_v10_source_family_for_group(g)
+
+        latest=pd.to_datetime(g.get('Tarih_dt'),utc=True,errors='coerce').max()
+        age_h=max(0.0,(now-latest).total_seconds()/3600) if pd.notna(latest) else 168.0
+        # Bir haftaya kadar kademeli güncellik; eski 24 saat keskinliği kaldırıldı.
+        recency=max(0.0,1.0-min(age_h,168.0)/168.0)
+
+        text=norm(' '.join(
+            (g.get('Başlık',pd.Series('',index=g.index)).fillna('').astype(str)+' '+
+             g.get('İçerik_Özeti',pd.Series('',index=g.index)).fillna('').astype(str)).head(8).tolist()
+        ))
+        strategic_hits=sum(1 for term in V10_STRATEGIC_TERMS if term in text)
+        strategic=min(1.0,strategic_hits/5.0)
+
+        negative=bool(
+            (g.get('Duygu',pd.Series(index=g.index,dtype=str))=='Negatif').any()
+            or (g.get('Risk_Durumu',pd.Series(index=g.index,dtype=str))=='Yüksek Risk').any()
+            or (g.get('Yaklaşım',pd.Series(index=g.index,dtype=str))=='Eleştirel / Şüpheci').any()
+        )
+
+        critical=bool(
+            any(term in text for term in V10_CRITICAL_PHRASES)
+            or any(bool(critical_industrial_incident(r.get('Başlık',''),r.get('İçerik_Özeti',''))) for _,r in g.iterrows())
+        )
+
+        foreign='🌍 Yabancı Basın' in families
+        think='🧠 Think Tank / Analiz Kuruluşu' in families
+        movement='🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak' in families
+        kurdish='🟣 Kürt Bölgesel Medyası' in families
+        commentary=any(
+            str(v).startswith(('✍️','🎙️','📑'))
+            for v in g.get('İçerik Türü',pd.Series('',index=g.index)).fillna('').astype(str)
+        )
+
+        # 0-100 ağırlıkları — konuya özel.
+        risk_part=min(20.0,maxrisk*0.20)
+        spread_part=min(15.0,4.0*source_count + max(0,news_count-source_count)*1.0)
+        official_part=10.0 if official else 0.0
+        recency_part=10.0*recency
+        strategic_part=20.0*strategic
+        source_significance=0.0
+        if foreign: source_significance=max(source_significance,12.0)
+        if think: source_significance=max(source_significance,15.0)
+        if movement: source_significance=max(source_significance,14.0)
+        if kurdish: source_significance=max(source_significance,9.0)
+        critical_part=10.0 if critical else 0.0
+        commentary_part=5.0 if commentary else 0.0
+        impact_part=5.0 if negative else 0.0
+
+        score=int(round(min(
+            100,
+            risk_part+spread_part+official_part+recency_part+strategic_part+
+            source_significance+critical_part+commentary_part+impact_part
+        )))
+
+        why=[]
+        if critical: why.append('kritik süreç eşiği')
+        if source_count>=4: why.append(f'{source_count} farklı kaynakta geniş yankı')
+        elif source_count>=2: why.append(f'{source_count} farklı kaynakta yer aldı')
+        if foreign: why.append('yabancı basın görünürlüğü')
+        if think: why.append('think tank/politika analizi')
+        if movement: why.append('PKK/KCK çevresi veya hareket söylemi')
+        elif kurdish: why.append('Kürt bölgesel medya görünürlüğü')
+        if official: why.append('resmî/birincil kaynak')
+        if commentary: why.append('yazar/yorum/analiz içeriği')
+        if maxrisk>=70: why.append('yüksek risk/önem')
+        elif maxrisk>=35: why.append('dikkat gerektiren etki')
+        if strategic>=0.6: why.append('sürecin temel aktör/eşiklerinden biri')
+        if negative: why.append('eleştirel/şüpheci veya olumsuz etki')
+        if recency>=0.80: why.append('çok güncel')
+        if not why: why.append('güncel ve süreçle doğrudan ilgili')
+
+        items.append({
+            'Değer_Skoru':score,
+            'Tarih':rep.get('Tarih',''),
+            'Gelişme':rep.get('Başlık',''),
+            'Neden_Değerli':' • '.join(why[:7]),
+            'Kaynak_Sayısı':source_count,
+            'Haber_Sayısı':news_count,
+            'Resmî_Teyit':'Evet' if official else 'Hayır',
+            'Risk':maxrisk,
+            'URL':rep.get('URL','')
+        })
+
+    out=pd.DataFrame(items)
+    if out.empty:
+        return pd.DataFrame(columns=cols)
+    out=out.sort_values(
+        ['Değer_Skoru','Kaynak_Sayısı','Haber_Sayısı','Tarih'],
+        ascending=[False,False,False,False]
+    ).head(n).reset_index(drop=True)
+    out.insert(0,'Sıra',range(1,len(out)+1))
+    return out[cols]
+
+# Eski fonksiyon adını V10 hesabına yönlendir.
+def _v52_event_value_table(df,n=10):
+    return _v10_event_value_table(df,n)
+
+def _v10_analysis_basket_keys():
+    keys=set()
+    basket=st.session_state.get('v3_analysis_basket',[]) or []
+    for rec in basket:
+        u=str(rec.get('URL','') or '').strip()
+        t=title_key(rec.get('Başlık',''))
+        if u: keys.add('U:'+u)
+        if t: keys.add('T:'+t)
+    return keys
+
+def _v10_row_work_status(row):
+    badges=[]
+    u=str(row.get('URL','') or '').strip()
+    t=title_key(row.get('Başlık',''))
+    ab=_v10_analysis_basket_keys()
+    if (u and 'U:'+u in ab) or (t and 'T:'+t in ab):
+        badges.append('🧺 Analiz Sepetinde')
+
+    # Yalnız bilgi notu geçmişini oku; eski ÖGN/AKT/Sunum rozetlerini Komuta Merkezi'ne taşıma.
+    try:
+        hist=_v112_status_history()
+        variants=_v112_status_key_variants(
+            str(row.get('Başlık','') or ''),
+            u,
+            str(row.get('İçerik_Özeti','') or '')
+        )
+        if any(k in hist.get('notes',{}) for k in variants):
+            badges.append('📝 Bilgi Notu Hazırlandı')
+    except Exception:
+        pass
+    return ' • '.join(badges) if badges else 'Henüz işlenmedi'
+
+def _v10_is_critical(row):
+    title=str(row.get('Başlık','') or '')
+    summary=str(row.get('İçerik_Özeti','') or '')
+    text=norm(f'{title} {summary}')
+    return bool(
+        any(term in text for term in V10_CRITICAL_PHRASES)
+        or critical_industrial_incident(title,summary)
+    )
+
+def _v68_analyst_command_center(df,limit=8):
+    """
+    V10 Komuta Merkezi.
+    Öncelik hiyerarşisi:
+    kritik süreç değişikliği > yabancı basında geniş yankı >
+    PKK/KCK çevresinde önemli yeni söylem > think tank/uzman analizi >
+    resmî açıklama > belirgin eleştirel/şüpheci söylem >
+    çok kaynakta yayılan gelişme.
+    """
+    cols=['Öncelik','Önerilen_İşlem','Tarih','Başlık','Neden Burada?','Durum',
+          'Değer_Skoru','Kaynak_Sayısı','Risk_Skoru','URL']
+    if df is None or df.empty:
+        return pd.DataFrame(columns=cols),'Veri Yok',''
+
+    # 8 gösterim için daha geniş aday havuzu.
+    value=_v10_event_value_table(df,max(50,limit*7))
+    if value.empty:
+        return pd.DataFrame(columns=cols),'Terörsüz Türkiye izleme',''
+
+    rows=[]
+    for _,v in value.iterrows():
+        row=_v53_find_event_row(df,v)
+        if row is None:
+            continue
+
+        title=str(row.get('Başlık','') or v.get('Gelişme',''))
+        text=norm(f"{title} {row.get('İçerik_Özeti','')}")
+        group=str(row.get('Kaynak_Grubu','') or '')
+        source_count=int(v.get('Kaynak_Sayısı',1) or 1)
+        value_score=int(v.get('Değer_Skoru',0) or 0)
+
+        candidates=[]
+        reasons=[]
+
+        critical=_v10_is_critical(row)
+        if critical:
+            candidates.append((150,'🚨 Kritik Süreç Gelişmesi — Değerlendir'))
+            reasons.append('sürecin seyrini doğrudan etkileyebilecek kritik eşik')
+
+        if group=='🌍 Yabancı Basın':
+            if source_count>=2:
+                candidates.append((142,'🌍 Yabancı Basında Yankı — Değerlendir'))
+                reasons.append(f'yabancı basın görünürlüğü ve {source_count} kaynakta yankı')
+            else:
+                candidates.append((130,'🌍 Uluslararası Basın — Değerlendir'))
+                reasons.append('uluslararası basında görünürlük')
+
+        if group=='🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak':
+            candidates.append((140,'🛰️ Hareket Söylemi — Değerlendir'))
+            reasons.append('PKK/KCK çevresi veya hareket söyleminde yeni/önemli içerik')
+
+        if group=='🧠 Think Tank / Analiz Kuruluşu':
+            candidates.append((138,'🧠 Think Tank / Uzman Analizi — Değerlendir'))
+            reasons.append('uluslararası analitik/politika değerlendirmesi')
+
+        if _v10_is_official_row(row):
+            candidates.append((135,'🏛️ Resmî Açıklama — Değerlendir'))
+            reasons.append('resmî/birincil süreç açıklaması')
+
+        content_type=str(row.get('İçerik Türü','') or '')
+        if content_type.startswith(('✍️','🎙️','📑')):
+            candidates.append((128,'✍️ Yazar / Görüş / Analiz — Değerlendir'))
+            reasons.append('yorum, söyleşi veya politika analizi niteliği')
+
+        stance=str(row.get('Yaklaşım','') or _tt_stance(text))
+        if stance in {'Eleştirel / Şüpheci','Karma / Tartışmalı'}:
+            candidates.append((125,'🔎 Eleştirel Söylem — Değerlendir'))
+            reasons.append('eleştirel/şüpheci veya tartışmalı çerçeve')
+
+        if source_count>=3:
+            candidates.append((123,'📡 Çok Kaynaklı Yankı — Değerlendir'))
+            reasons.append(f'{source_count} bağımsız kaynakta yer alma')
+
+        if not candidates:
+            continue
+
+        # if/elif yerine bütün nitelikler değerlendirilir; en yüksek temel öncelik seçilir.
+        base_priority,action=max(candidates,key=lambda x:x[0])
+
+        # Değer skorunun kendi gerekçesinden önemli ayrıntıları tekrar etmeden ekle.
+        value_why=str(v.get('Neden_Değerli','') or '')
+        for bit in [x.strip() for x in value_why.split('•') if x.strip()]:
+            if bit not in reasons:
+                reasons.append(bit)
+
+        rows.append({
+            'Öncelik':base_priority+value_score,
+            'Önerilen_İşlem':action,
+            'Tarih':row.get('Tarih',''),
+            'Başlık':title,
+            'Neden Burada?':' • '.join(reasons[:6]),
+            'Durum':_v10_row_work_status(row),
+            'Değer_Skoru':value_score,
+            'Kaynak_Sayısı':source_count,
+            'Risk_Skoru':int(row.get('Risk_Skoru',0) or 0),
+            'URL':str(row.get('URL','') or '')
+        })
+
+    out=pd.DataFrame(rows)
+    if not out.empty:
+        out=out.sort_values(
+            ['Öncelik','Değer_Skoru','Kaynak_Sayısı'],
+            ascending=[False,False,False]
+        ).drop_duplicates('Başlık',keep='first').head(limit)
+
+    return (
+        out,
+        'Terörsüz Türkiye izleme modu',
+        'Kritik eşikler, yabancı basında yankı, PKK/KCK çevresi söylemi, think tank analizleri, resmî açıklamalar ve eleştirel çerçeveler birlikte değerlendirilmektedir.'
+    )
+
+# ============================================================
+# /V10
+# ============================================================
+
 # V3 — SADELEŞTİRİLMİŞ TERÖRSÜZ TÜRKİYE ANALİST ARAYÜZÜ
 # Amaç: Yerli basın + sosyal medya/açık sosyal + yabancı basın + think tank
 # Ayrı sekmeler; yalnız Detaylı Bilgi Notu ve Analiz Sepeti işlemleri.
@@ -11907,7 +12268,7 @@ st.markdown('---')
 
 # ---------------- ANALİST KOMUTA MERKEZİ ----------------
 st.subheader('🎛️ Analist Komuta Merkezi')
-st.caption('Uluslararası görünürlük, kritik süreç eşikleri, resmî açıklamalar ve eleştirel/şüpheci söylemler önceliklendirilir.')
+st.caption('Kritik süreç eşikleri, yabancı basında yankı, PKK/KCK çevresi söylemi, think tank/uzman analizleri, resmî açıklamalar ve eleştirel çerçeveler birlikte puanlanır.')
 _cmd_rows=st.session_state.get('rows')
 if _cmd_rows:
     _cmd_df=pd.DataFrame(_cmd_rows)
@@ -11920,16 +12281,32 @@ if _cmd_rows:
     if _cmd.empty:
         st.success('Şu anda ayrıca işlem önerilecek yüksek öncelikli bir gelişme bulunmamaktadır.')
     else:
-        # Komuta merkezi kayıtlarını ana dataframe ile eşleştirerek bilgi notu/analiz sepeti işlemi aç.
+        st.caption('Komuta Merkezi haberleri sistem tarafından öneri listesine alınır; “Seç” kutuları otomatik işaretlenmez. İşlem yapmak istediğiniz satırları siz seçersiniz.')
+        # V10: Komuta Merkezi'nin kendi karar gerekçelerini görünür biçimde koru.
         cmd_full=[]
         for _,r in _cmd.iterrows():
             url=str(r.get('URL','') or '')
             m=_cmd_df[_cmd_df['URL'].astype(str)==url] if url and 'URL' in _cmd_df.columns else pd.DataFrame()
-            cmd_full.append(m.iloc[0].to_dict() if not m.empty else {
+            base=m.iloc[0].to_dict() if not m.empty else {
                 'Tarih':r.get('Tarih',''),'Başlık':r.get('Başlık',''),'URL':url,
-                'İçerik_Özeti':r.get('Neden',''),'Risk_Skoru':r.get('Risk_Skoru',0)
-            })
-        _v3_source_table('command_center',pd.DataFrame(cmd_full),height=min(580,120+55*len(cmd_full)))
+                'İçerik_Özeti':'','Risk_Skoru':r.get('Risk_Skoru',0)
+            }
+            base['Öncelik']=r.get('Öncelik',0)
+            base['Önerilen İşlem']=r.get('Önerilen_İşlem','')
+            base['Neden Burada?']=r.get('Neden Burada?','')
+            base['Değer Skoru']=r.get('Değer_Skoru',0)
+            base['Kaynak Sayısı']=r.get('Kaynak_Sayısı',1)
+            base['Durum']=r.get('Durum','Henüz işlenmedi')
+            cmd_full.append(base)
+
+        _v3_source_table(
+            'command_center',
+            pd.DataFrame(cmd_full),
+            ['Seç','Öncelik','Önerilen İşlem','Neden Burada?','Durum','Değer Skoru',
+             'Kaynak Sayısı','Tarih','Bölge','Kaynak','Kaynak_Grubu','İçerik Türü',
+             'Başlık','Risk_Skoru','URL'],
+            height=min(650,130+62*len(cmd_full))
+        )
 else:
     st.info('İlk ana tarama tamamlandığında Analist Komuta Merkezi otomatik olarak çalışacaktır.')
 
