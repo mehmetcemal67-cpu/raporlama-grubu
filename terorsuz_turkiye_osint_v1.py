@@ -11732,6 +11732,204 @@ def _v11_aggregate_engine_diag(records):
 # /V11
 # ============================================================
 
+# ============================================================
+# V17 — V11 TARAMASI KORUNUR / ESKİ TARİHLİ SONUÇ FİLTRESİ
+#
+# Amaç:
+# - V11'in beğenilen yabancı basın / think tank / sosyal / Kürt / PKK-KCK
+#   tarama kapsamına DOKUNMADAN,
+# - DDGS/Bing gibi motorların tarihi alanında tarih vermediği fakat başlık,
+#   snippet veya URL içinde eski yayın tarihi bulunan 2013/2015 vb. arşiv
+#   sonuçlarını seçilen zaman penceresine göre elemek.
+#
+# Not:
+# V11 zaten Tarih_dt mevcutsa cutoff uygular. Bu katman yalnız eksik/kaçan
+# tarihleri ikinci kez doğrular ve eski olanları düşürür.
+# ============================================================
+
+_V17_BASE_NORMALIZE = normalize_rows
+
+_V17_MONTHS = {
+    'jan':1,'january':1,'ocak':1,
+    'feb':2,'february':2,'şubat':2,'subat':2,
+    'mar':3,'march':3,'mart':3,
+    'apr':4,'april':4,'nisan':4,
+    'may':5,'mayıs':5,'mayis':5,
+    'jun':6,'june':6,'haziran':6,
+    'jul':7,'july':7,'temmuz':7,
+    'aug':8,'august':8,'ağustos':8,'agustos':8,
+    'sep':9,'sept':9,'september':9,'eylül':9,'eylul':9,
+    'oct':10,'october':10,'ekim':10,
+    'nov':11,'november':11,'kasım':11,'kasim':11,
+    'dec':12,'december':12,'aralık':12,'aralik':12,
+}
+
+
+def _v17_safe_dt(year, month=1, day=1):
+    try:
+        y=int(year); m=int(month); d=int(day)
+        if y < 1990 or y > datetime.now(timezone.utc).year + 1:
+            return None
+        return datetime(y,m,d,tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def _v17_parse_month_name_date(text):
+    """Başlangıca yakın İngilizce/Türkçe ay adlarını yakalar."""
+    t=str(text or '').strip()
+    if not t:
+        return None
+
+    # Jan 10, 2013 / January 10 2013 / Ocak 10 2013
+    m=re.search(
+        r'(?i)^\s*(?:published\s+|updated\s+|date\s*[:\-]?\s*)?'
+        r'([A-Za-zÇĞİÖŞÜçğıöşü]{3,12})\s+(\d{1,2})(?:st|nd|rd|th)?[,]?\s+(20\d{2}|19\d{2})\b',
+        t[:80]
+    )
+    if m:
+        month=_V17_MONTHS.get(norm(m.group(1)))
+        if month:
+            return _v17_safe_dt(m.group(3),month,m.group(2))
+
+    # 10 Jan 2013 / 10 January 2013 / 10 Ocak 2013
+    m=re.search(
+        r'(?i)^\s*(?:published\s+|updated\s+|date\s*[:\-]?\s*)?'
+        r'(\d{1,2})\s+([A-Za-zÇĞİÖŞÜçğıöşü]{3,12})[,]?\s+(20\d{2}|19\d{2})\b',
+        t[:80]
+    )
+    if m:
+        month=_V17_MONTHS.get(norm(m.group(2)))
+        if month:
+            return _v17_safe_dt(m.group(3),month,m.group(1))
+    return None
+
+
+def _v17_extract_explicit_date(title='', snippet='', url=''):
+    """
+    Yalnız güçlü yayın-tarihi işaretlerini kullanır.
+    Haber metninin ortasındaki tarihsel referansları yanlışlıkla yayın tarihi
+    saymamak için başlık/snippet'in BAŞLANGICI ve URL tarih kalıbı esas alınır.
+    """
+    texts=[str(title or '').strip(),str(snippet or '').strip()]
+
+    for text in texts:
+        if not text:
+            continue
+        head=text[:120]
+
+        # 2013-01-10 / 2013/01/10 başta
+        m=re.search(r'^\s*(20\d{2}|19\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b',head)
+        if m:
+            d=_v17_safe_dt(m.group(1),m.group(2),m.group(3))
+            if d: return d,'metin-başı'
+
+        # 10.01.2013 / 10/01/2013 başta
+        m=re.search(r'^\s*(\d{1,2})[./-](\d{1,2})[./-](20\d{2}|19\d{2})\b',head)
+        if m:
+            d=_v17_safe_dt(m.group(3),m.group(2),m.group(1))
+            if d: return d,'metin-başı'
+
+        # İngilizce/Türkçe ay isimli tarih
+        d=_v17_parse_month_name_date(head)
+        if d:
+            return d,'metin-başı'
+
+        # "Jan 10, 2013 · ..." önünde kısa site adı/etiket varsa ilk 35 karakter içinde de yakala
+        m=re.search(
+            r'(?i)([A-Za-zÇĞİÖŞÜçğıöşü]{3,12})\s+(\d{1,2})(?:st|nd|rd|th)?[,]?\s+(20\d{2}|19\d{2})\b',
+            head[:55]
+        )
+        if m:
+            month=_V17_MONTHS.get(norm(m.group(1)))
+            if month:
+                d=_v17_safe_dt(m.group(3),month,m.group(2))
+                if d: return d,'metin-başı'
+
+    # URL: /2013/01/10/ veya /2013-01-10/
+    u=str(url or '')
+    m=re.search(r'/(20\d{2}|19\d{2})[/-](\d{1,2})[/-](\d{1,2})(?:/|\b)',u)
+    if m:
+        d=_v17_safe_dt(m.group(1),m.group(2),m.group(3))
+        if d: return d,'url'
+
+    # URL: /2013/01/...  — ay belli, gün bilinmiyor
+    m=re.search(r'/(20\d{2}|19\d{2})/(\d{1,2})(?:/|\b)',u)
+    if m:
+        d=_v17_safe_dt(m.group(1),m.group(2),1)
+        if d: return d,'url'
+
+    # URL'de tek başına eski yıl segmenti: /2013/...  Güçlü arşiv sinyali.
+    m=re.search(r'/(20\d{2}|19\d{2})(?:/|\b)',u)
+    if m:
+        d=_v17_safe_dt(m.group(1),1,1)
+        if d: return d,'url-yıl'
+
+    return None,''
+
+
+def _v17_cutoff_utc(cutoff):
+    try:
+        if cutoff is None:
+            return None
+        if cutoff.tzinfo is None:
+            return cutoff.replace(tzinfo=timezone.utc)
+        return cutoff.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def normalize_rows(raw, cutoff, mode, user_query):
+    """
+    V17: V11/V9 normalize çıktısını değiştirmeden yalnız freshness guard uygular.
+    """
+    rows,reasons=_V17_BASE_NORMALIZE(raw,cutoff,mode,user_query)
+    if not rows:
+        return rows,reasons
+
+    cutoff_utc=_v17_cutoff_utc(cutoff)
+    now_utc=datetime.now(timezone.utc)
+    kept=[]
+
+    for r in rows:
+        existing=_to_utc_datetime(r.get('Tarih_dt'))
+
+        # V11'in zaten filtrelediği bilinen tarih için ikinci güvenlik kontrolü.
+        if existing and cutoff_utc and existing < cutoff_utc:
+            reasons['zaman']+=1
+            continue
+
+        inferred,source=_v17_extract_explicit_date(
+            r.get('Başlık',''),
+            r.get('İçerik_Özeti',''),
+            r.get('URL','')
+        )
+
+        # Arama motorunun date alanı boşsa ancak başlık/URL açıkça eski tarih
+        # taşıyorsa artık sonuç listesine alınmaz.
+        if inferred:
+            if cutoff_utc and inferred < cutoff_utc:
+                reasons['zaman']+=1
+                continue
+            # Mantıksız ileri tarihleri de kabul etme.
+            if inferred > now_utc + timedelta(days=2):
+                reasons['zaman']+=1
+                continue
+            if not existing:
+                r['Tarih_dt']=inferred
+                r['Tarih']=fmt_dt(inferred)
+                r['Tarih Kaynağı']='Metin/URL üzerinden doğrulandı'
+        elif not existing:
+            r['Tarih Kaynağı']='Arama motoru tarihi yok'
+
+        kept.append(r)
+
+    return kept,reasons
+
+# ============================================================
+# /V17 ESKİ TARİH FİLTRESİ
+# ============================================================
+
 if run:
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
     when=period_window(hours)
