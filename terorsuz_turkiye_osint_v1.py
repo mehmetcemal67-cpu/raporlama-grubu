@@ -10296,7 +10296,14 @@ def _v3_source_table(section_key,data,columns=None,height=590):
         st.info('Bu bölümde eşleşen içerik bulunmamaktadır.')
         return
     x=data.copy().reset_index(drop=True)
-    x.insert(0,'Seç',False)
+    # Bazı üst panellerden gelen dataframe zaten 'Seç' sütunu taşıyabilir.
+    # Yeniden insert etmek ValueError üretir; mevcutsa güvenle sıfırla.
+    if 'Seç' in x.columns:
+        x['Seç']=False
+        cols=['Seç']+[c for c in x.columns if c!='Seç']
+        x=x[cols]
+    else:
+        x.insert(0,'Seç',False)
     default_cols=['Seç','Tarih','Bölge','Kaynak','Kategori','Yaklaşım','Çerçeve',
                   'Başlık','İçerik_Özeti','Risk_Skoru','Doğrulama','URL']
     show=[c for c in (columns or default_cols) if c in x.columns]
