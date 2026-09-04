@@ -1,0 +1,8 @@
+streamlit
+pandas
+requests
+beautifulsoup4
+Pillow
+python-docx
+ddgs
+duckduckgo-search
