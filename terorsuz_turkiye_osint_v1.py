@@ -10069,6 +10069,271 @@ if not st.session_state['_v60_catchup_done']:
             st.session_state['_v60_catchup_hours']=_catch_hours
 
 
+
+# ============================================================
+# V5 — KAYNAK AYRIŞTIRMA VE ULUSLARARASI TARAMA DÜZELTMESİ
+# Sorun: "global" modunda kaynak doğrulaması yapılmadığı için Türkçe yerli
+# haberler ve sosyal medya sonuçları Yabancı Basın sekmesine düşebiliyordu.
+# Çözüm:
+# 1) Yayıncı adı/domain çözümleme güçlendirildi.
+# 2) Yabancı basın ve think tank taramaları site-hedefli hale getirildi.
+# 3) Her kaynak türü normalize aşamasında kesin allow-list ile filtrelenir.
+# 4) Bilinmeyen kaynaklar artık otomatik olarak "yabancı" sayılmaz.
+# ============================================================
+
+TT_TR_EXTRA = [
+    'milligazete.com.tr','yeniakit.com.tr','sondakika.com','haberler.com',
+    'medyagazete.com','medyagazete.com.tr','internethaber.com','haber3.com',
+    'odatv.com','veryansintv.com','tele1.com.tr','halktv.com.tr','gercekgundem.com',
+    'diken.com.tr','birgun.net','cumhuriyet.com.tr','sozcu.com.tr','t24.com.tr',
+    'gazeteduvar.com.tr','serbestiyet.com','yetkinreport.com'
+]
+TT_TR_MAIN = list(dict.fromkeys(TT_TR_MAIN + TT_TR_EXTRA))
+TR_MAIN = list(dict.fromkeys(TT_TR_MAIN))
+
+TT_SOURCE_NAME_TO_DOMAIN = {
+    # Türkiye
+    'milli gazete':'milligazete.com.tr',
+    'millî gazete':'milligazete.com.tr',
+    'yeni akit':'yeniakit.com.tr',
+    'yeni akit gazetesi':'yeniakit.com.tr',
+    'son dakika':'sondakika.com',
+    'haberler':'haberler.com',
+    'medyagazete':'medyagazete.com',
+    't24':'t24.com.tr',
+    'gazete duvar':'gazeteduvar.com.tr',
+    'serbestiyet':'serbestiyet.com',
+    'yetkin report':'yetkinreport.com',
+    # Sosyal
+    'x.com':'x.com','x':'x.com','twitter':'x.com','twitter.com':'x.com',
+    'instagram':'instagram.com','instagram.com':'instagram.com',
+    'facebook':'facebook.com','facebook.com':'facebook.com',
+    'youtube':'youtube.com','youtube.com':'youtube.com',
+    'reddit':'reddit.com','reddit.com':'reddit.com',
+    # Uluslararası ana akım
+    'reuters':'reuters.com','associated press':'apnews.com','ap':'apnews.com',
+    'bbc':'bbc.com','bbc news':'bbc.com','cnn':'cnn.com',
+    'the guardian':'theguardian.com','guardian':'theguardian.com',
+    'financial times':'ft.com','the economist':'economist.com',
+    'bloomberg':'bloomberg.com','politico':'politico.eu',
+    'deutsche welle':'dw.com','dw':'dw.com','france 24':'france24.com',
+    'euronews':'euronews.com','le monde':'lemonde.fr','le figaro':'lefigaro.fr',
+    'der spiegel':'spiegel.de','spiegel':'spiegel.de','faz':'faz.net',
+    'tagesschau':'tagesschau.de','el país':'elpais.com','el pais':'elpais.com',
+    'ansa':'ansa.it','npr':'npr.org','voice of america':'voanews.com','voa':'voanews.com',
+    # Bölgesel
+    'al jazeera':'aljazeera.com','al monitor':'al-monitor.com','al-monitor':'al-monitor.com',
+    'middle east eye':'middleeasteye.net','asharq al-awsat':'aawsat.com',
+    'arab news':'arabnews.com','the national':'thenationalnews.com',
+    'rudaw':'rudaw.net','kurdistan24':'kurdistan24.net','shafaq':'shafaq.com',
+    'basnews':'basnews.com',
+    # Think tank
+    'international crisis group':'crisisgroup.org','crisis group':'crisisgroup.org',
+    'carnegie':'carnegieendowment.org','carnegie endowment':'carnegieendowment.org',
+    'ecfr':'ecfr.eu','european council on foreign relations':'ecfr.eu',
+    'chatham house':'chathamhouse.org','csis':'csis.org',
+    'brookings':'brookings.edu','washington institute':'washingtoninstitute.org',
+    'rusi':'rusi.org','swp':'swp-berlin.org','middle east institute':'mei.edu',
+    'atlantic council':'atlanticcouncil.org','foreign policy':'foreignpolicy.com',
+    'foreign affairs':'foreignaffairs.com'
+}
+
+def _tt_clean_domain_value(value):
+    raw=str(value or '').strip().lower()
+    if not raw:
+        return ''
+    # Kaynak adı doğrudan alan adı olarak geldiyse yakala.
+    raw=raw.replace('www.','')
+    if re.fullmatch(r'[a-z0-9.-]+\.[a-z]{2,}',raw):
+        return raw
+    try:
+        d=domain(raw if '://' in raw else 'https://'+raw)
+        if d and '.' in d:
+            return d
+    except Exception:
+        pass
+    return ''
+
+def infer_source(source_name='',source_url='',article_url=''):
+    # 1) Google RSS <source url=""> en güvenilir yayıncı bilgisidir.
+    d=_tt_clean_domain_value(source_url)
+    if d and d not in ('news.google.com','google.com'):
+        return d
+
+    # 2) Yayıncı adı alan adı olarak gelmiş olabilir: x.com, instagram.com vb.
+    direct=_tt_clean_domain_value(source_name)
+    if direct and direct not in ('news.google.com','google.com'):
+        return direct
+
+    # 3) Bilinen yayıncı adlarını eşleştir.
+    n=norm(source_name)
+    if n in TT_SOURCE_NAME_TO_DOMAIN:
+        return TT_SOURCE_NAME_TO_DOMAIN[n]
+    for name,dom in TT_SOURCE_NAME_TO_DOMAIN.items():
+        if len(name)>=4 and name in n:
+            return dom
+
+    # 4) Eski alias havuzunu koru.
+    for a,d2 in SOURCE_ALIASES.items():
+        if a in n:
+            return d2
+
+    # 5) Haber URL'si doğrudan yayıncıya gidiyorsa kullan.
+    d=_tt_clean_domain_value(article_url)
+    if d and d not in ('news.google.com','google.com'):
+        return d
+    return ''
+
+def _tt_is_local_domain(d):
+    d=domain('https://'+d) if d and '://' not in str(d) else domain(d)
+    if not d:
+        return False
+    return (
+        _tt_domain_match(d,TT_TR_MAIN)
+        or _tt_domain_match(d,TT_TR_OFFICIAL)
+        or d.endswith('.com.tr') or d.endswith('.org.tr') or d.endswith('.gov.tr')
+        or d.endswith('.net.tr') or d.endswith('.edu.tr') or d.endswith('.tr')
+    )
+
+def _tt_is_social_domain(d):
+    return _tt_domain_match(d,SOCIAL)
+
+def _tt_is_foreign_press_domain(d):
+    return _tt_domain_match(d,TT_GLOBAL_MAIN) or _tt_domain_match(d,TT_MENA)
+
+def _tt_is_thinktank_domain(d):
+    return _tt_domain_match(d,TT_THINK_TANK)
+
+def source_group(d):
+    d=str(d or '').strip().lower()
+    if _tt_is_social_domain(d): return '📱 Sosyal Medya / Açık Sosyal'
+    if _tt_is_thinktank_domain(d): return '🧠 Think Tank / Analiz Kuruluşu'
+    if _tt_is_foreign_press_domain(d): return '🌍 Yabancı Basın'
+    if _tt_is_local_domain(d): return '🇹🇷 Yerli Basın'
+    return '❔ Kaynağı Belirsiz / Diğer'
+
+def _tt_region(d):
+    d=str(d or '').strip().lower()
+    if _tt_is_local_domain(d): return 'Türkiye'
+    if _tt_is_social_domain(d): return 'Sosyal Medya'
+    if _tt_is_thinktank_domain(d): return 'Uluslararası Analiz'
+    if _tt_domain_match(d,TT_MENA): return 'Ortadoğu / Bölge'
+    if d in {'dw.com','spiegel.de','faz.net','tagesschau.de'}: return 'Almanya'
+    if d in {'france24.com','lemonde.fr','lefigaro.fr'}: return 'Fransa'
+    if d in {'bbc.com','bbc.co.uk','theguardian.com','ft.com','economist.com'}: return 'Birleşik Krallık'
+    if d in {'reuters.com','apnews.com','cnn.com','nytimes.com','washingtonpost.com','bloomberg.com','npr.org','voanews.com'}:
+        return 'ABD / Anglo-Amerikan'
+    if _tt_is_foreign_press_domain(d): return 'Diğer Uluslararası'
+    return 'Kaynak Belirsiz'
+
+def _tt_site_clause(domains):
+    return '('+' OR '.join('site:'+d for d in domains)+')'
+
+def build_international_queries(when):
+    # Hedef kaynak grupları: sorgular artık açık internete değil doğrudan
+    # yabancı medya domainlerine yöneltilir. Böylece Türk siteleri global
+    # sorgulara karışmaz.
+    groups=[
+        ['reuters.com','apnews.com','bbc.com','theguardian.com','ft.com'],
+        ['cnn.com','bloomberg.com','politico.eu','economist.com','euronews.com'],
+        ['dw.com','france24.com','lemonde.fr','lefigaro.fr','spiegel.de','faz.net'],
+        ['aljazeera.com','al-monitor.com','middleeasteye.net','aawsat.com','arabnews.com'],
+        ['thenationalnews.com','rudaw.net','kurdistan24.net','shafaq.com','basnews.com']
+    ]
+    topic_sets=[
+        '("Turkey PKK" OR "Türkiye PKK" OR "Terror-Free Turkey" OR "Terror-Free Türkiye")',
+        '("PKK disarmament" OR "PKK dissolution" OR "PKK peace process" OR "Kurdish peace process")',
+        '(Ocalan OR Öcalan) (Turkey OR Türkiye) (PKK OR peace OR disarmament)',
+        '(SDF OR YPG OR "Syrian Democratic Forces") (Turkey OR Türkiye) (PKK OR Kurdish OR integration)',
+        '(Iraq OR KRG OR Qandil OR Kurdistan) (Turkey OR Türkiye) PKK'
+    ]
+    out=[]
+    # Her kaynak grubuna en güçlü iki konu sorgusu + bölgesel gruplara ek sorgular.
+    for i,g in enumerate(groups):
+        sites=_tt_site_clause(g)
+        out.append(f'{topic_sets[0]} {sites} when:{when}')
+        out.append(f'{topic_sets[1]} {sites} when:{when}')
+        if i>=3:
+            out.append(f'{topic_sets[2]} {sites} when:{when}')
+            out.append(f'{topic_sets[3]} {sites} when:{when}')
+    return out
+
+def build_analysis_queries(when):
+    groups=[
+        ['crisisgroup.org','carnegieendowment.org','ecfr.eu','chathamhouse.org'],
+        ['csis.org','brookings.edu','washingtoninstitute.org','rusi.org'],
+        ['swp-berlin.org','mei.edu','atlanticcouncil.org'],
+        ['foreignpolicy.com','foreignaffairs.com']
+    ]
+    topics=[
+        '("Turkey PKK" OR "Türkiye PKK" OR "PKK peace process" OR "PKK disarmament")',
+        '(Ocalan OR "Kurdish peace process") Turkey',
+        '(Turkey SDF YPG PKK) (Syria OR Iraq OR regional)'
+    ]
+    out=[]
+    for g in groups:
+        sites=_tt_site_clause(g)
+        for topic in topics:
+            out.append(f'{topic} (analysis OR report OR policy OR commentary) {sites} when:{when}')
+    return out
+
+def build_social_queries(when):
+    # Ayrı sosyal platform sorguları; kaynak doğrulama normalize aşamasında yapılır.
+    return [
+        f'("Terörsüz Türkiye" OR PKK OR Öcalan OR İmralı) (site:x.com OR site:twitter.com) when:{when}',
+        f'("Terörsüz Türkiye" OR PKK OR Öcalan OR İmralı) site:instagram.com when:{when}',
+        f'("Terörsüz Türkiye" OR PKK OR Öcalan OR İmralı) site:facebook.com when:{when}',
+        f'("Terörsüz Türkiye" OR PKK OR Öcalan OR İmralı) site:youtube.com when:{when}',
+        f'("Turkey PKK peace process" OR "PKK disarmament" OR Ocalan) site:reddit.com when:{when}'
+    ]
+
+# Eski normalize işlevinin üstüne kesin kaynak doğrulama uygula.
+_TT_V5_BASE_NORMALIZE = normalize_rows
+def normalize_rows(raw, cutoff, mode, user_query):
+    rows,reasons=_TT_V5_BASE_NORMALIZE(raw,cutoff,mode,user_query)
+    kept=[]
+    for r in rows:
+        # Yeni infer_source ile kaynağı tekrar çöz; eski normalize satırı boş/Google domaini
+        # bırakmışsa yayıncı adından yeniden yakala.
+        d=infer_source(r.get('Yayıncı','') or r.get('Kaynak',''),
+                       r.get('Yayıncı_URL',''),r.get('URL',''))
+        r['Domain']=d
+        r['Kaynak_Grubu']=source_group(d)
+        r['Bölge']=_tt_region(d)
+        r['Yaklaşım']=_tt_stance(f"{r.get('Başlık','')} {r.get('İçerik_Özeti','')}")
+        r['Çerçeve']=_tt_frame(f"{r.get('Başlık','')} {r.get('İçerik_Özeti','')}")
+
+        # KESİN AYRIŞTIRMA:
+        # foreign -> yalnız yabancı medya allow-list
+        # thinktank -> yalnız think tank allow-list
+        # social -> yalnız sosyal platform
+        # turkish/official/statistics/negative -> yabancı veya sosyal kaynakları yanlışlıkla alma
+        if mode=='foreign':
+            if not _tt_is_foreign_press_domain(d):
+                reasons['kaynak']+=1
+                continue
+        elif mode=='thinktank':
+            if not _tt_is_thinktank_domain(d):
+                reasons['kaynak']+=1
+                continue
+        elif mode=='social':
+            if not _tt_is_social_domain(d):
+                reasons['kaynak']+=1
+                continue
+        elif mode in {'turkish','official','statistics','negative'}:
+            # Türk ana taramasında bilinmeyen Google yayıncıları tamamen kaybetmemek için
+            # yalnız açıkça yabancı/think tank/sosyal olanları dışarıda bırak.
+            if _tt_is_foreign_press_domain(d) or _tt_is_thinktank_domain(d) or _tt_is_social_domain(d):
+                reasons['kaynak']+=1
+                continue
+
+        kept.append(r)
+    return kept,reasons
+
+# ============================================================
+# /V5
+# ============================================================
+
 if run:
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
     when=period_window(hours)
@@ -10077,9 +10342,9 @@ if run:
     batches.append(('🏛️ Resmî kaynak radarı',build_official_radar_queries(when),'official'))
     batches.append(('📊 Araştırma / rapor / kamuoyu taraması',build_statistics_queries(when),'statistics'))
     if neg: batches.append(('⚠️ Negatif haber taraması',build_negative_queries(when),'negative'))
-    if greek: batches.append(('🌍 Uluslararası basın',build_international_queries(when),'global'))
+    if greek: batches.append(('🌍 Uluslararası basın',build_international_queries(when),'foreign'))
     if social: batches.append(('📱 Açık sosyal / indeks',build_social_queries(when),'social'))
-    if global_on: batches.append(('🧠 Uluslararası analiz / think tank',build_analysis_queries(when),'global'))
+    if global_on: batches.append(('🧠 Uluslararası analiz / think tank',build_analysis_queries(when),'thinktank'))
     all_rows=[]; stat={'Ham sonuç':0,'Zaman dışı':0,'Konu dışı':0,'Yunan dışı':0,'Kaynak dışı':0,'Sonuç':0,'Olay':0}
     live_alarm_box=st.empty()
     status_box=st.status('🔎 Tarama başlıyor...',expanded=True)
@@ -10422,10 +10687,10 @@ else:
     else:
         total=len(df)
         events=df['Olay_ID'].nunique() if 'Olay_ID' in df.columns else total
-        local_mask=df['Kaynak_Grubu'].astype(str).str.startswith(('🇹🇷','🏛️'))
-        social_mask=df['Kaynak_Grubu'].astype(str).str.startswith('📱')
-        think_mask=df['Kaynak_Grubu'].astype(str).str.startswith('🧠')
-        foreign_mask=df['Kaynak_Grubu'].astype(str).str.startswith(('🌍','🌐')) & ~think_mask
+        local_mask=df['Kaynak_Grubu'].astype(str).eq('🇹🇷 Yerli Basın')
+        social_mask=df['Kaynak_Grubu'].astype(str).eq('📱 Sosyal Medya / Açık Sosyal')
+        think_mask=df['Kaynak_Grubu'].astype(str).eq('🧠 Think Tank / Analiz Kuruluşu')
+        foreign_mask=df['Kaynak_Grubu'].astype(str).eq('🌍 Yabancı Basın')
 
         m1,m2,m3,m4,m5=st.columns(5)
         m1.metric('Toplam İçerik',total)
@@ -10433,6 +10698,14 @@ else:
         m3.metric('Yerli Basın',int(local_mask.sum()))
         m4.metric('Yabancı Basın',int(foreign_mask.sum()))
         m5.metric('Sosyal / Think Tank',int(social_mask.sum()+think_mask.sum()))
+
+        unclassified_mask=df['Kaynak_Grubu'].astype(str).eq('❔ Kaynağı Belirsiz / Diğer')
+        if int(unclassified_mask.sum())>0:
+            with st.expander(f'❔ Kaynağı sınıflandırılamayan {int(unclassified_mask.sum())} içerik',False):
+                st.dataframe(
+                    df.loc[unclassified_mask,[c for c in ['Tarih','Kaynak','Yayıncı','Domain','Başlık','URL'] if c in df.columns]],
+                    hide_index=True,use_container_width=True,height=260
+                )
 
         st.subheader('🗞️ Kaynak Bazlı İzleme')
         tab_local,tab_social,tab_foreign,tab_think=st.tabs([
