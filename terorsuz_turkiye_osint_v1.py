@@ -10250,1096 +10250,351 @@ if run:
     )
 
 
-# V60 — ŞU AN BİLMEN GEREKENLER: manuel çalışmaz, yeni oturumda otomatik hazırlanır.
+# V3 — SADELEŞTİRİLMİŞ TERÖRSÜZ TÜRKİYE ANALİST ARAYÜZÜ
+# Amaç: Yerli basın + sosyal medya/açık sosyal + yabancı basın + think tank
+# Ayrı sekmeler; yalnız Detaylı Bilgi Notu ve Analiz Sepeti işlemleri.
+# Eski ÖGN / AKT / Sunum sepetleri ve vardiya panelleri bu arayüzde kullanılmaz.
+
+def _v3_analysis_basket():
+    if 'v3_analysis_basket' not in st.session_state:
+        st.session_state['v3_analysis_basket']=[]
+    return st.session_state['v3_analysis_basket']
+
+def _v3_add_analysis(rows):
+    basket=_v3_analysis_basket()
+    known={(str(x.get('URL','')), title_key(x.get('Başlık',''))) for x in basket}
+    n=0
+    for r in rows:
+        rec=dict(r)
+        k=(str(rec.get('URL','')),title_key(rec.get('Başlık','')))
+        if k in known:
+            continue
+        basket.append(rec); known.add(k); n+=1
+    st.session_state['v3_analysis_basket']=basket
+    return n
+
+def _v3_remove_analysis(indices):
+    basket=_v3_analysis_basket()
+    kill=set(int(i) for i in indices)
+    st.session_state['v3_analysis_basket']=[r for i,r in enumerate(basket) if i not in kill]
+
+def _v3_make_note(selected,key_prefix):
+    if selected is None or selected.empty:
+        st.warning('Önce en az bir haber seçin.')
+        return
+    with st.spinner(f'{len(selected)} seçili içerik için ayrıntılı bilgi notu hazırlanıyor...'):
+        try:
+            b=make_analyst_docx(selected,title='TERÖRSÜZ TÜRKİYE BİLGİ NOTU')
+            st.session_state[key_prefix+'_note_bytes']=b
+            _v63_mark_notes(selected.to_dict('records'))
+            st.success('✅ Detaylı bilgi notu hazırlanmıştır.')
+        except Exception as e:
+            st.error(f'Bilgi notu hazırlanamadı: {e}')
+
+def _v3_source_table(section_key,data,columns=None,height=590):
+    if data is None or data.empty:
+        st.info('Bu bölümde eşleşen içerik bulunmamaktadır.')
+        return
+    x=data.copy().reset_index(drop=True)
+    x.insert(0,'Seç',False)
+    default_cols=['Seç','Tarih','Bölge','Kaynak','Kategori','Yaklaşım','Çerçeve',
+                  'Başlık','İçerik_Özeti','Risk_Skoru','Doğrulama','URL']
+    show=[c for c in (columns or default_cols) if c in x.columns]
+    with st.form(f'v3_form_{section_key}',clear_on_submit=False):
+        edited=st.data_editor(
+            x[show],
+            column_config={
+                'Seç':st.column_config.CheckboxColumn('Seç'),
+                'URL':st.column_config.LinkColumn('Kaynak / Haber'),
+                'İçerik_Özeti':st.column_config.TextColumn('Kısa İçerik',width='large'),
+                'Risk_Skoru':st.column_config.NumberColumn('Risk',format='%d/100')
+            },
+            disabled=[c for c in show if c!='Seç'],
+            hide_index=True,use_container_width=True,height=height,
+            key=f'v3_editor_{section_key}'
+        )
+        c1,c2=st.columns(2)
+        with c1:
+            do_note=st.form_submit_button('📝 Detaylı Bilgi Notu Oluştur',use_container_width=True)
+        with c2:
+            do_basket=st.form_submit_button('🧺 Analiz Sepetine Ekle',use_container_width=True)
+
+    mask=edited['Seç'].astype(bool).to_numpy() if 'Seç' in edited.columns else []
+    selected=x.loc[mask].drop(columns=['Seç'],errors='ignore') if len(mask) else pd.DataFrame()
+    if do_note:
+        _v3_make_note(selected,section_key)
+    if do_basket:
+        if selected.empty:
+            st.warning('Önce en az bir haber seçin.')
+        else:
+            n=_v3_add_analysis(selected.to_dict('records'))
+            st.success(f'✅ {n} içerik Analiz Sepetine eklenmiştir.')
+    if st.session_state.get(section_key+'_note_bytes'):
+        st.download_button(
+            '⬇️ Hazırlanan Bilgi Notunu İndir',
+            st.session_state[section_key+'_note_bytes'],
+            file_name=f'Terorsuz_Turkiye_Bilgi_Notu_{section_key}_{date.today()}.docx',
+            mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            use_container_width=True,key=f'v3_note_download_{section_key}'
+        )
+
+# ---------------- ŞU AN BİLMEN GEREKENLER ----------------
 st.subheader('⚡ Şu An Bilmen Gerekenler')
 _prev=st.session_state.get('_v60_previous_visit')
 _catch_rows=st.session_state.get('_v60_catchup_rows') or []
-_catch_hours=st.session_state.get('_v60_catchup_hours')
-
 if _prev is None or pd.isna(_prev):
-    st.info('İlk giriş kaydı oluşturuldu. Bir sonraki girişinizde bu alan son girişinizden sonraki gelişmeleri otomatik gösterecek.')
+    st.info('İlk giriş kaydı oluşturuldu. Bir sonraki girişinizde son girişinizden sonraki öncelikli gelişmeler burada gösterilecektir.')
 else:
     try:
         _prev_local=pd.to_datetime(_prev,utc=True).tz_convert(datetime.now().astimezone().tzinfo)
-        st.caption(f'Son giriş: {_prev_local.strftime("%d.%m.%Y %H:%M")} — bu tarihten sonraki gelişmeler otomatik kontrol edildi.')
+        st.caption(f'Son giriş: {_prev_local.strftime("%d.%m.%Y %H:%M")} — bu tarihten sonraki gelişmeler kontrol edilmiştir.')
     except Exception:
         pass
-
     _now5=_v60_now_to_know_table(_catch_rows,5)
     if _now5.empty:
         st.success('Son girişinizden bu yana öncelikli yeni bir gelişme tespit edilmedi.')
     else:
-        st.warning(f'Son girişinizden bu yana dikkat gerektiren {_now5.shape[0]} gelişme öne çıkıyor.')
-
-        # V61: Bu bölümden doğrudan seçim/sepet/bilgi notu işlemleri yapılabilir.
         _catch_df=pd.DataFrame(_catch_rows)
-        _know_rows=[]
-        for _,_v in _now5.iterrows():
-            _url=str(_v.get('URL','') or '')
-            _title=norm(_v.get('Gelişme',''))
-            _match=pd.DataFrame()
-            if not _catch_df.empty and _url and 'URL' in _catch_df.columns:
-                _match=_catch_df[_catch_df['URL'].astype(str)==_url]
-            if _match.empty and not _catch_df.empty and 'Başlık' in _catch_df.columns:
-                _match=_catch_df[_catch_df['Başlık'].astype(str).map(norm)==_title]
-            if not _match.empty:
-                _r=_match.iloc[0].to_dict()
-            else:
-                _r={
-                    'Tarih':_v.get('Tarih',''),'Başlık':_v.get('Gelişme',''),
-                    'URL':_v.get('URL',''),'Risk_Skoru':_v.get('Risk',0),
-                    'İçerik_Özeti':'','Kaynak':'','Kategori':''
-                }
-            _r['Değer_Skoru']=int(_v.get('Değer_Skoru',0) or 0)
-            _r['Neden_Değerli']=_v.get('Neden_Değerli','')
-            _r['Kaynak_Sayısı']=int(_v.get('Kaynak_Sayısı',0) or 0)
-            _know_rows.append(_r)
-
-        _know_select=pd.DataFrame(_know_rows)
-        if 'Seç' not in _know_select.columns:
-            _know_select.insert(0,'Seç',False)
-
-        _edited_know=st.data_editor(
-            _know_select[['Seç','Tarih','Başlık','İçerik_Özeti','Değer_Skoru',
-                          'Neden_Değerli','Kaynak_Sayısı','Risk_Skoru','URL']],
-            column_config={
-                'Seç':st.column_config.CheckboxColumn('Seç'),
-                'Değer_Skoru':st.column_config.ProgressColumn('Değer Skoru',min_value=0,max_value=100,format='%d/100'),
-                'Risk_Skoru':st.column_config.NumberColumn('Risk',format='%d/100'),
-                'URL':st.column_config.LinkColumn('Haber Linki'),
-                'İçerik_Özeti':st.column_config.TextColumn('Kısa İçerik',width='large')
-            },
-            disabled=['Tarih','Başlık','İçerik_Özeti','Değer_Skoru','Neden_Değerli',
-                      'Kaynak_Sayısı','Risk_Skoru','URL'],
-            hide_index=True,use_container_width=True,
-            height=min(480,100+62*len(_know_select)),
-            key='v61_now_to_know_editor'
-        )
-
-        _selected_idx=_edited_know.index[_edited_know['Seç'].astype(bool)].tolist()
-        _selected_know=_know_select.loc[_selected_idx].copy() if _selected_idx else pd.DataFrame()
-
-        k1,k2,k3,k4=st.columns(4)
-        with k1:
-            if st.button('📌 Önemli Gelişmelere Ekle',key='v82_know_imp',use_container_width=True):
-                if _selected_know.empty:
-                    st.warning('Önce en az bir gelişmeyi seçin.')
-                else:
-                    _n=_add_rows_to_important_basket(_selected_know.to_dict('records'))
-                    st.success(f'{_n} haber önemli gelişmeler sepetine eklendi.')
-        with k2:
-            if st.button('🗂️ AKT Sepetine Ekle',key='v82_know_akt',use_container_width=True):
-                if _selected_know.empty:
-                    st.warning('Önce en az bir gelişmeyi seçin.')
-                else:
-                    _n=_add_rows_to_osint_basket(_selected_know.to_dict('records'))
-                    st.success(f'{_n} haber açık kaynak tarama sepetine eklendi.')
-        with k3:
-            if st.button('🖥️ Sunum Sepetine Ekle',key='v82_know_pres',use_container_width=True):
-                if _selected_know.empty:
-                    st.warning('Önce en az bir gelişmeyi seçin.')
-                else:
-                    _n=_v80_add_presentation(_selected_know.to_dict('records'))
-                    st.success(f'{_n} haber sunum sepetine eklendi.')
-        with k4:
-            if st.button('📝 Detaylı Bilgi Notu Oluştur',key='v82_know_note',use_container_width=True):
-                if _selected_know.empty:
-                    st.warning('Önce en az bir gelişmeyi seçin.')
-                else:
-                    with st.spinner(f'{len(_selected_know)} seçili gelişmenin ayrıntılı bilgi notu hazırlanıyor...'):
-                        try:
-                            st.session_state['v61_know_note_bytes']=make_analyst_docx(
-                                _selected_know,
-                                title='TERÖRSÜZ TÜRKİYE BİLGİ NOTU'
-                            )
-                            _v63_mark_notes(_selected_know.to_dict('records'))
-                        except Exception as _e:
-                            st.session_state['v61_know_note_bytes']=None
-                            st.error(f'Bilgi notu hazırlanamadı: {_e}')
-
-        if st.session_state.get('v61_know_note_bytes'):
-            st.download_button(
-                '⬇️ Hazırlanan Bilgi Notunu İndir',
-                data=st.session_state['v61_know_note_bytes'],
-                file_name=f'Terorsuz_Turkiye_Bilgi_Notu_Su_An_Bilmen_Gerekenler_{date.today()}.docx',
-                mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                use_container_width=True,
-                key='v61_know_note_download'
-            )
+        _rows=[]
+        for _,v in _now5.iterrows():
+            url=str(v.get('URL','') or '')
+            m=_catch_df[_catch_df.get('URL',pd.Series(dtype=str)).astype(str)==url] if (not _catch_df.empty and 'URL' in _catch_df.columns and url) else pd.DataFrame()
+            if not m.empty: _rows.append(m.iloc[0].to_dict())
+        if _rows:
+            _v3_source_table('now_to_know',pd.DataFrame(_rows),height=min(470,120+55*len(_rows)))
+        else:
+            st.dataframe(_now5,hide_index=True,use_container_width=True)
 
 st.markdown('---')
 
-# ============================================================
-# V68 — ANALİST KOMUTA MERKEZİ
-# ============================================================
-st.caption('⚡ V75 ultra hızlı mod: checkbox işlemleri form içinde tutulmakta; tik atmak tek başına uygulamayı yeniden çalıştırmamaktadır.')
+# ---------------- ANALİST KOMUTA MERKEZİ ----------------
 st.subheader('🎛️ Analist Komuta Merkezi')
-st.caption(
-    'Bu alan çalışma saatine ve içeriğin niteliğine göre işlem önermektedir: Bilgi Notu için veri/istatistik, '
-    'resmî açıklama ve ürün/teknoloji gelişmeleri; AKT için negatif/eleştirel/olumsuz veya propaganda niteliğindeki '
-    'içerikler; sunum için resmî veri, resmî açıklama ve teyitli bilgiler esas alınmaktadır.'
-)
-
+st.caption('Uluslararası görünürlük, kritik süreç eşikleri, resmî açıklamalar ve eleştirel/şüpheci söylemler önceliklendirilir.')
 _cmd_rows=st.session_state.get('rows')
 if _cmd_rows:
     _cmd_df=pd.DataFrame(_cmd_rows)
     if not _cmd_df.empty and 'Tarih_dt' in _cmd_df.columns:
         _cmd_df['Tarih_dt']=pd.to_datetime(_cmd_df['Tarih_dt'],utc=True,errors='coerce')
-
     _cmd,_phase,_phase_hint=_v68_analyst_command_center(_cmd_df,8)
-
-    cphase1,cphase2=st.columns([1,2])
-    with cphase1:
-        st.info(f'**Çalışma Fazı**\n\n{_phase}')
-    with cphase2:
-        st.info(f'**Sistem Önceliği**\n\n{_phase_hint}')
-
+    c1,c2=st.columns([1,2])
+    c1.info(f'**Çalışma Fazı**\n\n{_phase}')
+    c2.info(f'**Sistem Önceliği**\n\n{_phase_hint}')
     if _cmd.empty:
         st.success('Şu anda ayrıca işlem önerilecek yüksek öncelikli bir gelişme bulunmamaktadır.')
     else:
-        st.markdown(f'**Şimdi yapılması önerilen {len(_cmd)} işlem**')
-        _cmd_for_select=_cmd.copy()
-        _section_select_table(
-            'v68_command_center',
-            _cmd_for_select,
-            ['Öncelik','Önerilen_İşlem','Tarih','Başlık','Neden','Durum',
-             'Değer_Skoru','Risk_Skoru','URL'],
-            height=min(620,105+58*len(_cmd_for_select))
-        )
-        st.caption(
-            'Öneriler karar yerine geçmemektedir. Haberi seçerek doğrudan Önemli Gelişmeler, AKT veya '
-            'Bilgi Notu işlemlerini aynı bölümden uygulayabilirsiniz.'
-        )
+        # Komuta merkezi kayıtlarını ana dataframe ile eşleştirerek bilgi notu/analiz sepeti işlemi aç.
+        cmd_full=[]
+        for _,r in _cmd.iterrows():
+            url=str(r.get('URL','') or '')
+            m=_cmd_df[_cmd_df['URL'].astype(str)==url] if url and 'URL' in _cmd_df.columns else pd.DataFrame()
+            cmd_full.append(m.iloc[0].to_dict() if not m.empty else {
+                'Tarih':r.get('Tarih',''),'Başlık':r.get('Başlık',''),'URL':url,
+                'İçerik_Özeti':r.get('Neden',''),'Risk_Skoru':r.get('Risk_Skoru',0)
+            })
+        _v3_source_table('command_center',pd.DataFrame(cmd_full),height=min(580,120+55*len(cmd_full)))
 else:
-    st.info('İlk ana tarama tamamlandığında Analist Komuta Merkezi otomatik olarak işlem önerileri oluşturacaktır.')
+    st.info('İlk ana tarama tamamlandığında Analist Komuta Merkezi otomatik olarak çalışacaktır.')
 
 st.markdown('---')
 
 rows=st.session_state.rows
 if rows is None:
-    st.info('👋 Hazır. Tarama başlamaz. Zaman aralığını sekritik eşik **TARAMAYI BAŞLAT / YENİLE** düğmesine basın.')
+    st.info('👋 Hazır. Zaman aralığını seçip **TARAMAYI BAŞLAT / YENİLE** düğmesine basın.')
 else:
-    # Tarama sırasında satırlar zaten enrich_rows() ile zenginleştiriliyor.
-    # Checkbox / sekme / buton gibi UI etkileşimlerinde pahalı analizi tekrar çalıştırmıyoruz.
     df=pd.DataFrame(rows)
     if not df.empty:
         df['Tarih_dt']=pd.to_datetime(df['Tarih_dt'],utc=True,errors='coerce')
         df=df.sort_values('Tarih_dt',ascending=False,na_position='last').reset_index(drop=True)
+
     st.caption(f'Son tarama: {st.session_state.scan_time.strftime("%d.%m.%Y %H:%M:%S") if st.session_state.scan_time else "-"}')
-    with st.expander('🧪 Tarama teşhisi',False): st.json(st.session_state.stats)
+    with st.expander('🧪 Tarama teşhisi',False):
+        st.json(st.session_state.stats)
+
     if df.empty:
-        st.warning('Sonuç bulunamadı. Tarama teşhisini açarak hangi aşamada sonuçların azaldığını görebilirsiniz.')
+        st.warning('Sonuç bulunamadı.')
     else:
-        total=len(df); negc=int((df.Duygu=='Negatif').sum()); riskc=int((df.Risk_Durumu=='Yüksek Risk').sum()); trc=int(df.Kaynak_Grubu.astype(str).str.startswith('🇹🇷').sum()); grc=int(df.Kaynak_Grubu.astype(str).str.startswith('🇬🇷').sum()); events=df['Olay_ID'].nunique()
-        a,b,c,d,e,f=st.columns(6); a.metric('Toplam',total); b.metric('Olay',events); c.metric('Negatif',negc); d.metric('Yüksek Risk',riskc); e.metric('🇹🇷 Türk',trc); f.metric('🌍 Uluslararası',grc)
+        total=len(df)
+        events=df['Olay_ID'].nunique() if 'Olay_ID' in df.columns else total
+        local_mask=df['Kaynak_Grubu'].astype(str).str.startswith(('🇹🇷','🏛️'))
+        social_mask=df['Kaynak_Grubu'].astype(str).str.startswith('📱')
+        think_mask=df['Kaynak_Grubu'].astype(str).str.startswith('🧠')
+        foreign_mask=df['Kaynak_Grubu'].astype(str).str.startswith(('🌍','🌐')) & ~think_mask
 
+        m1,m2,m3,m4,m5=st.columns(5)
+        m1.metric('Toplam İçerik',total)
+        m2.metric('Tekil Olay',events)
+        m3.metric('Yerli Basın',int(local_mask.sum()))
+        m4.metric('Yabancı Basın',int(foreign_mask.sum()))
+        m5.metric('Sosyal / Think Tank',int(social_mask.sum()+think_mask.sum()))
 
-        # ---------------------------------------------------------
-        # V34 — VARDİYA BAŞLANGIÇ ÖZETİ
-        # ---------------------------------------------------------
-        # V46 — ANA GÖRÜNÜM EN ÜSTTE
-        # Tarama tamamlandığında ilk bölüm doğrudan Kronolojik / Negatif / Yüksek Risk vb. ana haber görünümüdür.
-        # Performans: Streamlit tabs içindeki TÜM içerikleri arka planda çalıştırır.
-        # Bu nedenle tek seferde yalnızca seçilen görünümü üretiriz.
-        st.subheader('🌅 Vardiya Başlangıç Özeti')
-        st.caption('Sabah ilk analitik bakış: aynı olay tekilleştirilir; resmî veri/açıklama, sürecin seyrini etkileyen siyasi/güvenlik gelişmesi, kritik negatif, Suriye-Irak/SDG-YPG ve bölgesel güvenlik gelişmesi ve yüksek teyitli yeni gelişmeler önceliklendirilir.')
-        shift_stats,shift_top,shift_baseline_label=_shift_start_summary(
-            df,
-            st.session_state.get('current_scan_id')
-        )
-        if shift_stats:
-            st.caption(shift_stats.get('baseline_label',''))
-            s1,s2,s3,s4,s5,s6=st.columns(6)
-            s1.metric('Son devirden beri yeni haber',shift_stats['new_news'])
-            s2.metric('Yeni önemli olay',shift_stats['new_important_events'])
-            s3.metric('Yüksek riskli gelişme',shift_stats['high_risk'])
-            s4.metric('Risk artışı',shift_stats['risk_up'])
-            s5.metric('Teyit güçlenmesi',shift_stats['verify_up'])
-            s6.metric('SÜREÇ olayı',shift_stats['osb'])
-
-            st.markdown('**Sabah ilk bakılması gereken 5–8 gelişme**')
-            if shift_top.empty:
-                st.info('Öne çıkan gelişme bulunamadı.')
-            else:
-                _section_select_table(
-                    'shift_top',
-                    shift_top,
-                    ['Tarih','Kaynak','Kategori','Başlık','Risk_Skoru','Risk_Durumu','Doğrulama','URL'],
-                    height=min(330,70+45*len(shift_top))
-                )
-
-        c_shift1,c_shift2=st.columns([2,1])
-        with c_shift1:
-            st.caption('Devir noktası, bir sonraki vardiya başlangıç özetinin başlangıç zamanını belirler.')
-        with c_shift2:
-            if st.button('📍 ŞİMDİYİ DEVİR NOKTASI OLARAK KAYDET',use_container_width=True):
-                if _mark_shift_handover(st.session_state.get('current_scan_id'),'Manuel devir noktası'):
-                    st.success('Devir noktası kaydedildi.')
-                else:
-                    st.error('Devir noktası kaydedilemedi.')
-
-        # ---------------------------------------------------------
-        # V33 — DÜNDEN BERİ NE DEĞİŞTİ?
-        # ---------------------------------------------------------
-        st.subheader('🆕 Dünden Beri Ne Değişti?')
-        changes,previous_scan_id,previous_scan_time=_compare_since_previous(
-            df,
-            st.session_state.get('current_scan_id')
-        )
-        if previous_scan_id is None:
-            st.info(
-                'Henüz karşılaştırılabilecek eski tarama bulunmuyor. '
-                'Bu tarama yerel geçmişe kaydedildi; sonraki taramalarda yeni olaylar ve değişiklikler otomatik gösterilecek.'
-            )
-        else:
-            if previous_scan_time:
-                st.caption(f'Karşılaştırılan önceki tarama: {previous_scan_time}')
-            if changes.empty:
-                st.success('Önceki taramaya göre anlamlı yeni olay, risk artışı, teyit artışı veya içerik güncellemesi tespit edilmedi.')
-            else:
-                _change_type_col='Tür' if 'Tür' in changes.columns else 'Değişim'
-                new_n=int(changes[_change_type_col].astype(str).str.contains('YENİ OLAY').sum())
-                upd_n=int(changes[_change_type_col].astype(str).str.contains('YENİ BİLGİ').sum())
-                risk_n=int(changes[_change_type_col].astype(str).str.contains('RİSK ARTTI').sum())
-                ver_n=int(changes[_change_type_col].astype(str).str.contains('TEYİT').sum())
-                q1,q2,q3,q4=st.columns(4)
-                q1.metric('Yeni Olay',new_n)
-                q2.metric('Yeni Bilgi',upd_n)
-                q3.metric('Risk Artışı',risk_n)
-                q4.metric('Teyit Güçlendi',ver_n)
-                changes_view=changes.head(25).copy()
-                _section_select_table(
-                    'changes',
-                    changes_view,
-                    ['Ne Değişti?','Tür','Başlık','Kaynak','Kategori','Risk','Önceki Risk','Kaynak Sayısı','URL'],
-                    height=min(560,70+35*min(len(changes_view),25))
-                )
-
-        # Son taramada anlık yakalanan bildirimlerin kalıcı özeti
-        recent_alerts=st.session_state.get('last_scan_alerts',[])
-        if recent_alerts:
-            with st.expander(f'🔔 Son taramada yakalanan yeni negatif/riskli içerikler ({len(recent_alerts)})',False):
-                alert_df=pd.DataFrame(recent_alerts)
-                alert_view=alert_df.copy()
-                if 'Risk' in alert_view.columns and 'Risk_Skoru' not in alert_view.columns:
-                    alert_view['Risk_Skoru']=alert_view['Risk']
-                _section_select_table(
-                    'recent_alerts',
-                    alert_view,
-                    ['Tarih','Seviye','Kaynak','Başlık','Risk_Skoru','URL'],
-                    height=min(420,42+35*len(alert_view))
-                )
-
-        # Alarm bandı
-        alarms=df[(df.Risk_Skoru>=70) | (df.Duygu=='Negatif')].sort_values(['Risk_Skoru','Tarih_dt'],ascending=[False,False])
-        if not alarms.empty:
-            st.subheader('🚨 Yeni / Öncelikli Alarmlar')
-            alarm_view=alarms.head(10).copy()
-            _section_select_table(
-                'priority_alarms',
-                alarm_view,
-                ['Tarih','Kaynak','Kategori','Başlık','Risk_Skoru','Risk_Gerekçesi','Doğrulama','URL'],
-                height=min(470,70+38*len(alarm_view))
-            )
-
-        # Kritik sanayi olayları için SABİT bölüm.
-        # Her zaman görünür; olay varsa içerik dolar, yoksa boş durum gösterilir.
-        st.subheader('🚨 Kritik Süreç Gelişmeleri')
-        st.caption('SÜREÇ ve SÜREÇ dışındaki süreç, saha ve sanayi alanlarında tespit edilen yangın/patlama olayları burada sürekli izlenir.')
-
-        critical_mask=df.apply(
-            lambda r:bool(critical_industrial_incident(r.get('Başlık',''),r.get('İçerik_Özeti',''))),
-            axis=1
-        )
-        critical_events=df[critical_mask].copy().sort_values('Tarih_dt',ascending=False)
-
-        if not critical_events.empty:
-            critical_events['Kritik_Olay']=critical_events.apply(
-                lambda r:critical_industrial_incident(r.get('Başlık',''),r.get('İçerik_Özeti','')) or '',
-                axis=1
-            )
-            st.error(f'🚨 **KRİTİK SÜREÇ GELİŞMESİ ALARMI — {len(critical_events)} içerik tespit edildi**')
-            _section_select_table(
-                'critical_industrial_events',
-                critical_events,
-                ['Tarih','Kritik_Olay','Kaynak','Başlık','Risk_Skoru','URL'],
-                height=min(340,70+36*len(critical_events))
-            )
-        else:
-            st.info('Bu tarama döneminde SÜREÇ / SÜREÇ dışı sanayi sahai yangını veya patlaması tespit edilmedi.')
+        st.subheader('🗞️ Kaynak Bazlı İzleme')
+        tab_local,tab_social,tab_foreign,tab_think=st.tabs([
+            '🇹🇷 Yerli Basın','📱 Sosyal Medya / Açık Sosyal',
+            '🌍 Yabancı Basın','🧠 Think Tank / Analiz Kuruluşları'
+        ])
+        with tab_local:
+            st.caption('Türkiye merkezli medya ve birincil/siyasi kaynaklarda Terörsüz Türkiye gündemi.')
+            _v3_source_table('local_press',df[local_mask])
+        with tab_social:
+            st.caption('X, Instagram, Facebook, YouTube, Reddit ve indekslenebilen diğer açık sosyal kaynaklar.')
+            _v3_source_table('social_media',df[social_mask])
+        with tab_foreign:
+            st.caption('Uluslararası ve bölgesel yabancı basında Terörsüz Türkiye, PKK, Öcalan, silahsızlanma ve bağlantılı bölgesel gündem.')
+            _v3_source_table('foreign_press',df[foreign_mask])
+        with tab_think:
+            st.caption('Uluslararası düşünce kuruluşları, politika merkezleri ve analitik yayınlar.')
+            _v3_source_table('think_tank',df[think_mask])
 
         st.markdown('---')
-        st.subheader('🏆 Günün En Değerli 10 Gelişmesi')
-        st.caption(
-            'Aynı olaya ait haberlar tek gelişmede birleştirilir. Değer Skoru; önem/risk, farklı kaynak sayısı, '
-            'resmî teyit, güncellik, stratejik Terörsüz Türkiye önemi, negatif/eleştirel etki ve haber yoğunluğunu birlikte değerlendirir. '
-            'Kaynak gerçek okunma/tıklanma verisi sağlıyorsa ileride ayrıca eklenebilir; mevcut sistem erişilemeyen okunma sayılarını tahmin etmez.'
-        )
-        value10=_v52_event_value_table(df,10)
-        if value10.empty:
-            st.info('Bu taramada sıralanabilecek gelişme bulunamadı.')
-        else:
-            _section_select_table(
-                'daily_top10_value',
-                value10,
-                ['Sıra','Değer_Skoru','Tarih','Gelişme','Neden_Değerli',
-                 'Kaynak_Sayısı','Haber_Sayısı','Resmî_Teyit','Risk','URL'],
-                height=min(680,105+55*len(value10))
-            )
-
-            if st.button('📊 BUGÜNÜN DURUM ÖZETİNİ OLUŞTUR',use_container_width=True,key='v54_top10_summary_btn'):
-                with st.spinner('Yalnızca en değerli 10 gelişmenin haber içerikleri okunuyor ve özetleniyor...'):
-                    summary_text=_v54_deep_top10_summary(df,value10,45)
-                    st.session_state.daily_summary_text=summary_text
-                    st.session_state.daily_summary_bytes=make_v54_top10_summary_docx(df,value10,summary_text)
-
-            if st.session_state.get('daily_summary_text'):
-                st.text_area(
-                    'Bugünün Durum Özeti — En Değerli 10 Gelişme',
-                    st.session_state.daily_summary_text,
-                    height=520,
-                    key='v54_daily_summary_preview'
-                )
-                st.caption(
-                    'Özet yalnızca yukarıdaki 10 gelişmenin haber içeriğini anlatır; değer skoru, kaynak sayısı ve '
-                    'sıralama gerekçeleri metne eklenmez. Toplam çıktı 45 satırı geçmez.'
-                )
-                if st.session_state.get('daily_summary_bytes'):
-                    st.download_button(
-                        '⬇️ BUGÜNÜN DURUM ÖZETİNİ WORD OLARAK İNDİR',
-                        data=st.session_state.daily_summary_bytes,
-                        file_name=f'bugunun_durum_ozeti_top10_{datetime.now().strftime("%Y%m%d_%H%M")}.docx',
-                        mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                        use_container_width=True,
-                        key='v54_top10_summary_download'
-                    )
-
-        # V33 — BİLGİ NOTU ADAYLARI
-        # ---------------------------------------------------------
-        st.subheader('🎯 Bilgi Notu Adayları')
-        st.caption('Mevcut taramadaki olayları risk, teyit, kaynak sayısı, stratejik önem ve yenilik açısından puanlar.')
-        candidate_count=st.slider('Gösterilecek aday sayısı',5,15,10,1,key='candidate_count')
-        candidates=_information_note_candidates(
-            df,
-            st.session_state.get('current_scan_id'),
-            candidate_count
-        )
-        if candidates.empty:
-            st.info('Bu taramada bilgi notu adayı oluşturulamadı.')
-        else:
-            _section_select_table(
-                'candidates',
-                candidates,
-                ['Aday Puanı','Başlık','Kaynak','Kategori','Risk','Kaynak Sayısı','Doğrulama','Değişim','Neden Bilgi Notu?','URL'],
-                height=min(470,65+36*len(candidates))
-            )
-
-        # ---------------------------------------------------------
-
-        st.markdown('---')
-        st.subheader('👀 Kaçırıyor Olabilir Miyim? — İkinci Göz')
-        st.caption(
-            'Mevcut taramada yüksek değer/risk taşıdığı hâlde henüz Önemli Gelişmeler veya '
-            'Açık Kaynak Tarama sepetine alınmamış olayları otomatik gösterir.'
-        )
-        _missed=_v63_missed_candidates(df,12)
-        if _missed.empty:
-            st.success('Şu anda sepetler dışında kalan belirgin yüksek değerli bir gelişme görünmüyor.')
-        else:
-            st.warning(f'Henüz hiçbir sepete alınmamış {_missed.shape[0]} dikkat çekici gelişme var.')
-            _section_select_table(
-                'v63_missed',
-                _missed.rename(columns={'Gelişme':'Başlık'}),
-                ['Tarih','Başlık','Değer_Skoru','Neden_Değerli','Kaynak_Sayısı','Risk','URL'],
-                height=min(620,100+48*len(_missed))
-            )
-
+        st.subheader('📰 Kronoloji / Olay / Trend İzleme')
         view=st.radio(
             'Görünüm',
-            ['📰 Kronolojik','⚠️ Negatif','🚨 Yüksek Risk','🇹🇷 Türk','🌍 Uluslararası','🧩 Olaylar','📈 Trend / Analiz','⭐ Takip Listesi'],
-            horizontal=True,
-            key='main_view'
+            ['📰 Kronolojik','⚠️ Eleştirel / Riskli','🚨 Yüksek Risk','🧩 Olaylar','📈 Trend / Analiz','⭐ Takip Listesi'],
+            horizontal=True,key='v3_main_view'
         )
 
-        cols=['Seç','Tarih','Kaynak_Grubu','Kaynak','Kategori','Başlık','İçerik_Özeti','Duygu','Risk_Skoru','Risk_Durumu','Kaynak_Güvenilirliği','Doğrulama','URL']
-
         if view=='📰 Kronolojik':
-            st.caption(
-                '☑️ Hızlı işlem modu: kutucuklara tıklarken sayfa yeniden çalıştırılmaz. '
-                'Seçiminizi yaptıktan sonra aşağıdaki işlem düğmelerinden birine basmanız yeterlidir.'
-            )
-            group_events=st.toggle(
-                '🧩 Aynı olayı tek satırda göster',
-                value=True,
-                key='v109_chron_group_events',
-                help='Aynı gelişmenin farklı kaynaklardaki haberlerini tek olay satırında birleştirir.'
-            )
-            chronology_base=_v109_chronology_events(df) if group_events else df.copy()
-
+            group_events=st.toggle('🧩 Aynı olayı tek satırda göster',True,key='v3_group_events')
+            base=_v109_chronology_events(df) if group_events else df.copy()
             page_size=40
-            total_pages=max(1,(len(chronology_base)+page_size-1)//page_size)
-            page_no=st.number_input(
-                'Sayfa',min_value=1,max_value=total_pages,value=1,step=1,
-                key='news_page'
-            )
-            start_i=(int(page_no)-1)*page_size
-            end_i=min(start_i+page_size,len(chronology_base))
-            page_df=chronology_base.iloc[start_i:end_i].copy()
-
-            page_df['İçerik_Özeti']=page_df['İçerik_Özeti'].astype(str).str.slice(0,220)
-            page_df=_v63_add_status_badges(page_df)
-            chron_cols=[
-                'Seç','Tarih','Kaynak_Grubu','Kaynak','Kaynak Sayısı','Haber Sayısı',
-                'Kategori','Bölge','Yaklaşım','Çerçeve','Başlık','Durum','İçerik_Özeti','Duygu','Risk_Skoru',
-                'Risk_Durumu','Kaynak_Güvenilirliği','Doğrulama','URL'
-            ]
-            chron_cols=[c for c in chron_cols if c in page_df.columns]
-
-            st.caption(f'{start_i+1}-{end_i} / {len(chronology_base)} kayıt' + (' (olay bazlı)' if group_events else ' haber'))
-
-            # FORM: checkbox tıklamaları rerun yapmaz. Yalnız işlem butonuna basınca tek rerun olur.
-            with st.form(
-                key=f'v74_chronology_fast_form_{int(page_no)}',
-                clear_on_submit=False
-            ):
-                edited=st.data_editor(
-                    page_df[chron_cols],
-                    column_config={
-                        'Seç':st.column_config.CheckboxColumn('Seç'),
-                        'URL':st.column_config.LinkColumn('Haber Linki'),
-                        'İçerik_Özeti':st.column_config.TextColumn('Kısa İçerik',width='large'),
-                        'Risk_Skoru':st.column_config.NumberColumn('Risk',format='%d/100'),
-                        'Kaynak Sayısı':st.column_config.NumberColumn('Kaynak',format='%d'),
-                        'Haber Sayısı':st.column_config.NumberColumn('Haber',format='%d'),
-                        'Durum':st.column_config.TextColumn('Durum',width='large')
-                    },
-                    disabled=[x for x in chron_cols if x!='Seç'],
-                    hide_index=True,
-                    use_container_width=True,
-                    height=535,
-                    key=f'v74_chron_editor_{int(page_no)}'
-                )
-
-                st.markdown('### ⚡ Seçilen Haberlerle Hızlı İşlem')
-                c1,c2,c3,c4=st.columns(4)
-                with c1: do_imp=st.form_submit_button('📌 Önemli Gelişmelere Ekle',use_container_width=True)
-                with c2: do_akt=st.form_submit_button('🗂️ AKT Sepetine Ekle',use_container_width=True)
-                with c3: do_pres=st.form_submit_button('🖥️ Sunum Sepetine Ekle',use_container_width=True)
-                with c4: do_note=st.form_submit_button('📝 Detaylı Bilgi Notu Oluştur',use_container_width=True)
-
-            if do_imp or do_akt or do_note or do_pres:
-                selected_mask=edited['Seç'].astype(bool).to_numpy()
-                selected_page=page_df.loc[selected_mask].copy()
-
-                if selected_page.empty:
-                    st.warning('Önce en az bir haberi işaretleyin.')
-                elif do_imp:
-                    n=_v74_fast_add_important(selected_page.to_dict('records'))
-                    st.success(f'✅ {n} yeni haber Önemli Gelişmeler Sepeti’ne eklenmiştir.')
-                elif do_akt:
-                    n=_v74_fast_add_osint(selected_page.to_dict('records'))
-                    st.success(f'✅ {n} yeni haber Açık Kaynak Tarama Sepeti’ne eklenmiştir.')
-                elif do_pres:
-                    n=_v80_add_presentation(selected_page.to_dict('records'))
-                    st.success(f'✅ {n} yeni haber Sunum Sepeti’ne eklenmiştir.')
-                elif do_note:
-                    with st.spinner(
-                        f'{len(selected_page)} seçili haber için ayrıntılı bilgi notu hazırlanmaktadır...'
-                    ):
-                        try:
-                            # Tam içerik için kısa page_df yerine ana df'deki aynı URL'leri kullan.
-                            selected_urls=set(selected_page['URL'].fillna('').astype(str))
-                            full_selected=df[df['URL'].fillna('').astype(str).isin(selected_urls)].copy()
-                            if full_selected.empty:
-                                full_selected=selected_page.copy()
-                            st.session_state['v74_chron_note_bytes']=make_analyst_docx(
-                                full_selected,
-                                title='TERÖRSÜZ TÜRKİYE BİLGİ NOTU'
-                            )
-                            _v63_mark_notes(full_selected.to_dict('records'))
-                            _v73_invalidate_status_cache()
-                            st.success('✅ Bilgi notu hazırlanmıştır.')
-                        except Exception as e:
-                            st.session_state['v74_chron_note_bytes']=None
-                            st.error(f'Bilgi notu hazırlanamadı: {e}')
-
-            if st.session_state.get('v74_chron_note_bytes'):
-                st.download_button(
-                    '⬇️ KRONOLOJİDEN HAZIRLANAN BİLGİ NOTUNU İNDİR',
-                    data=st.session_state['v74_chron_note_bytes'],
-                    file_name=f'Terorsuz_Turkiye_Bilgi_Notu_{date.today()}.docx',
-                    mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                    use_container_width=True,
-                    key='v74_chron_note_download'
-                )
-
+            pages=max(1,(len(base)+page_size-1)//page_size)
+            page=int(st.number_input('Sayfa',1,pages,1,1,key='v3_page'))
+            page_df=base.iloc[(page-1)*page_size:min(page*page_size,len(base))].copy()
+            _v3_source_table('chronology',page_df,height=610)
 
             if group_events and not page_df.empty and '_Olay_ID' in page_df.columns:
                 with st.expander('🔎 Olayın tüm kaynaklarını aç',False):
-                    _event_options={
-                        f"{str(r.get('Başlık',''))[:120]} — {int(r.get('Kaynak Sayısı',1) or 1)} kaynak":str(r.get('_Olay_ID',''))
-                        for _,r in page_df.iterrows()
-                    }
-                    if _event_options:
-                        _event_label=st.selectbox(
-                            'Kaynaklarını görmek istediğiniz olay',
-                            list(_event_options.keys()),
-                            key=f'v109_event_source_select_{int(page_no)}'
-                        )
-                        _event_sources=_v109_event_sources(df,_event_options.get(_event_label))
-                        if _event_sources.empty:
-                            st.info('Bu olay için ayrıntılı kaynak kaydı bulunamadı.')
-                        else:
-                            st.dataframe(
-                                _event_sources[['Tarih','Kaynak','Başlık','İçerik_Özeti','URL']].head(20),
-                                column_config={
-                                    'URL':st.column_config.LinkColumn('Haber Linki'),
-                                    'İçerik_Özeti':st.column_config.TextColumn('Kısa İçerik',width='large')
-                                },
-                                hide_index=True,use_container_width=True,
-                                height=min(520,80+42*len(_event_sources.head(20)))
-                            )
+                    opts={f"{str(r.get('Başlık',''))[:120]} — {int(r.get('Kaynak Sayısı',1) or 1)} kaynak":str(r.get('_Olay_ID','')) for _,r in page_df.iterrows()}
+                    if opts:
+                        label=st.selectbox('Olay',list(opts.keys()),key='v3_event_sources')
+                        es=_v109_event_sources(df,opts[label])
+                        if not es.empty:
+                            st.dataframe(es[[c for c in ['Tarih','Kaynak','Başlık','İçerik_Özeti','URL'] if c in es.columns]],
+                                         hide_index=True,use_container_width=True)
 
-        elif view=='⚠️ Negatif':
-            _section_select_table(
-                'negative_view',
-                df[df.Duygu=='Negatif'],
-                ['Tarih','Kaynak','Kategori','Başlık','Risk_Skoru','Risk_Gerekçesi','Doğrulama','URL'],
-                height=600
-            )
-
+        elif view=='⚠️ Eleştirel / Riskli':
+            x=df[(df.get('Duygu','')=='Negatif') | df.get('Yaklaşım',pd.Series('',index=df.index)).isin(['Eleştirel / Şüpheci','Karma / Tartışmalı'])]
+            _v3_source_table('critical_view',x)
         elif view=='🚨 Yüksek Risk':
-            _section_select_table(
-                'highrisk_view',
-                df[df.Risk_Durumu=='Yüksek Risk'],
-                ['Tarih','Kaynak','Kategori','Başlık','Risk_Skoru','Risk_Gerekçesi','Doğrulama','URL'],
-                height=600
-            )
-
-        elif view=='🇹🇷 Türk':
-            _section_select_table(
-                'turkish_view',
-                df[df.Kaynak_Grubu.astype(str).str.startswith('🇹🇷')],
-                ['Tarih','Kaynak','Kategori','Başlık','Risk_Skoru','Duygu','URL'],
-                height=600
-            )
-
-        elif view=='🌍 Uluslararası':
-            _intl_mask=df['Kaynak_Grubu'].astype(str).str.startswith(('🌍','🌐','🧠'))
-            _section_select_table(
-                'international_view',
-                df[_intl_mask],
-                ['Tarih','Bölge','Kaynak','Kategori','Yaklaşım','Çerçeve','Başlık','Risk_Skoru','URL'],
-                height=600
-            )
-
+            _v3_source_table('highrisk_view',df[df.Risk_Durumu=='Yüksek Risk'])
         elif view=='🧩 Olaylar':
             ev=build_event_summary(df)
-            st.dataframe(ev,hide_index=True,use_container_width=True,height=480)
-            chosen=st.selectbox('Olay zaman çizelgesini göster:',ev['Olay_ID'].tolist() if not ev.empty else [])
-            if chosen:
-                g=df[df.Olay_ID==chosen].sort_values('Tarih_dt',ascending=True)
-                _section_select_table(
-                    f'event_{chosen}',
-                    g,
-                    ['Tarih','Kaynak','Kategori','Başlık','Risk_Skoru','Doğrulama','URL'],
-                    height=min(500,80+40*len(g))
-                )
-
+            st.dataframe(ev,hide_index=True,use_container_width=True,height=450)
+            if not ev.empty:
+                chosen=st.selectbox('Olay zaman çizelgesini göster:',ev['Olay_ID'].tolist(),key='v3_event_choice')
+                _v3_source_table('event_timeline',df[df.Olay_ID==chosen].sort_values('Tarih_dt'))
         elif view=='📈 Trend / Analiz':
-            st.subheader('📊 Konu yoğunluğu')
             tr=trend_table(df)
-            if not tr.empty:
-                st.bar_chart(tr.set_index('Kategori')['Haber'])
+            st.subheader('📊 Konu yoğunluğu')
+            if not tr.empty: st.bar_chart(tr.set_index('Kategori')['Haber'])
             st.subheader('📈 Gündem yoğunluğu')
             tmp=df[df['Tarih_dt'].notna()].copy()
             tmp['Saat']=tmp['Tarih_dt'].dt.strftime('%Y-%m-%d %H:00')
-            if not tmp.empty:
-                st.line_chart(tmp.groupby('Saat').size())
+            if not tmp.empty: st.line_chart(tmp.groupby('Saat').size())
             st.subheader('🧭 Yoğun konular')
             for _,r in tr.head(10).iterrows():
-                st.write(f"**{r['Kategori']}** — {int(r['Haber'])} haber")
-
+                st.write(f"**{r['Kategori']}** — {int(r['Haber'])} içerik")
         elif view=='⭐ Takip Listesi':
-            hits=watchlist_hits(df,watch)
-            st.write(f'Listede eşleşen: **{len(hits)}** haber')
-            if not hits.empty:
-                _section_select_table(
-                    'watchlist_view',
-                    hits,
-                    ['Tarih','Kaynak','Kategori','Başlık','Risk_Skoru','Duygu','URL'],
-                    height=550
-                )
+            _v3_source_table('watchlist',watchlist_hits(df,watch))
 
-
-
-
-        # V34 — ÖNEMLİ GELİŞMELER SEPETİ
-        # ---------------------------------------------------------
-        st.subheader('📌 24 Saatlik Önemli Gelişmeler Sepeti')
-        st.caption('Gün boyunca önemli gördüğünüz haberleri burada biriktirin; vardiya sonunda Word olarak alın.')
-
-        # V74: Kronoloji artık kendi hızlı işlem düğmelerine sahiptir.
-        # Burada yalnız diğer bölümlerdeki seçili kayıtlar toplanır.
-        selected_from_sections=_collect_section_selected_from_main_df(df)
-
-        if st.button('➕ BÖLÜMLERDE İŞARETLEDİKLERİMİ ÖNEMLİ GELİŞMELER SEPETİNE EKLE',use_container_width=True):
-            if selected_from_sections.empty:
-                st.warning('Önce herhangi bir bölümde haberlerin yanındaki kutucuklardan seçim yapın.')
-            else:
-                added=_add_rows_to_important_basket(selected_from_sections.to_dict('records'))
-                st.success(f'{added} yeni gelişme sepete eklendi.')
-
-        basket=_load_important_basket()
-        if basket.empty:
-            st.info('Önemli gelişmeler sepeti şu anda boş.')
-        else:
-            # -----------------------------------------------------
-            # V78 — ÖGN SEPETİ: SİLME ve BİLGİ NOTU TAMAMEN AYRI
-            # -----------------------------------------------------
-            basket_view=basket[['id','news_time','source','category','title','risk_score','risk_status','url']].copy()
-            basket_view=_v63_add_status_badges(basket_view)
-
-            # A) Sadece silme işlemi için checkbox.
-            delete_view=basket_view.copy()
-            delete_view.insert(0,'Sil',False)
-            with st.form('v78_important_basket_delete_form',clear_on_submit=False):
-                edited_delete=st.data_editor(
-                    delete_view,
-                    column_config={
-                        'Sil':st.column_config.CheckboxColumn('Sil'),
-                        'url':st.column_config.LinkColumn('Haber Linki'),
-                        'risk_score':st.column_config.NumberColumn('Risk',format='%d/100'),
-                        'Durum':st.column_config.TextColumn('Durum',width='large')
-                    },
-                    disabled=[c for c in delete_view.columns if c!='Sil'],
-                    hide_index=True,use_container_width=True,
-                    height=min(430,80+36*len(delete_view)),
-                    key='v78_important_basket_delete_editor'
-                )
-                remove_btn=st.form_submit_button(
-                    '🗑️ İŞARETLENENLERİ SEPETTEN ÇIKAR',
-                    use_container_width=True
-                )
-
-            if remove_btn:
-                ids=edited_delete.loc[edited_delete['Sil']==True,'id'].astype(int).tolist()
-                removed=_remove_basket_ids(ids)
-                st.success(f'{removed} kayıt sepetten çıkarıldı.')
-
-            # B) Bilgi notunda TEK HABER seçilir. Sepetin tamamı hiçbir şekilde
-            # make_analyst_docx'e gönderilmez.
-            st.markdown('### 📝 Sepetten Seçilen Tek Haberden Detaylı Bilgi Notu')
-            option_rows=[]
-            for _,r in basket.iterrows():
-                clean_title=_clean_note_text(r.get('title',''))
-                option_rows.append((
-                    int(r.get('id')),
-                    f"{clean_title} — {_clean_note_text(r.get('source',''))}"
-                ))
-
-            label_to_id={label:rid for rid,label in option_rows}
-            selected_label=st.selectbox(
-                'Bilgi notu oluşturulacak haber',
-                options=list(label_to_id.keys()),
-                key='v78_ogn_note_single_select'
-            ) if option_rows else None
-
-            if st.button(
-                '📝 SEÇİLEN TEK HABERDEN DETAYLI BİLGİ NOTU OLUŞTUR',
-                use_container_width=True,
-                key='v78_ogn_note_single_button'
-            ):
-                if not selected_label:
-                    st.warning('Bilgi notu için bir haber seçin.')
-                else:
-                    selected_id=int(label_to_id[selected_label])
-                    # Kesin tek satır: ID eşleşmesi + head(1).
-                    selected_basket=basket[basket['id'].astype(int)==selected_id].head(1).copy()
-
-                    if selected_basket.empty:
-                        st.error('Seçilen haber sepette bulunamadı.')
-                    else:
-                        r=selected_basket.iloc[0]
-                        important_note_rows=pd.DataFrame([{
-                            'Tarih':_clean_note_text(r.get('news_time','')),
-                            'Kaynak':_clean_note_text(r.get('source','')),
-                            'Başlık':_clean_note_text(r.get('title','')),
-                            'İçerik_Özeti':_clean_note_text(r.get('summary','')),
-                            'URL':str(r.get('url','') or ''),
-                            'Kategori':_clean_note_text(r.get('category','')),
-                            'Risk_Skoru':r.get('risk_score',0),
-                            'Risk_Durumu':_clean_note_text(r.get('risk_status',''))
-                        }])
-
-                        # Güvenlik kontrolü: make_analyst_docx'e asla 1'den fazla satır gitmesin.
-                        important_note_rows=important_note_rows.head(1)
-
-                        with st.spinner('Seçilen tek haberin tam metni okunuyor ve detaylı bilgi notu hazırlanıyor...'):
-                            try:
-                                st.session_state['v78_ogn_note_bytes']=make_analyst_docx(
-                                    important_note_rows,
-                                    title='TERÖRSÜZ TÜRKİYE BİLGİ NOTU'
-                                )
-                                st.session_state['v78_ogn_note_title']=important_note_rows.iloc[0]['Başlık']
-                                _v63_mark_notes(important_note_rows.to_dict('records'))
-                                _v73_invalidate_status_cache()
-                                st.success('✅ Bilgi notu yalnızca seçilen tek haberden hazırlanmıştır.')
-                            except Exception as e:
-                                st.session_state['v78_ogn_note_bytes']=None
-                                st.error(f'Bilgi notu hazırlanamadı: {e}')
-
-            if st.session_state.get('v78_ogn_note_bytes'):
-                st.info(
-                    'Bilgi notuna alınan tek haber: '
-                    + _clean_note_text(st.session_state.get('v78_ogn_note_title',''))
-                )
-                st.download_button(
-                    '⬇️ SEÇİLEN TEK HABERİN DETAYLI BİLGİ NOTUNU İNDİR',
-                    data=st.session_state['v78_ogn_note_bytes'],
-                    file_name=f'OGN_Secilen_Haber_Bilgi_Notu_{date.today()}.docx',
-                    mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                    use_container_width=True,
-                    key='v78_ogn_note_download'
-                )
-
-            if selected_label and st.button('🖥️ SEÇİLEN ÖNEMLİ GELİŞMEYİ SUNUM SEPETİNE EKLE',use_container_width=True,key='v81_ogn_to_pres'):
-                _one=basket[basket['id'].astype(int)==int(label_to_id[selected_label])].head(1)
-                st.success(f"✅ {_v80_add_presentation(_v81_basket_to_rows(_one))} haber Sunum Sepeti’ne eklenmiştir.")
-
-            # V90: önceki sürümlerden kalan Word bytes kesinlikle kullanılmaz.
-            if st.session_state.get('_ogn_engine_version') != V90_OGN_ENGINE_VERSION:
-                st.session_state['_ogn_engine_version']=V90_OGN_ENGINE_VERSION
-                st.session_state.pop('v90_ogn_docx_bytes',None)
-                st.session_state.pop('basket_docx_bytes',None)
-
-            b1,b2=st.columns(2)
-            with b1:
-                if st.button('📄 ÖNEMLİ GELİŞMELER WORD OLUŞTUR',use_container_width=True,key='v90_make_ogn_word'):
-                    # Her basışta eski çıktı silinir ve V90 motoruyla baştan hazırlanır.
-                    st.session_state.pop('v90_ogn_docx_bytes',None)
-                    with st.spinner('Önemli gelişmeler gerçek haber içeriklerinden resmî biçimde özetleniyor...'):
-                        st.session_state['v90_ogn_docx_bytes']=make_important_basket_docx_v101(basket)
-                if st.session_state.get('v90_ogn_docx_bytes'):
-                    st.download_button(
-                        '⬇️ 24 SAATLİK ÖNEMLİ GELİŞMELER / WORD — V102',
-                        st.session_state['v90_ogn_docx_bytes'],
-                        file_name=f'24_Saatlik_Onemli_Gelismeler_V102_{date.today()}.docx',
-                        mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                        use_container_width=True,
-                        key='v90_download_ogn_word'
-                    )
-            with b2:
-                if st.button('🧹 SEPETİ TAMAMEN TEMİZLE',use_container_width=True):
-                    removed=_clear_important_basket()
-                    st.success(f'{removed} kayıt silindi.')
-
-
+        # ---------------- ANALİZ SEPETİ ----------------
         st.markdown('---')
-        st.subheader('🗂️ Açık Kaynak Tarama Çalışması Sepeti')
-        st.caption('14:00 açık kaynak tarama raporuna girecek haberleri gün boyunca ayrı bir sepette biriktirin.')
-
-        osint_selected_now=df[df.get('Seç',False)==True] if 'Seç' in df.columns else pd.DataFrame()
-        osint_selected_sections=_collect_section_selected_from_main_df(df)
-
-        o1,o2=st.columns(2)
-        with o1:
-            if st.button('➕ KRONOLOJİDE SEÇİLİ HABERLERİ AKT SEPETİNE EKLE',use_container_width=True):
-                if osint_selected_now.empty:
-                    st.warning('Önce kronolojik görünümden haber seçin ve seçimleri kaydedin.')
-                else:
-                    added=_add_rows_to_osint_basket(osint_selected_now.to_dict('records'))
-                    st.success(f'{added} haber AKT sepetine eklendi.')
-        with o2:
-            if st.button('➕ BÖLÜMLERDE İŞARETLEDİKLERİMİ AKT SEPETİNE EKLE',use_container_width=True):
-                if osint_selected_sections.empty:
-                    st.warning('Önce herhangi bir bölümde seçim yapın.')
-                else:
-                    added=_add_rows_to_osint_basket(osint_selected_sections.to_dict('records'))
-                    st.success(f'{added} haber AKT sepetine eklendi.')
-
-        osint_basket=_load_osint_basket()
-        if osint_basket.empty:
-            st.info('Açık kaynak tarama çalışması sepeti boş.')
+        st.subheader('🧺 Analiz Sepeti')
+        st.caption('Yerli basın, sosyal medya, yabancı basın ve think tank sekmelerinden seçilen içerikleri tek yerde biriktirir.')
+        basket=_v3_analysis_basket()
+        if not basket:
+            st.info('Analiz Sepeti henüz boş.')
         else:
-            # -----------------------------------------------------
-            # V79 — AKT SEPETİ: ÖGN İLE AYNI TEK HABER BİLGİ NOTU MANTIĞI
-            # -----------------------------------------------------
-            osint_view=osint_basket[['id','news_time','source','category','title','risk_score','risk_status','url']].copy()
-            osint_view=_v63_add_status_badges(osint_view)
-
-            # A) Silme işlemi ayrı checkbox formunda kalır.
-            delete_osint_view=osint_view.copy()
-            delete_osint_view.insert(0,'Sil',False)
-            with st.form('v79_osint_basket_delete_form',clear_on_submit=False):
-                edited_osint=st.data_editor(
-                    delete_osint_view,
-                    column_config={
-                        'Sil':st.column_config.CheckboxColumn('Sil'),
-                        'url':st.column_config.LinkColumn('Haber Linki'),
-                        'risk_score':st.column_config.NumberColumn('Risk',format='%d/100'),
-                        'Durum':st.column_config.TextColumn('Durum',width='large')
-                    },
-                    disabled=[c for c in delete_osint_view.columns if c!='Sil'],
-                    hide_index=True,use_container_width=True,
-                    height=min(430,80+36*len(delete_osint_view)),
-                    key='v79_osint_basket_delete_editor'
-                )
-                remove_osint=st.form_submit_button(
-                    '🗑️ İŞARETLENENLERİ AKT SEPETİNDEN ÇIKAR',
-                    use_container_width=True
-                )
-
-            if remove_osint:
-                ids=edited_osint.loc[edited_osint['Sil']==True,'id'].astype(int).tolist()
-                removed=_remove_osint_basket_ids(ids)
-                st.success(f'{removed} kayıt AKT sepetinden çıkarıldı.')
-
-            # AKT raporu sepetin tamamından hazırlanabilir; bu davranış korunur.
-            osint_rows=[]
-            for _,r in osint_basket.iterrows():
-                osint_rows.append({
-                    'Tarih':_clean_note_text(r.get('news_time','')),
-                    'Kaynak':_clean_note_text(r.get('source','')),
-                    'Başlık':_clean_note_text(r.get('title','')),
-                    'İçerik_Özeti':_clean_note_text(r.get('summary','')),
-                    'URL':str(r.get('url','') or ''),
-                    'Kategori':_clean_note_text(r.get('category','')),
-                    'Risk_Skoru':r.get('risk_score',0),
-                    'Risk_Durumu':_clean_note_text(r.get('risk_status','')),
-                    'Yayıncı':_clean_note_text(r.get('source','')),
-                    'Yayıncı_URL':''
-                })
-
-            _akt_pres_opts={f"{_clean_note_text(r.get('title',''))} — {_clean_note_text(r.get('source',''))}":int(r.get('id')) for _,r in osint_basket.iterrows()}
-            _akt_pres_label=st.selectbox('Sunuma eklenecek AKT haberi',list(_akt_pres_opts.keys()),key='v81_akt_pres_select') if _akt_pres_opts else None
-            if st.button('🖥️ SEÇİLEN AKT HABERİNİ SUNUM SEPETİNE EKLE',use_container_width=True,key='v81_akt_to_pres'):
-                if _akt_pres_label:
-                    _one=osint_basket[osint_basket['id'].astype(int)==_akt_pres_opts[_akt_pres_label]].head(1)
-                    st.success(f"✅ {_v80_add_presentation(_v81_basket_to_rows(_one))} haber Sunum Sepeti’ne eklenmiştir.")
-
-            ob1,ob2=st.columns(2)
-            with ob1:
-                if st.button('📝 AKT SEPETİNDEN WORD HAZIRLA',use_container_width=True,key='v79_akt_report'):
-                    with st.spinner('AKT sepetindeki haberler rapora hazırlanıyor...'):
-                        st.session_state.docx_bytes=make_docx(osint_rows)
-                if st.session_state.get('docx_bytes'):
-                    st.download_button(
-                        '⬇️ AKT SEPETİNDEN AÇIK KAYNAK RAPORU / WORD',
-                        st.session_state.docx_bytes,
-                        file_name=f'Terorsuz_Turkiye_Acik_Kaynak_Sepet_{date.today()}.docx',
-                        mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                        use_container_width=True,
-                        key='v79_akt_report_download'
-                    )
-            with ob2:
-                if st.button('🧹 AKT SEPETİNİ TAMAMEN TEMİZLE',use_container_width=True,key='v79_clear_akt'):
-                    removed=_clear_osint_basket()
-                    st.success(f'{removed} kayıt silindi.')
-
-            # B) Bilgi notu için yalnız TEK HABER seçilir.
-            st.markdown('### 📝 AKT Sepetinden Seçilen Tek Haberden Detaylı Bilgi Notu')
-
-            akt_option_rows=[]
-            for _,r in osint_basket.iterrows():
-                clean_title=_clean_note_text(r.get('title',''))
-                akt_option_rows.append((
-                    int(r.get('id')),
-                    f"{clean_title} — {_clean_note_text(r.get('source',''))}"
-                ))
-
-            akt_label_to_id={label:rid for rid,label in akt_option_rows}
-            selected_akt_label=st.selectbox(
-                'Bilgi notu oluşturulacak AKT haberi',
-                options=list(akt_label_to_id.keys()),
-                key='v79_akt_note_single_select'
-            ) if akt_option_rows else None
-
-            if st.button(
-                '📝 SEÇİLEN TEK AKT HABERİNDEN DETAYLI BİLGİ NOTU OLUŞTUR',
-                use_container_width=True,
-                key='v79_akt_note_single_button'
-            ):
-                if not selected_akt_label:
-                    st.warning('Bilgi notu için bir AKT haberi seçin.')
-                else:
-                    selected_akt_id=int(akt_label_to_id[selected_akt_label])
-                    # Kesin tek satır: ID eşleşmesi ve head(1).
-                    selected_akt=osint_basket[
-                        osint_basket['id'].astype(int)==selected_akt_id
-                    ].head(1).copy()
-
-                    if selected_akt.empty:
-                        st.error('Seçilen AKT haberi sepette bulunamadı.')
-                    else:
-                        r=selected_akt.iloc[0]
-                        akt_note_df=pd.DataFrame([{
-                            'Tarih':_clean_note_text(r.get('news_time','')),
-                            'Kaynak':_clean_note_text(r.get('source','')),
-                            'Başlık':_clean_note_text(r.get('title','')),
-                            'İçerik_Özeti':_clean_note_text(r.get('summary','')),
-                            'URL':str(r.get('url','') or ''),
-                            'Kategori':_clean_note_text(r.get('category','')),
-                            'Risk_Skoru':r.get('risk_score',0),
-                            'Risk_Durumu':_clean_note_text(r.get('risk_status',''))
-                        }]).head(1)
-
-                        with st.spinner('Seçilen tek AKT haberinin tam metni okunuyor ve detaylı bilgi notu hazırlanıyor...'):
-                            try:
-                                st.session_state['v79_akt_note_bytes']=make_analyst_docx(
-                                    akt_note_df,
-                                    title='TERÖRSÜZ TÜRKİYE BİLGİ NOTU'
-                                )
-                                st.session_state['v79_akt_note_title']=akt_note_df.iloc[0]['Başlık']
-                                _v63_mark_notes(akt_note_df.to_dict('records'))
-                                _v73_invalidate_status_cache()
-                                st.success('✅ Bilgi notu yalnızca seçilen tek AKT haberinden hazırlanmıştır.')
-                            except Exception as e:
-                                st.session_state['v79_akt_note_bytes']=None
-                                st.error(f'Bilgi notu hazırlanamadı: {e}')
-
-            if st.session_state.get('v79_akt_note_bytes'):
-                st.info(
-                    'Bilgi notuna alınan tek AKT haberi: '
-                    + _clean_note_text(st.session_state.get('v79_akt_note_title',''))
-                )
-                st.download_button(
-                    '⬇️ SEÇİLEN TEK AKT HABERİNİN DETAYLI BİLGİ NOTUNU İNDİR',
-                    data=st.session_state['v79_akt_note_bytes'],
-                    file_name=f'AKT_Secilen_Haber_Bilgi_Notu_{date.today()}.docx',
-                    mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                    use_container_width=True,
-                    key='v79_akt_note_download'
-                )
-
-
-        st.markdown('---')
-        st.subheader('🖥️ Sunum Sepeti')
-        st.caption('Önemli Gelişmeler ve AKT sepetlerinin hemen altında yer almaktadır.')
-        _pb=_v80_load_presentation()
-        if _pb.empty:
-            st.info('Sunum sepeti boş.')
-        else:
-            _pv=_pb[['id','news_time','source','title','url']].copy()
-            _pv=_v63_add_status_badges(_pv)
-            _pv.insert(0,'Seç',False)
-            with st.form('v81_presentation_basket_form',clear_on_submit=False):
-                _ped=st.data_editor(_pv,column_config={
-                    'Seç':st.column_config.CheckboxColumn('Seç'),
-                    'url':st.column_config.LinkColumn('Haber Linki'),
-                    'Durum':st.column_config.TextColumn('Durum',width='large')
-                },
-                    disabled=[c for c in _pv.columns if c!='Seç'],hide_index=True,use_container_width=True,height=min(420,80+36*len(_pv)))
-                p1,p2,p3,p4=st.columns(4)
-                with p1: _toimp=st.form_submit_button('📌 Önemli Gelişmelere Ekle',use_container_width=True)
-                with p2: _toakt=st.form_submit_button('🗂️ AKT Sepetine Ekle',use_container_width=True)
-                with p3: _pnote=st.form_submit_button('📝 Bilgi Notu Oluştur',use_container_width=True)
-                with p4: _prem=st.form_submit_button('🗑️ Sepetten Çıkar',use_container_width=True)
-            _ids=_ped.loc[_ped['Seç']==True,'id'].astype(int).tolist()
-            _sel=_pb[_pb['id'].astype(int).isin(_ids)]
-            _rows=_v81_basket_to_rows(_sel)
-            if _toimp:
-                if _rows: st.success(f"✅ {_v74_fast_add_important(_rows)} haber Önemli Gelişmeler Sepeti’ne eklenmiştir.")
-                else: st.warning('Önce haber seçin.')
-            if _toakt:
-                if _rows: st.success(f"✅ {_v74_fast_add_osint(_rows)} haber AKT Sepeti’ne eklenmiştir.")
-                else: st.warning('Önce haber seçin.')
-            if _prem:
-                st.success(f"✅ {_v81_remove_presentation_ids(_ids)} haber çıkarılmıştır.")
-            if _pnote:
-                if len(_rows)!=1: st.warning('Detaylı bilgi notu için yalnızca bir haber seçin.')
-                else:
-                    with st.spinner('Seçilen sunum haberinden detaylı bilgi notu hazırlanıyor...'):
-                        st.session_state['v81_pres_note_bytes']=make_analyst_docx(pd.DataFrame(_rows).head(1),title='TERÖRSÜZ TÜRKİYE BİLGİ NOTU')
-            if st.session_state.get('v81_pres_note_bytes'):
-                st.download_button('⬇️ SUNUM SEPETİ BİLGİ NOTUNU İNDİR',st.session_state['v81_pres_note_bytes'],
-                    file_name=f'Sunum_Sepeti_Bilgi_Notu_{date.today()}.docx',mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                    use_container_width=True,key='v81_pres_note_download')
-
-        st.markdown('---')
-        st.subheader('🏛️ Resmî Süreç Kaynakları')
-        st.caption('Cumhurbaşkanlığı, İletişim Başkanlığı, TBMM, MGK, İçişleri, MSB, Adalet, Dışişleri ve sürecin başlıca siyasi aktörlerinin açıklamalarını ayrı gösterir.')
-        official_radar=_official_radar_rows(df)
-        if official_radar.empty:
-            st.info('Bu taramada resmî/birincil kaynaklardan eşleşen yeni içerik bulunamadı.')
-        else:
-            if 'Kurum Türü' not in official_radar.columns:
-                official_radar=official_radar.copy()
-                official_radar['Kurum Türü']=official_radar.apply(_v109_official_source_type,axis=1)
-            _types=['Tümü']+[
-                x for x in ['Cumhurbaşkanlığı','İletişim Başkanlığı','TBMM','MGK','İçişleri Bakanlığı','MSB','Adalet Bakanlığı','Dışişleri Bakanlığı','Resmî Gazete','DEM Parti','MHP','AK Parti','Diğer Resmî / Siyasi']
-                if x in set(official_radar['Kurum Türü'].astype(str))
-            ]
-            _official_type=st.radio('Kaynak türü',_types,horizontal=True,key='v109_official_source_type')
-            _official_show=official_radar if _official_type=='Tümü' else official_radar[official_radar['Kurum Türü']==_official_type]
-            _section_select_table(
-                'official_radar_'+re.sub(r'[^a-zA-Z0-9]+','_',norm(_official_type)),
-                _official_show.head(30),
-                ['Tarih','Kurum Türü','Kaynak','Kategori','Başlık','İçerik_Özeti','Risk_Skoru','Doğrulama','URL'],
-                height=min(600,90+38*min(len(_official_show),30))
+            bdf=pd.DataFrame(basket).reset_index(drop=True)
+            bdf.insert(0,'Çıkar',False)
+            show=[c for c in ['Çıkar','Tarih','Bölge','Kaynak','Kategori','Yaklaşım','Çerçeve','Başlık','İçerik_Özeti','URL'] if c in bdf.columns]
+            edited=st.data_editor(
+                bdf[show],
+                column_config={'Çıkar':st.column_config.CheckboxColumn('Çıkar'),
+                               'URL':st.column_config.LinkColumn('Kaynak / Haber'),
+                               'İçerik_Özeti':st.column_config.TextColumn('Kısa İçerik',width='large')},
+                disabled=[c for c in show if c!='Çıkar'],hide_index=True,use_container_width=True,height=min(600,100+45*len(bdf)),
+                key='v3_analysis_basket_editor'
             )
+            c1,c2,c3=st.columns(3)
+            with c1:
+                if st.button('🗑️ Seçilenleri Çıkar',use_container_width=True,key='v3_remove_basket'):
+                    idx=edited.index[edited['Çıkar'].astype(bool)].tolist()
+                    _v3_remove_analysis(idx); st.rerun()
+            with c2:
+                if st.button('📝 Detaylı Bilgi Notu Oluştur',use_container_width=True,key='v3_basket_note'):
+                    _v3_make_note(pd.DataFrame(_v3_analysis_basket()),'analysis_basket')
+            with c3:
+                if st.button('📄 RAPORLA',type='primary',use_container_width=True,key='v3_report'):
+                    with st.spinner('Analiz sepetindeki içeriklerden rapor hazırlanıyor...'):
+                        try:
+                            st.session_state['v3_report_bytes']=make_analyst_docx(
+                                pd.DataFrame(_v3_analysis_basket()),
+                                title='TERÖRSÜZ TÜRKİYE AÇIK KAYNAK ANALİZ RAPORU'
+                            )
+                        except Exception as e:
+                            st.error(f'Rapor hazırlanamadı: {e}')
+            if st.session_state.get('analysis_basket_note_bytes'):
+                st.download_button('⬇️ Analiz Sepeti Bilgi Notunu İndir',
+                    st.session_state['analysis_basket_note_bytes'],
+                    file_name=f'Terorsuz_Turkiye_Analiz_Sepeti_Bilgi_Notu_{date.today()}.docx',
+                    mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    use_container_width=True,key='v3_basket_note_download')
+            if st.session_state.get('v3_report_bytes'):
+                st.download_button('⬇️ ANALİZ RAPORUNU İNDİR',
+                    st.session_state['v3_report_bytes'],
+                    file_name=f'Terorsuz_Turkiye_Analiz_Raporu_{date.today()}.docx',
+                    mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    use_container_width=True,key='v3_report_download')
 
+        # ---------------- OLAY YAŞAM DÖNGÜSÜ ----------------
         st.markdown('---')
         st.subheader('🧭 Olay Yaşam Döngüsü')
-        st.caption(
-            'Aynı olayın mevcut taramadaki gelişim aşamasını otomatik gösterir: '
-            'İlk Sinyal → Gelişiyor → Teyit Edildi → Sonuçlandı. Bu alan sabittir.'
-        )
+        st.caption('Aynı olayın gelişim aşamasını gösterir: İlk Sinyal → Gelişiyor → Teyit Edildi → Sonuçlandı.')
         lifecycle=_v58_event_lifecycle_table(df,25)
         if lifecycle.empty:
-            st.info('Bu taramada yaşam döngüsü oluşturulabilecek olay bulunamadı.')
+            st.info('Yaşam döngüsü oluşturulabilecek olay bulunamadı.')
         else:
-            _section_select_table(
-                'v58_event_lifecycle',
-                lifecycle,
-                ['Tarih','Aşama','Başlık','Kategori','Kaynak_Sayısı','Haber_Sayısı',
-                 'Doğrulama','Risk_Skoru','Aşama_Gerekçesi','URL'],
-                height=min(700,100+40*len(lifecycle))
-            )
+            st.dataframe(lifecycle,hide_index=True,use_container_width=True,height=min(700,100+40*len(lifecycle)))
 
-
+        # ---------------- GÜN SONU PERFORMANS ----------------
         st.markdown('---')
         st.subheader('📋 Gün Sonu Performans Özeti')
-        st.caption('Bugün sistemde oluşan tarama ve çalışma çıktılarının operasyonel özeti.')
-        _perf=_v60_day_end_performance(df)
-        p1,p2,p3,p4,p5,p6,p7=st.columns(7)
-        p1.metric('Tarama',_perf['Taramalar'])
-        p2.metric('Benzersiz Olay',_perf['Benzersiz Olay'])
-        p3.metric('Negatif',_perf['Negatif'])
-        p4.metric('Yüksek Risk',_perf['Yüksek Risk'])
-        p5.metric('Önemli Sepet',_perf['Önemli Sepete Eklenen'])
-        p6.metric('AKT Sepet',_perf['AKT Sepete Eklenen'])
-        p7.metric('Kritik Süreç',_perf['Kritik Süreç'])
+        today=df.copy()
+        p1,p2,p3,p4,p5=st.columns(5)
+        p1.metric('Toplam İçerik',len(today))
+        p2.metric('Tekil Olay',today['Olay_ID'].nunique() if 'Olay_ID' in today.columns else len(today))
+        p3.metric('Yerli Basın',int(local_mask.sum()))
+        p4.metric('Yabancı Basın',int(foreign_mask.sum()))
+        p5.metric('Analiz Sepeti',len(_v3_analysis_basket()))
+        st.caption('Performans özeti artık kaldırılan ÖGN/AKT/Sunum sepetlerini değil, tarama kapsamını ve Analiz Sepetini esas alır.')
 
-        st.write(
-            f"Bugün {_perf['Taramalar']} tarama gerçekleştirilmiş; geçmiş kayıtlarında "
-            f"{_perf['Benzersiz Olay']} benzersiz olay, {_perf['Negatif']} negatif ve "
-            f"{_perf['Yüksek Risk']} yüksek riskli gelişme kaydedilmiştir. "
-            f"{_perf['Önemli Sepete Eklenen']} içerik önemli gelişmeler sepetine, "
-            f"{_perf['AKT Sepete Eklenen']} içerik açık kaynak tarama sepetine eklenmiştir."
-        )
-
-        st.markdown('---'); st.subheader('📝 Seçilen haberlerden çıktı üret')
-        # Form gönderildiyse session_state güncellenmiştir; aksi halde mevcut kayıtlı seçimleri kullan.
-        current_rows=st.session_state.rows or []
-        selected_df=pd.DataFrame(current_rows)
-        if not selected_df.empty and 'Tarih_dt' in selected_df.columns:
-            selected_df['Tarih_dt']=pd.to_datetime(selected_df['Tarih_dt'],utc=True,errors='coerce')
-        selected=selected_df[selected_df.get('Seç',False)==True] if not selected_df.empty and 'Seç' in selected_df.columns else pd.DataFrame()
-        st.write(f'{len(selected)} haber seçildi. Tarama sırasında görsel/tam metin indirilmez; yalnızca seçtiğiniz içerikler için derin zenginleştirme yapılır.')
-        c1,c2=st.columns(2)
-        with c1:
-            if st.button('📝 AÇIK KAYNAK RAPORU / WORD',type='primary',use_container_width=True):
-                if selected.empty: st.warning('Önce haber seçin.')
+        # ---------------- SEÇİLİ HABERLERDEN ÇIKTI ----------------
+        st.markdown('---')
+        st.subheader('📝 Seçili Haberlerden Çıktı Üret')
+        st.caption('Analiz Sepeti bu bölümde seçili çalışma kümesi olarak kullanılır.')
+        selected=pd.DataFrame(_v3_analysis_basket())
+        st.write(f'Çıktı kümesinde **{len(selected)}** içerik bulunmaktadır.')
+        o1,o2=st.columns(2)
+        with o1:
+            if st.button('📄 GENEL AÇIK KAYNAK ÇIKTISI / WORD',use_container_width=True,key='v3_general_output'):
+                if selected.empty:
+                    st.warning('Önce içerikleri Analiz Sepetine ekleyin.')
                 else:
-                    with st.spinner(f'{len(selected)} haber zenginleştiriliyor...'): st.session_state.docx_bytes=make_docx(selected.to_dict('records'))
-            if st.session_state.docx_bytes: st.download_button('⬇️ Açık Kaynak Raporu DOCX',st.session_state.docx_bytes,file_name=f'Terorsuz_Turkiye_Acik_Kaynak_{date.today()}.docx',mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',use_container_width=True)
-        with c2:
-            if st.button('📌 AYRINTILI BİLGİ NOTU / WORD',use_container_width=True):
-                if selected.empty: st.warning('Önce haber seçin.')
-                else:
-                    with st.spinner(f'{len(selected)} haberin tam haber metni okunuyor ve ayrıntılı bilgi notu hazırlanıyor...'):
-                        st.session_state.note_bytes=make_analyst_docx(selected,title='TERÖRSÜZ TÜRKİYE BİLGİ NOTU')
-            if st.session_state.note_bytes: st.download_button('⬇️ Bilgi Notu DOCX',st.session_state.note_bytes,file_name=f'Terorsuz_Turkiye_Bilgi_Notu_{date.today()}.docx',mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',use_container_width=True)
+                    with st.spinner('Seçili içerikler zenginleştiriliyor...'):
+                        st.session_state['v3_general_output_bytes']=make_docx(selected.to_dict('records'))
+            if st.session_state.get('v3_general_output_bytes'):
+                st.download_button('⬇️ Genel Çıktıyı İndir',st.session_state['v3_general_output_bytes'],
+                    file_name=f'Terorsuz_Turkiye_Secili_Acik_Kaynak_{date.today()}.docx',
+                    mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    use_container_width=True,key='v3_general_output_download')
+        with o2:
+            if st.button('📝 AYRINTILI BİLGİ NOTU / WORD',use_container_width=True,key='v3_output_note'):
+                _v3_make_note(selected,'selected_output')
+            if st.session_state.get('selected_output_note_bytes'):
+                st.download_button('⬇️ Bilgi Notunu İndir',st.session_state['selected_output_note_bytes'],
+                    file_name=f'Terorsuz_Turkiye_Bilgi_Notu_{date.today()}.docx',
+                    mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    use_container_width=True,key='v3_output_note_download')
 
-st.caption('İlk açılışta otomatik tarama yoktur. Her yenileme yeni ağ taraması yapar. Haberler en yeni → en eski sıralanır; olay kümeleri, risk gerekçesi, kaynak güvenilirliği, doğrulama, trend ve takip listesi tarama sonucunda yer alır. DOCX aşamasında seçilen haberlerin gerçek yayıncı sayfası, görseli, linki ve geniş içeriği alınır.')
+st.caption('İlk açılışta otomatik ana tarama yapılmaz. Yerli basın, açık sosyal kaynaklar, yabancı basın ve think tank içerikleri ayrı izlenir; olay tekilleştirme, trend, takip listesi ve ayrıntılı bilgi notu üretimi korunur.')
