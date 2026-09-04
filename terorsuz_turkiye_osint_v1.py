@@ -15517,6 +15517,524 @@ def _v22_actor_rows(df):
 # ============================================================
 # /V22 ANALİZ
 # ============================================================
+
+# ============================================================
+# V23 — GEPHI AĞ ANALİZİ ÇIKTISI
+#
+# V22 tarama motoruna, tarih filtresine, bilgi notuna,
+# İlk Bakış / Şu An Ne Konuşuluyor / Kim Ne Diyor ve
+# V20 Aynı Olay — Farklı Bakış bölümlerine DOKUNMAZ.
+#
+# Amaç:
+# - Kaynak Ailesi ↔ Çerçeve ağı
+# - Tekil Kaynak ↔ Çerçeve ağı
+# üretmek ve doğrudan Gephi'de açılabilen GEXF + CSV vermek.
+#
+# Ağ mantığı:
+# Her haber bir veya daha fazla analitik çerçeveyle eşleşir.
+# Kaynak/Kaynak Ailesi ile çerçeve arasındaki kenarın Weight değeri,
+# o bağlantıyı destekleyen içerik sayısıdır.
+# ============================================================
+
+V23_GEPHI_FRAMES = {
+    "Öcalan'ın Statüsü / Özgürlüğü":[
+        'öcalan özgür','ocalan freedom','freedom of ocalan',
+        'öcalan’ın özgürlüğ','öcalanın özgürlüğ','ocalan status',
+        'öcalan statü','imralı koşul','imrali kosul','umut hakkı',
+        'right to hope','tecrit','isolation'
+    ],
+    "Hukuki Güvence / Meclis":[
+        'hukuki güvence','legal guarantee','legal framework','hukuki çerçeve',
+        'çerçeve yasa','framework law','yasal düzenleme','kanun','yasa',
+        'anayasal güvence','constitutional guarantee','tbmm','meclis',
+        'parliament','komisyon','commission'
+    ],
+    "Silahsızlanma / Fesih":[
+        'silah bırak','silahları bırak','silahsızlan','fesih','tasfiye',
+        'disarmament','lay down arms','laying down arms',
+        'dissolution','disbandment','disarm'
+    ],
+    "Demokratik Siyaset / Entegrasyon":[
+        'demokratik siyaset','democratic politics','democratic political life',
+        'siyasal yaşama katıl','siyasi yaşama katıl','entegrasyon','integration',
+        'democratic participation','political participation'
+    ],
+    "Şart / Karşılıklılık / Müzakere":[
+        'şart','koşul','önkoşul','condition','essential','necessary',
+        'requires','required','must','unless','tek taraflı','one-sided',
+        'karşılıklı','reciprocal','müzakere','negotiation','trilateral',
+        'diyalog','dialogue'
+    ],
+    "Taahhüt / İlerleme":[
+        'irademiz net','irade nettir','kararlıyız','commitment','committed',
+        'ready to','accepted disarmament','kabul etmişiz','ilerleme',
+        'progress','olumlu adım','positive step'
+    ],
+    "Siyasi Süreç / Diyalog":[
+        'terörsüz türkiye','terror-free turkey','barış süreci','peace process',
+        'çözüm süreci','cozum sureci','siyasi süreç','political process',
+        'görüşme','meeting','temas','contact','heyet','delegation'
+    ],
+    "Kürt Hakları / Statü":[
+        'kürt hak','kurdish rights','equal citizenship','eşit yurttaş',
+        'yerel yönetim','local government','local self-government',
+        'dil ve kültür','language and culture','constitutional recognition',
+        'anayasal tanın','statü','status'
+    ],
+    "Suriye / SDG-YPG":[
+        'suriye','syria','sdf','sdg','ypg','pyd','damascus','şam',
+        'syrian democratic forces'
+    ],
+    "Irak / IKBY / Kandil":[
+        'ırak','iraq','ikby','krg','kandil','qandil','erbil',
+        'süleymaniye','sulaymaniyah'
+    ],
+    "Eleştiri / Risk / Gerilim":[
+        'eleştiri','eleştirdi','criticized','criticism','yetersiz','insufficient',
+        'eksik','shortcoming','risk','kaygı','concern','gerilim','tension',
+        'kriz','crisis','çatışma','conflict','saldırı','attack'
+    ],
+    "Toplumsal Tepki / Kamuoyu":[
+        'kamuoyu','public opinion','toplumsal','societal','şehit aile',
+        'gazi','victim families','tepki','reaction','anket','survey'
+    ]
+}
+
+V23_SOURCE_GROUP_LABELS = {
+    '🇹🇷 Yerli Basın':'Yerli Basın',
+    '🌍 Yabancı Basın':'Yabancı Basın',
+    '🧠 Think Tank / Analiz Kuruluşu':'Think Tank / Analiz',
+    '🟣 Kürt Bölgesel Medyası':'Kürt Bölgesel Medyası',
+    '🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak':'PKK/KCK Açık Kaynak',
+    '📱 Sosyal Medya / Açık Sosyal':'Sosyal Medya',
+    '❔ Kaynağı Belirsiz / Diğer':'Diğer'
+}
+
+def _v23_source_family(row):
+    raw=str(row.get('Kaynak_Grubu','') or '').strip()
+    return V23_SOURCE_GROUP_LABELS.get(raw, raw or 'Diğer')
+
+def _v23_source_identity(row):
+    domain=_tt_norm_domain(row.get('Domain','') or row.get('URL',''))
+    label=str(row.get('Kaynak','') or row.get('Yayıncı','') or domain or 'Açık Kaynak').strip()
+    key=domain or norm(label) or label
+    return key,label
+
+def _v23_frame_scores(row):
+    title_n=norm(row.get('Başlık',''))
+    body_n=norm(
+        f"{row.get('Başlık','')} {row.get('İçerik_Özeti','')} "
+        f"{row.get('Çerçeve','')} {row.get('Kategori','')}"
+    )
+
+    scored=[]
+    for frame,terms in V23_GEPHI_FRAMES.items():
+        score=0
+        for term in terms:
+            t=norm(term)
+            if not t:
+                continue
+            if t in title_n:
+                score += 2
+            elif t in body_n:
+                score += 1
+        if score>0:
+            scored.append((score,frame))
+
+    scored.sort(key=lambda z:(z[0],z[1]),reverse=True)
+
+    selected=[]
+    for score,frame in scored:
+        if frame=="Siyasi Süreç / Diyalog" and selected and score<=2:
+            continue
+        selected.append(frame)
+        if len(selected)>=3:
+            break
+
+    if not selected:
+        existing=str(row.get('Çerçeve','') or '').strip()
+        existing_n=norm(existing)
+        fallback_map={
+            'hukuki cerceve':"Hukuki Güvence / Meclis",
+            'siyasi strateji':"Siyasi Süreç / Diyalog",
+            'genel surec':"Siyasi Süreç / Diyalog",
+            'bolgesel jeopolitik':"Suriye / SDG-YPG",
+            'toplumsal tepki':"Toplumsal Tepki / Kamuoyu"
+        }
+        selected=[fallback_map.get(existing_n,"Siyasi Süreç / Diyalog")]
+
+    return selected
+
+def _v23_mode_value(values,default=''):
+    vals=[str(v) for v in values if str(v or '').strip()]
+    if not vals:
+        return default
+    return pd.Series(vals).value_counts().index[0]
+
+def _v23_gephi_network(df,network_type='family',min_weight=1):
+    if df is None or df.empty:
+        return pd.DataFrame(),pd.DataFrame(),pd.DataFrame()
+
+    rows=[]
+    for _,r in df.iterrows():
+        family=_v23_source_family(r)
+        source_key,source_label=_v23_source_identity(r)
+
+        if network_type=='family':
+            source_key='family::'+family
+            source_label=family
+            node_type='SourceFamily'
+        else:
+            source_key='source::'+str(source_key)
+            node_type='Source'
+
+        article_id=str(r.get('URL','') or title_key(r.get('Başlık','')))
+        event_id=str(r.get('Olay_ID','') or title_key(r.get('Başlık','')))
+
+        try:
+            tone=_v18_tone(r)
+        except Exception:
+            tone=str(r.get('Yaklaşım','') or 'Nötr / bilgi odaklı')
+
+        for frame in _v23_frame_scores(r):
+            rows.append({
+                'SourceKey':source_key,
+                'SourceLabel':source_label,
+                'SourceFamily':family,
+                'NodeType':node_type,
+                'Frame':frame,
+                'ArticleID':article_id,
+                'EventID':event_id,
+                'Tone':tone
+            })
+
+    if not rows:
+        return pd.DataFrame(),pd.DataFrame(),pd.DataFrame()
+
+    work=pd.DataFrame(rows)
+
+    edge_rows=[]
+    for keys,g in work.groupby(
+        ['SourceKey','SourceLabel','SourceFamily','NodeType','Frame'],
+        dropna=False
+    ):
+        source_key,source_label,family,node_type,frame=keys
+        article_count=g['ArticleID'].nunique()
+        event_count=g['EventID'].nunique()
+        edge_rows.append({
+            'SourceKey':source_key,
+            'SourceLabel':source_label,
+            'SourceFamily':family,
+            'NodeType':node_type,
+            'Frame':frame,
+            'Weight':int(article_count),
+            'ArticleCount':int(article_count),
+            'EventCount':int(event_count),
+            'DominantTone':_v23_mode_value(g['Tone'].tolist(),'Nötr / bilgi odaklı')
+        })
+
+    edges=pd.DataFrame(edge_rows)
+    edges=edges[edges['Weight']>=max(1,int(min_weight))].copy()
+    if edges.empty:
+        return pd.DataFrame(),pd.DataFrame(),pd.DataFrame()
+
+    source_totals=edges.groupby('SourceKey')['Weight'].sum().to_dict()
+    edges['ShareOfSourceFrameLinksPct']=edges.apply(
+        lambda r: round(
+            100*float(r['Weight'])/
+            max(1,float(source_totals.get(r['SourceKey'],1))),
+            1
+        ),
+        axis=1
+    )
+
+    def nid(prefix,value):
+        return prefix+hashlib.sha1(
+            str(value).encode('utf-8','ignore')
+        ).hexdigest()[:14]
+
+    source_id_map={
+        k:nid('S_',k)
+        for k in edges['SourceKey'].drop_duplicates()
+    }
+    frame_id_map={
+        f:nid('F_',f)
+        for f in edges['Frame'].drop_duplicates()
+    }
+
+    node_rows=[]
+
+    for source_key,g in edges.groupby('SourceKey'):
+        label=str(g['SourceLabel'].iloc[0])
+        family=str(g['SourceFamily'].iloc[0])
+        node_type=str(g['NodeType'].iloc[0])
+
+        source_work=work[work['SourceKey']==source_key]
+
+        node_rows.append({
+            'Id':source_id_map[source_key],
+            'Label':label,
+            'NodeType':node_type,
+            'ColorGroup':family,
+            'SourceFamily':family,
+            'ArticleCount':int(source_work['ArticleID'].nunique()),
+            'EventCount':int(source_work['EventID'].nunique()),
+            'DominantTone':_v23_mode_value(source_work['Tone'].tolist(),''),
+            'Frame':''
+        })
+
+    for frame,g in edges.groupby('Frame'):
+        frame_work=work[work['Frame']==frame]
+
+        node_rows.append({
+            'Id':frame_id_map[frame],
+            'Label':frame,
+            'NodeType':'Frame',
+            'ColorGroup':'ÇERÇEVE',
+            'SourceFamily':'',
+            'ArticleCount':int(frame_work['ArticleID'].nunique()),
+            'EventCount':int(frame_work['EventID'].nunique()),
+            'DominantTone':_v23_mode_value(frame_work['Tone'].tolist(),''),
+            'Frame':frame
+        })
+
+    nodes=pd.DataFrame(node_rows)
+
+    gephi_edges=[]
+    for i,r in edges.reset_index(drop=True).iterrows():
+        gephi_edges.append({
+            'Id':f'E_{i+1}',
+            'Source':source_id_map[r['SourceKey']],
+            'Target':frame_id_map[r['Frame']],
+            'Type':'Undirected',
+            'Weight':int(r['Weight']),
+            'ArticleCount':int(r['ArticleCount']),
+            'EventCount':int(r['EventCount']),
+            'ShareOfSourceFrameLinksPct':float(r['ShareOfSourceFrameLinksPct']),
+            'DominantTone':str(r['DominantTone']),
+            'SourceLabel':str(r['SourceLabel']),
+            'SourceFamily':str(r['SourceFamily']),
+            'Frame':str(r['Frame'])
+        })
+
+    gephi_edges=pd.DataFrame(gephi_edges)
+
+    family_edges=(
+        edges.groupby(['SourceFamily','Frame'],as_index=False)['Weight']
+        .sum()
+    )
+
+    summary=[]
+    for family,g in family_edges.groupby('SourceFamily'):
+        g=g.sort_values('Weight',ascending=False).reset_index(drop=True)
+        total=max(1,int(g['Weight'].sum()))
+        top=g.head(3)
+
+        rec={
+            'Kaynak Ailesi':family,
+            'Toplam Bağ':total
+        }
+
+        for ix in range(3):
+            if ix<len(top):
+                rec[f'{ix+1}. Çerçeve']=str(top.iloc[ix]['Frame'])
+                rec[f'{ix+1}. Pay %']=round(
+                    100*int(top.iloc[ix]['Weight'])/total,
+                    1
+                )
+            else:
+                rec[f'{ix+1}. Çerçeve']=''
+                rec[f'{ix+1}. Pay %']=0.0
+
+        summary.append(rec)
+
+    summary_df=pd.DataFrame(summary).sort_values(
+        'Toplam Bağ',
+        ascending=False
+    ).reset_index(drop=True)
+
+    return nodes,gephi_edges,summary_df
+
+def _v23_gephi_gexf(nodes,edges,description='Terörsüz Türkiye Kaynak-Çerçeve Ağı'):
+    root=ET.Element(
+        'gexf',
+        {
+            'xmlns':'http://www.gexf.net/1.2draft',
+            'version':'1.2'
+        }
+    )
+
+    meta=ET.SubElement(
+        root,
+        'meta',
+        {'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')}
+    )
+    ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT V23'
+    ET.SubElement(meta,'description').text=description
+
+    graph=ET.SubElement(
+        root,
+        'graph',
+        {'mode':'static','defaultedgetype':'undirected'}
+    )
+
+    node_attrs=[
+        ('0','NodeType','string'),
+        ('1','ColorGroup','string'),
+        ('2','SourceFamily','string'),
+        ('3','ArticleCount','integer'),
+        ('4','EventCount','integer'),
+        ('5','DominantTone','string'),
+        ('6','Frame','string')
+    ]
+
+    edge_attrs=[
+        ('0','ArticleCount','integer'),
+        ('1','EventCount','integer'),
+        ('2','ShareOfSourceFrameLinksPct','double'),
+        ('3','DominantTone','string'),
+        ('4','SourceLabel','string'),
+        ('5','SourceFamily','string'),
+        ('6','Frame','string')
+    ]
+
+    na=ET.SubElement(graph,'attributes',{'class':'node'})
+    for aid,title,typ in node_attrs:
+        ET.SubElement(
+            na,
+            'attribute',
+            {'id':aid,'title':title,'type':typ}
+        )
+
+    ea=ET.SubElement(graph,'attributes',{'class':'edge'})
+    for aid,title,typ in edge_attrs:
+        ET.SubElement(
+            ea,
+            'attribute',
+            {'id':aid,'title':title,'type':typ}
+        )
+
+    ns=ET.SubElement(graph,'nodes')
+    node_attr_map={title:aid for aid,title,_ in node_attrs}
+
+    for _,r in nodes.iterrows():
+        n=ET.SubElement(
+            ns,
+            'node',
+            {'id':str(r['Id']),'label':str(r['Label'])}
+        )
+
+        av=ET.SubElement(n,'attvalues')
+
+        for col in [
+            'NodeType','ColorGroup','SourceFamily',
+            'ArticleCount','EventCount','DominantTone','Frame'
+        ]:
+            val=r.get(col,'')
+            if pd.isna(val):
+                val=''
+
+            ET.SubElement(
+                av,
+                'attvalue',
+                {
+                    'for':node_attr_map[col],
+                    'value':str(val)
+                }
+            )
+
+    es=ET.SubElement(graph,'edges')
+    edge_attr_map={title:aid for aid,title,_ in edge_attrs}
+
+    for _,r in edges.iterrows():
+        e=ET.SubElement(
+            es,
+            'edge',
+            {
+                'id':str(r['Id']),
+                'source':str(r['Source']),
+                'target':str(r['Target']),
+                'weight':str(float(r['Weight']))
+            }
+        )
+
+        av=ET.SubElement(e,'attvalues')
+
+        for col in [
+            'ArticleCount','EventCount','ShareOfSourceFrameLinksPct',
+            'DominantTone','SourceLabel','SourceFamily','Frame'
+        ]:
+            val=r.get(col,'')
+            if pd.isna(val):
+                val=''
+
+            ET.SubElement(
+                av,
+                'attvalue',
+                {
+                    'for':edge_attr_map[col],
+                    'value':str(val)
+                }
+            )
+
+    return ET.tostring(
+        root,
+        encoding='utf-8',
+        xml_declaration=True
+    )
+
+def _v23_gephi_interpretation(summary_df):
+    if summary_df is None or summary_df.empty:
+        return ''
+
+    wanted=[
+        'Yerli Basın',
+        'Yabancı Basın',
+        'Think Tank / Analiz',
+        'Kürt Bölgesel Medyası',
+        'PKK/KCK Açık Kaynak',
+        'Sosyal Medya'
+    ]
+
+    parts=[]
+
+    for family in wanted:
+        m=summary_df[
+            summary_df['Kaynak Ailesi'].astype(str)==family
+        ]
+
+        if m.empty:
+            continue
+
+        r=m.iloc[0]
+
+        f1=str(r.get('1. Çerçeve','') or '')
+        p1=float(r.get('1. Pay %',0) or 0)
+        f2=str(r.get('2. Çerçeve','') or '')
+        p2=float(r.get('2. Pay %',0) or 0)
+
+        if f1 and f2:
+            parts.append(
+                f"{family}: {f1} (%{p1:.1f}) ve {f2} (%{p2:.1f})"
+            )
+        elif f1:
+            parts.append(
+                f"{family}: {f1} (%{p1:.1f})"
+            )
+
+    if not parts:
+        return ''
+
+    return (
+        "Mevcut tarama verisinde kaynak ailelerinin çerçeve bağlantıları şöyle yoğunlaşmaktadır: "
+        + "; ".join(parts[:6])
+        + ". Bu çıktı Gephi ağında kenar kalınlığı ve düğüm yakınlığı üzerinden görselleştirilebilir. "
+          "Ağ nedensellik değil, açık kaynak içeriklerdeki birlikte-görünürlük ve vurgu yoğunluğunu göstermektedir."
+    )
+
+# ============================================================
+# /V23 GEPHI
+# ============================================================
 # V3 — SADELEŞTİRİLMİŞ TERÖRSÜZ TÜRKİYE ANALİST ARAYÜZÜ
 # Amaç: Yerli basın + sosyal medya/açık sosyal + yabancı basın + think tank
 # Ayrı sekmeler; yalnız Detaylı Bilgi Notu ve Analiz Sepeti işlemleri.
@@ -15725,6 +16243,195 @@ if st.session_state.get('rows'):
         )
 else:
     st.info('Tarama tamamlandığında aktör analizi burada oluşacaktır.')
+
+
+# ---------------- GEPHI AĞ ANALİZİ ----------------
+st.subheader('🕸️ Gephi Ağ Analizi — Kaynak / Çerçeve Ağı')
+st.caption(
+    'Bu bölüm tarama sırasında çalışmaz ve tarama hızını etkilemez. '
+    'Yalnız düğmeye bastığınızda mevcut V22 tarama verisinden Gephi dosyaları üretir.'
+)
+
+_gephi_type=st.radio(
+    'Ağ türü',
+    [
+        'Kaynak Ailesi ↔ Çerçeve (önerilen)',
+        'Tekil Kaynak ↔ Çerçeve (detaylı)'
+    ],
+    horizontal=True,
+    key='v23_gephi_type'
+)
+
+_gephi_min=st.slider(
+    'Minimum kenar ağırlığı (aynı bağlantıyı destekleyen en az içerik sayısı)',
+    min_value=1,
+    max_value=10,
+    value=1,
+    step=1,
+    key='v23_gephi_min'
+)
+
+if st.button(
+    '🧬 Gephi ağını hazırla',
+    use_container_width=True,
+    key='v23_prepare_gephi'
+):
+    if not st.session_state.get('rows'):
+        st.warning('Önce tarama yapılmalıdır.')
+    else:
+        with st.spinner('Kaynak–çerçeve ağı hazırlanıyor...'):
+            _gdf=pd.DataFrame(st.session_state.rows)
+
+            if not _gdf.empty and 'Tarih_dt' in _gdf.columns:
+                _gdf['Tarih_dt']=pd.to_datetime(
+                    _gdf['Tarih_dt'],
+                    utc=True,
+                    errors='coerce'
+                )
+
+            _mode=(
+                'family'
+                if _gephi_type.startswith('Kaynak Ailesi')
+                else 'source'
+            )
+
+            _gnodes,_gedges,_gsummary=_v23_gephi_network(
+                _gdf,
+                network_type=_mode,
+                min_weight=_gephi_min
+            )
+
+            if _gnodes.empty or _gedges.empty:
+                st.session_state.pop('_v23_gephi_package',None)
+
+                st.warning(
+                    'Bu eşikte ağ oluşturacak yeterli kaynak–çerçeve bağlantısı bulunamadı.'
+                )
+            else:
+                _gexf=_v23_gephi_gexf(
+                    _gnodes,
+                    _gedges,
+                    description=(
+                        'Terörsüz Türkiye — '
+                        + (
+                            'Kaynak Ailesi ↔ Çerçeve'
+                            if _mode=='family'
+                            else 'Tekil Kaynak ↔ Çerçeve'
+                        )
+                    )
+                )
+
+                st.session_state['_v23_gephi_package']={
+                    'type':_mode,
+                    'nodes_csv':_gnodes.to_csv(
+                        index=False
+                    ).encode('utf-8-sig'),
+                    'edges_csv':_gedges.to_csv(
+                        index=False
+                    ).encode('utf-8-sig'),
+                    'gexf':_gexf,
+                    'summary':_gsummary.to_dict('records'),
+                    'interpretation':_v23_gephi_interpretation(
+                        _gsummary
+                    ),
+                    'node_count':len(_gnodes),
+                    'edge_count':len(_gedges)
+                }
+
+                st.success(
+                    f'✅ Gephi ağı hazırlandı: '
+                    f'{len(_gnodes)} düğüm / {len(_gedges)} kenar.'
+                )
+
+_gpkg=st.session_state.get('_v23_gephi_package')
+
+if _gpkg:
+    _sum_df=pd.DataFrame(
+        _gpkg.get('summary') or []
+    )
+
+    c1,c2=st.columns(2)
+    c1.metric(
+        'Düğüm',
+        int(_gpkg.get('node_count',0))
+    )
+    c2.metric(
+        'Kenar',
+        int(_gpkg.get('edge_count',0))
+    )
+
+    if _gpkg.get('interpretation'):
+        st.info(
+            _gpkg['interpretation']
+        )
+
+    if not _sum_df.empty:
+        st.markdown(
+            '**Kaynak ailelerinin baskın çerçeveleri**'
+        )
+
+        st.dataframe(
+            _sum_df,
+            hide_index=True,
+            use_container_width=True
+        )
+
+    d1,d2,d3=st.columns(3)
+
+    with d1:
+        st.download_button(
+            '⬇️ Gephi GEXF',
+            data=_gpkg['gexf'],
+            file_name='terorsuz_turkiye_kaynak_cerceve_agi.gexf',
+            mime='application/xml',
+            use_container_width=True,
+            key='v23_gexf_download'
+        )
+
+    with d2:
+        st.download_button(
+            '⬇️ Nodes CSV',
+            data=_gpkg['nodes_csv'],
+            file_name='terorsuz_turkiye_gephi_nodes.csv',
+            mime='text/csv',
+            use_container_width=True,
+            key='v23_nodes_download'
+        )
+
+    with d3:
+        st.download_button(
+            '⬇️ Edges CSV',
+            data=_gpkg['edges_csv'],
+            file_name='terorsuz_turkiye_gephi_edges.csv',
+            mime='text/csv',
+            use_container_width=True,
+            key='v23_edges_download'
+        )
+
+    with st.expander(
+        '📐 Gephi’de nasıl görselleştirilecek?',
+        False
+    ):
+        st.markdown(
+            """
+**Önerilen kullanım:**
+
+1. Önce **Kaynak Ailesi ↔ Çerçeve** ağını GEXF olarak indirin ve Gephi'de açın.
+2. **Layout → ForceAtlas 2** çalıştırın.
+3. **Appearance → Nodes → Partition → ColorGroup** ile kaynak ailelerini ve çerçeveleri ayırın.
+4. **Appearance → Nodes → Ranking → Degree / Weighted Degree** ile merkezî düğümleri büyütün.
+5. **Statistics → Modularity** çalıştırarak doğal kümelenmeleri görün.
+6. Kenar kalınlığında **Weight** kullanın. Kalın kenar, ilgili kaynak ailesinin o çerçeveyi daha yoğun kullandığını gösterir.
+7. Daha ayrıntılı analiz için **Tekil Kaynak ↔ Çerçeve** ağını açın; örneğin Kurdistan24, Serbestiyet, Reuters veya belirli think tanklerin hangi çerçevelere yaklaştığını inceleyin.
+
+**Analitik okuma:**  
+Kürt Bölgesel Medyası düğümünün “Öcalan'ın Statüsü / Özgürlüğü” ve “Hukuki Güvence / Meclis” düğümlerine kalın kenarlarla bağlanması; buna karşılık Yerli Basın düğümünün “Silahsızlanma / Fesih”, “Taahhüt / İlerleme” veya “Siyasi Süreç / Diyalog” düğümlerine daha güçlü bağlanması, farklı medya ekosistemlerinin aynı süreci farklı çerçeveler üzerinden ele aldığını görsel olarak gösterecektir.
+
+Bu ağ **nedensellik ölçmez**; açık kaynak içeriklerdeki ilişki, yoğunluk ve çerçeve yakınlığını gösterir.
+"""
+        )
+
+st.markdown('---')
 
 st.markdown('---')
 
