@@ -11732,6 +11732,174 @@ def _v11_aggregate_engine_diag(records):
 # /V11
 # ============================================================
 
+# ============================================================
+# V12 — HIZLI TARAMA + SOSYAL MEDYA KAPSAM DÜZELTMESİ
+# ============================================================
+
+V12_MAX_ENGINE_WORKERS = 30
+V12_CACHE_TTL_MINUTES = 180
+V12_RETRY_SLEEP_SECONDS = 0.20
+
+def build_social_queries(when):
+    return [
+        '"Terörsüz Türkiye" site:x.com',
+        '(PKK OR KCK OR Öcalan OR Ocalan) Türkiye site:x.com',
+        '("Turkey PKK peace process" OR "PKK disarmament") site:x.com',
+        '"Terörsüz Türkiye" site:youtube.com',
+        '(PKK OR Öcalan OR Ocalan) (süreç OR peace OR disarmament) site:youtube.com',
+        '"Terörsüz Türkiye" site:instagram.com',
+        '(PKK OR Öcalan OR Ocalan) Türkiye site:instagram.com',
+        '"Terörsüz Türkiye" site:facebook.com',
+        '(PKK OR Öcalan OR Ocalan) Türkiye site:facebook.com',
+        '"Terörsüz Türkiye" site:tiktok.com',
+        '(PKK OR Öcalan OR Ocalan) Türkiye site:tiktok.com',
+        '"Terörsüz Türkiye" site:t.me',
+        '(PKK OR KCK OR Öcalan OR Ocalan) site:t.me',
+        '("Turkey PKK peace process" OR "PKK disarmament" OR Ocalan) site:reddit.com',
+        '(PKK OR Ocalan OR "Turkey peace process") site:bsky.app',
+        '(PKK OR Öcalan OR Ocalan) Türkiye site:threads.net'
+    ]
+
+def _v12_bing_web_rss(query,mkt='tr-TR',timeout=6):
+    try:
+        r=requests.get(
+            'https://www.bing.com/search',
+            params={'q':_v6_clean_query(query),'format':'rss','setlang':mkt.split('-')[0]},
+            headers=HEADERS,timeout=timeout
+        )
+        r.raise_for_status()
+        root=ET.fromstring(r.content)
+        out=[]
+        for it in root.findall('.//item'):
+            url=(it.findtext('link') or '').strip()
+            title=html.unescape(it.findtext('title') or '')
+            desc=BeautifulSoup(it.findtext('description') or '','html.parser').get_text(' ',strip=True)
+            if not url or not title:
+                continue
+            d=_tt_norm_domain(url)
+            out.append({
+                'title':title,'url':url,'date':it.findtext('pubDate') or '',
+                'snippet':desc,'source':d,'source_url':('https://'+d if d else '')
+            })
+        return out
+    except Exception:
+        return []
+
+def _v12_cache_snapshot():
+    cache=st.session_state.get('_v11_source_cache',{}) or {}
+    now_ts=time.time()
+    ttl=V12_CACHE_TTL_MINUTES*60
+    fresh={}
+    for k,v in cache.items():
+        try:
+            if v.get('rows') and now_ts-float(v.get('ts',0))<=ttl:
+                fresh[k]=v
+        except Exception:
+            continue
+    return fresh
+
+def _v12_engines_for(mode,site_q=False):
+    if mode=='foreign':
+        if site_q:
+            return ['Google News US','DDGS','Bing Web']
+        return ['Google News US','Google News GB','Bing News US','DDGS',
+                'Google News DE','Google News FR','Google News AR','GDELT']
+    if mode=='thinktank':
+        return ['DDGS','Bing Web'] if site_q else ['DDGS','Bing Web','Google News US']
+    if mode in {'kurdish','movement'}:
+        return ['DDGS','Bing Web'] if site_q else ['DDGS','Bing Web','Google News US']
+    if mode=='commentary':
+        return ['DDGS','Bing Web','Google News US','Google News TR']
+    if mode=='social':
+        return ['DDGS','Bing Web']
+    return ['Google News TR']
+
+def _v12_engine_call(engine,query,mode,timespan,hours,cache_snapshot,site_q=False):
+    cache_key=_v11_cache_key(mode,engine,query,hours)
+    diag={
+        'Motor':engine,'Mod':mode,'Sorgu':1,'Başarılı':0,'Boş/Başarısız':0,
+        'Retry':0,'Cache Kullanıldı':0,'Sonuç':0
+    }
+
+    def invoke():
+        if engine=='Google News US':
+            return rss_google_locale(query,'en-US','US','US:en')
+        if engine=='Google News GB':
+            return rss_google_locale(query,'en-GB','GB','GB:en')
+        if engine=='Google News DE':
+            return rss_google_locale(query,'de','DE','DE:de')
+        if engine=='Google News FR':
+            return rss_google_locale(query,'fr','FR','FR:fr')
+        if engine=='Google News AR':
+            return rss_google_locale(query,'ar','SA','SA:ar')
+        if engine=='Google News TR':
+            return rss(query)
+        if engine=='Bing News US':
+            return _v8_bing_news_rss(query,'en-US')
+        if engine=='Bing Web':
+            return _v12_bing_web_rss(query,'tr-TR')
+        if engine=='DDGS':
+            mx=75 if mode=='social' else (45 if site_q else 60)
+            return _v9_ddgs_raw(query,mx,hours)
+        if engine=='GDELT':
+            return _v6_gdelt_raw(query,timespan)
+        return []
+
+    attempts=1 if site_q else 2
+    rows=[]
+    for attempt in range(attempts):
+        try:
+            rows=invoke() or []
+        except Exception:
+            rows=[]
+        if rows:
+            diag['Başarılı']=1
+            diag['Sonuç']=len(rows)
+            return {
+                'rows':rows,
+                'diag':diag,
+                'cache_update':(cache_key,{'ts':time.time(),'rows':rows})
+            }
+        if attempt+1<attempts:
+            diag['Retry']+=1
+            time.sleep(V12_RETRY_SLEEP_SECONDS)
+
+    cached=cache_snapshot.get(cache_key)
+    if cached and cached.get('rows'):
+        rows=cached.get('rows') or []
+        diag['Cache Kullanıldı']=1
+        diag['Sonuç']=len(rows)
+        return {'rows':rows,'diag':diag,'cache_update':None}
+
+    diag['Boş/Başarısız']=1
+    return {'rows':[],'diag':diag,'cache_update':None}
+
+def _v12_social_platform(d):
+    d=_tt_norm_domain(d)
+    if d in {'x.com','twitter.com'}: return 'X / Twitter'
+    if d=='youtube.com' or d.endswith('.youtube.com'): return 'YouTube'
+    if d=='instagram.com' or d.endswith('.instagram.com'): return 'Instagram'
+    if d=='facebook.com' or d.endswith('.facebook.com'): return 'Facebook'
+    if d=='reddit.com' or d.endswith('.reddit.com'): return 'Reddit'
+    if d in {'t.me','telegram.me'}: return 'Telegram'
+    if d=='tiktok.com' or d.endswith('.tiktok.com'): return 'TikTok'
+    if d=='bsky.app' or d.endswith('.bsky.app'): return 'Bluesky'
+    if d=='threads.net' or d.endswith('.threads.net'): return 'Threads'
+    return d or 'Diğer'
+
+def _v12_social_coverage(df):
+    if df is None or df.empty or 'Kaynak_Grubu' not in df.columns:
+        return pd.DataFrame(columns=['Platform','İçerik'])
+    x=df[df['Kaynak_Grubu'].astype(str)=='📱 Sosyal Medya / Açık Sosyal'].copy()
+    if x.empty:
+        return pd.DataFrame(columns=['Platform','İçerik'])
+    x['Platform']=x.get('Domain',pd.Series('',index=x.index)).map(_v12_social_platform)
+    return x['Platform'].value_counts().rename_axis('Platform').reset_index(name='İçerik')
+
+# ============================================================
+# /V12
+# ============================================================
+
 if run:
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
     when=period_window(hours)
@@ -11749,7 +11917,7 @@ if run:
     all_rows=[]; stat={'Ham sonuç':0,'Zaman dışı':0,'Konu dışı':0,'Yunan dışı':0,'Kaynak dışı':0,'Sonuç':0,'Olay':0}
     v11_engine_diag_records=[]
     v11_cache_updates=[]
-    v11_cache_snapshot=_v11_cache_snapshot()
+    v11_cache_snapshot=_v12_cache_snapshot()
     live_alarm_box=st.empty()
     status_box=st.status('🔎 Tarama başlıyor...',expanded=True)
 
@@ -11818,31 +11986,45 @@ if run:
 
     supplemental_raw_by_mode={}
     if jobs:
-        status_box.write(f'⚡ Tamamlayıcı kaynaklar — {len(jobs)} sorgu / 18 eşzamanlı · retry + cache fallback aktif')
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(18,len(jobs))) as ex:
+        engine_jobs=[]
+        for label,q,mode in jobs:
+            mh=_v9_mode_hours(mode,hours,think_hours,movement_hours)
+            site_q=_v9_is_site_query(q)
+            for engine in _v12_engines_for(mode,site_q):
+                engine_jobs.append((label,q,mode,engine,mh,site_q))
+
+        workers=min(V12_MAX_ENGINE_WORKERS,max(1,len(engine_jobs)))
+        status_box.write(
+            f'⚡ Tamamlayıcı kaynaklar — {len(jobs)} sorgu / {len(engine_jobs)} motor işi / '
+            f'{workers} eşzamanlı · hızlı mod + cache aktif'
+        )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
             future_map={
                 ex.submit(
-                    _v11_fetch_query,q,mode,when,
-                    _v9_mode_hours(mode,hours,think_hours,movement_hours),
-                    v11_cache_snapshot
-                ):(label,mode)
-                for label,q,mode in jobs
+                    _v12_engine_call,engine,q,mode,when,mh,
+                    v11_cache_snapshot,site_q
+                ):(label,q,mode,engine)
+                for label,q,mode,engine,mh,site_q in engine_jobs
             }
+
             for fut in concurrent.futures.as_completed(future_map):
-                label,mode=future_map[fut]
+                label,q,mode,engine=future_map[fut]
                 try:
                     fetched=fut.result() or {}
                     chunk=fetched.get('rows') or []
-                    v11_engine_diag_records.extend(fetched.get('diagnostics') or [])
-                    v11_cache_updates.extend(fetched.get('cache_updates') or [])
+                    diag=fetched.get('diag') or {}
+                    if diag:
+                        v11_engine_diag_records.append(diag)
+                    if fetched.get('cache_update'):
+                        v11_cache_updates.append(fetched['cache_update'])
                 except Exception:
                     chunk=[]
+
                 stat['Ham sonuç']+=len(chunk)
                 supplemental_raw_by_mode.setdefault(mode,[]).extend(chunk)
 
-                # ÖZEL KRİTİK SÜREÇ GELİŞMESİ ALARMI:
-                # SÜREÇ/SÜREÇ dışı süreç-saha yangın ve patlamalarında sorgu döner dönmez bildir.
-                if instant_alerts and chunk:
+                if instant_alerts and chunk and mode in {'foreign','turkish','negative','official'}:
                     quick_rows,_quick_reasons=normalize_rows(chunk,cutoff,mode,query)
                     for qr in quick_rows:
                         critical_label=critical_industrial_incident(qr.get('Başlık',''),qr.get('İçerik_Özeti',''))
@@ -11850,13 +12032,12 @@ if run:
                             qkey=_alert_key(qr)
                             if qkey not in alerted_keys:
                                 _register_alert(qr)
-                                icon='💥' if 'PATLAMA' in critical_label else '🔥'
                                 st.toast(
                                     f'{critical_label}: {str(qr.get("Başlık",""))[:105]}',
-                                    icon=icon
+                                    icon='🚨'
                                 )
                                 live_alarm_box.error(
-                                    f'{icon} **KRİTİK SÜREÇ GELİŞMESİ ALARMI — {critical_label}** — '
+                                    f'🚨 **KRİTİK SÜREÇ GELİŞMESİ ALARMI — {critical_label}** — '
                                     f'{qr.get("Tarih","")} · {qr.get("Kaynak","Açık Kaynak")} · '
                                     f'{str(qr.get("Başlık",""))[:140]}'
                                 )
@@ -11940,7 +12121,7 @@ if run:
             _cache[_k]=_v
         # Eskimiş kayıtları temizle.
         _now=time.time()
-        _ttl=V11_CACHE_TTL_MINUTES*60
+        _ttl=V12_CACHE_TTL_MINUTES*60
         _cache={k:v for k,v in _cache.items() if _now-float(v.get('ts',0))<=_ttl}
         st.session_state['_v11_source_cache']=_cache
 
@@ -12573,7 +12754,11 @@ else:
                 st.markdown('**🛰️ PKK/KCK Çevresi Açık Kaynak**')
                 st.dataframe(_v9_source_coverage(df,'🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak',18),hide_index=True,use_container_width=True)
             st.markdown('**📱 Sosyal Medya / Açık Sosyal**')
-            st.dataframe(_v9_source_coverage(df,'📱 Sosyal Medya / Açık Sosyal',18),hide_index=True,use_container_width=True)
+            _social_cov=_v12_social_coverage(df)
+            if _social_cov.empty:
+                st.info('Bu taramada indekslenmiş sosyal medya sonucu bulunamadı.')
+            else:
+                st.dataframe(_social_cov,hide_index=True,use_container_width=True)
 
         st.subheader('🗞️ Kaynak Bazlı İzleme')
         tab_local,tab_social,tab_foreign,tab_think,tab_kurdish,tab_movement,tab_commentary=st.tabs([
@@ -12751,7 +12936,7 @@ else:
         p7.metric('PKK/KCK OSINT',int(movement_mask.sum()))
         p8.metric('Sosyal Medya',int(social_mask.sum()))
         p9.metric('Analiz Sepeti',len(_v3_analysis_basket()))
-        st.caption('Performans özeti tarama kapsamını ve Analiz Sepetini esas alır. V11 ile yabancı/think tank/açık kaynak motorlarında retry, kaynak sağlığı ve kısa süreli başarılı-sonuç cache mekanizması kullanılmaktadır.')
+        st.caption("Performans özeti tarama kapsamını ve Analiz Sepetini esas alır. V12 ile yabancı/think tank/açık kaynak motorları tek paralel havuzda çalıştırılmakta; sosyal medya DDGS + Bing Web ile taranmakta ve başarılı sonuç cache mekanizması korunmaktadır.")
 
         # ---------------- SEÇİLİ HABERLERDEN ÇIKTI ----------------
         st.markdown('---')
