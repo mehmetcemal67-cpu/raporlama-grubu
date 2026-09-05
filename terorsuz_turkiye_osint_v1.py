@@ -17925,6 +17925,226 @@ def _v26_daily_report_docx(event_title,period_hours,event_df,evidence_df,group_d
 # ============================================================
 # /V26 GÜNLÜK OLAY DERİN ANALİZİ 2.0
 # ============================================================
+
+# ============================================================
+# V27 — ÖNEMLİ KONU LİSTESİNDE ÇAPRAZ-KAYNAK OLAY KÜMELEME
+#
+# V26'daki sorun:
+# İlk "önemli konu" tablosu, adayları Olay_ID / başlık anahtarına göre
+# saydığı için aynı olayın farklı dilde/farklı başlıkta yayımlanan
+# Yabancı / Kürt Bölgesel / PKK-KCK / Sosyal karşılıkları ilk tabloda
+# görünmeyebiliyordu. Derin analiz bunları arıyordu ama ilk ekran
+# yanıltıcı biçimde 0 gösterebiliyordu.
+#
+# V27:
+# - İlk aday listesini de semantik olay kümesi üzerinden sayar.
+# - Aktör + çerçeve + ortak kavram + zaman yakınlığı kullanılır.
+# - Kaynak ailesi sayımı _v23_source_family() ile yapılır.
+# - Aynı kümeyi tekrar aday göstermemek için içerik örtüşmesiyle tekilleştirilir.
+# - 0 görünen bir sütun artık gerçekten ana taramada o olay kümesinde
+#   eşleşme bulunmadığını ifade eder; "Derin Analiz" ek web/sosyal aramayla
+#   sonradan yeni içerik bulabilir.
+# ============================================================
+
+def _v27_row_uid(r):
+    u=str(r.get('URL','') or '').strip()
+    if u:
+        return 'U:'+u
+    return 'T:'+title_key(r.get('Başlık',''))
+
+def _v27_cross_source_cluster(x,seed,event_key='',threshold=0.50):
+    """
+    Aynı olayın farklı kaynak/dil başlıklarını mevcut ana tarama içinde
+    semantik olarak tek kümeye toplar.
+    """
+    keep=[]
+    for idx,r in x.iterrows():
+        # Exact event key always belongs.
+        if event_key and str(_v25_event_key(r))==str(event_key):
+            keep.append(idx)
+            continue
+
+        s=_v25_same_event_score(seed,r)
+
+        # Cross-language actor + frame matches are often strong even when
+        # title tokens do not overlap.
+        if s>=threshold:
+            keep.append(idx)
+            continue
+
+        # A little extra bridge for translated headlines:
+        sp=_v18_people(seed); rp=_v18_people(r)
+        sf=set(_v23_frame_scores(seed)); rf=set(_v23_frame_scores(r))
+        sd=_v18_dt(seed); rd=_v18_dt(r)
+        close=False
+        if pd.notna(sd) and pd.notna(rd):
+            close=abs((sd-rd).total_seconds())/3600 <= 48
+
+        if (sp & rp) and (sf & rf) and close:
+            keep.append(idx)
+
+    if not keep:
+        return pd.DataFrame([seed])
+
+    out=x.loc[list(dict.fromkeys(keep))].copy()
+    if 'Tarih_dt' in out.columns:
+        out=out.sort_values('Tarih_dt',ascending=False,na_position='last')
+    return out.reset_index(drop=True)
+
+def _v27_cluster_signature(g):
+    return {_v27_row_uid(r) for _,r in g.iterrows()}
+
+def _v27_cluster_overlap(a,b):
+    if not a or not b:
+        return 0.0
+    return len(a & b)/max(1,min(len(a),len(b)))
+
+def _v26_topic_candidates(df,period_hours=48,limit=15):
+    """
+    V27 override:
+    İlk önemli-konu tablosu artık exact Olay_ID sayımı değil,
+    mevcut ana tarama içindeki ÇAPRAZ-KAYNAK olay kümesini gösterir.
+    """
+    x=_v25_recent_df(df,period_hours)
+    cols=['EventKey','Tarih','Önemli Konu / Olay','İçerik','Kaynak Ailesi',
+          'Sosyal','Yabancı','Think Tank','Kürt Bölgesel','PKK/KCK',
+          'Önem Puanı','Neden Önemli?']
+    if x is None or x.empty:
+        return pd.DataFrame(columns=cols)
+
+    x=x.copy().reset_index(drop=True)
+    if 'Tarih_dt' in x.columns:
+        x['Tarih_dt']=pd.to_datetime(x['Tarih_dt'],utc=True,errors='coerce')
+
+    # Önce exact grupların temsilcilerini çıkar; sonra her temsilciyi
+    # bütün tarama üzerinde semantik olarak genişlet.
+    exact=_v25_event_candidates(x,period_hours,max(60,limit*5))
+    if exact is None or exact.empty:
+        return pd.DataFrame(columns=cols)
+
+    candidates=[]
+
+    for _,cand in exact.iterrows():
+        event_key=str(cand.get('EventKey','') or '')
+        title=str(cand.get('Olay / Başlık','') or '')
+
+        exact_rows=x[x.apply(_v25_event_key,axis=1).astype(str)==event_key]
+        if not exact_rows.empty:
+            seed=exact_rows.sort_values(
+                'Tarih_dt',ascending=False,na_position='last'
+            ).iloc[0]
+        else:
+            m=x[x.get('Başlık',pd.Series('',index=x.index)).astype(str).eq(title)]
+            if m.empty:
+                continue
+            seed=m.iloc[0]
+
+        cluster=_v27_cross_source_cluster(x,seed,event_key,0.50)
+        if cluster.empty:
+            continue
+
+        sig=_v27_cluster_signature(cluster)
+
+        # Same underlying semantic cluster: keep only the stronger candidate.
+        duplicate=False
+        for old in candidates:
+            if _v27_cluster_overlap(sig,old['_sig'])>=0.65:
+                duplicate=True
+                break
+            if _v26_candidate_similarity(title,old['Önemli Konu / Olay'])>=0.82:
+                # Very similar title + meaningful row overlap.
+                if _v27_cluster_overlap(sig,old['_sig'])>=0.35:
+                    duplicate=True
+                    break
+        if duplicate:
+            continue
+
+        # Robust family classification, not raw string equality.
+        fam_series=cluster.apply(_v23_source_family,axis=1).fillna('').astype(str)
+
+        social_n=int(fam_series.eq('Sosyal Medya').sum())
+        foreign_n=int(fam_series.eq('Yabancı Basın').sum())
+        think_n=int(fam_series.eq('Think Tank / Analiz').sum())
+        kurdish_n=int(fam_series.eq('Kürt Bölgesel Medyası').sum())
+        movement_n=int(fam_series.eq('PKK/KCK Açık Kaynak').sum())
+
+        source_families=int(fam_series[fam_series.str.len()>0].nunique())
+        source_families=max(1,source_families)
+
+        # Source diversity is important for "what is being discussed".
+        score=(
+            len(cluster)*2.0
+            + source_families*6.0
+            + social_n*1.2
+            + foreign_n*1.5
+            + think_n*1.7
+            + kurdish_n*1.6
+            + movement_n*1.8
+        )
+
+        reasons=[]
+        if source_families>=4:
+            reasons.append(f'{source_families} kaynak ailesine yayılmış')
+        elif source_families>=2:
+            reasons.append(f'{source_families} kaynak ailesinde')
+        else:
+            reasons.append('şimdilik tek kaynak ailesinde')
+
+        if social_n: reasons.append(f'{social_n} sosyal')
+        if foreign_n: reasons.append(f'{foreign_n} yabancı')
+        if kurdish_n: reasons.append(f'{kurdish_n} Kürt bölgesel')
+        if movement_n: reasons.append(f'{movement_n} PKK/KCK açık kaynak')
+        if think_n: reasons.append(f'{think_n} think tank')
+
+        # Use the newest row as displayed representative.
+        rep=cluster.iloc[0]
+
+        candidates.append({
+            'EventKey':event_key,
+            'Tarih':str(rep.get('Tarih','') or cand.get('Tarih','') or ''),
+            'Önemli Konu / Olay':title,
+            'İçerik':int(len(cluster)),
+            'Kaynak Ailesi':source_families,
+            'Sosyal':social_n,
+            'Yabancı':foreign_n,
+            'Think Tank':think_n,
+            'Kürt Bölgesel':kurdish_n,
+            'PKK/KCK':movement_n,
+            'Önem Puanı':round(score,1),
+            'Neden Önemli?':' • '.join(reasons),
+            '_sig':sig
+        })
+
+    if not candidates:
+        return pd.DataFrame(columns=cols)
+
+    # Highest cross-source importance first.
+    candidates=sorted(
+        candidates,
+        key=lambda r:(r['Önem Puanı'],r['Kaynak Ailesi'],r['İçerik']),
+        reverse=True
+    )
+
+    # Second pass: avoid near-duplicate candidates.
+    final=[]
+    for rec in candidates:
+        if any(
+            _v27_cluster_overlap(rec['_sig'],old['_sig'])>=0.60
+            for old in final
+        ):
+            continue
+        final.append(rec)
+        if len(final)>=limit:
+            break
+
+    for r in final:
+        r.pop('_sig',None)
+
+    return pd.DataFrame(final,columns=cols)
+
+# ============================================================
+# /V27 ÇAPRAZ-KAYNAK OLAY KÜMELEME
+# ============================================================
 # V3 — SADELEŞTİRİLMİŞ TERÖRSÜZ TÜRKİYE ANALİST ARAYÜZÜ
 # Amaç: Yerli basın + sosyal medya/açık sosyal + yabancı basın + think tank
 # Ayrı sekmeler; yalnız Detaylı Bilgi Notu ve Analiz Sepeti işlemleri.
@@ -18174,6 +18394,7 @@ else:
     )
 
     st.markdown('### 1. Son Dönemin Tartışılan / Önemli Konuları')
+    st.caption('Bu sayılar artık yalnız aynı Olay_ID\'yi değil; aktör + çerçeve + kavram + zaman yakınlığıyla aynı olaya bağlanan mevcut ana tarama içeriklerini sayar. Derin Analiz daha sonra yeni kaynaklar da bulabilir.')
 
     if _v26_candidates.empty:
         st.info('Seçilen zaman penceresinde tarih doğrulaması yapılmış önemli konu bulunamadı.')
