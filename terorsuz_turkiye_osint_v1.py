@@ -13566,6 +13566,108 @@ def normalize_rows(raw,cutoff,mode,user_query):
 
     return out,reasons
 
+
+# ============================================================
+# V35 — YABANCI / SOSYAL KAPSAM KURTARMA
+#
+# Normal V22 havuzu yeterli sonuç üretmezse yalnız o eksik mod için
+# birkaç hedefli DDGS + Bing Web araması yapar.
+# Ana taramayı gereksiz yere yavaşlatmamak için yalnız under-coverage
+# durumunda çalışır.
+# ============================================================
+
+def _v35_rescue_queries(mode):
+    if mode=='foreign':
+        return [
+            '("Turkey PKK" OR Ocalan OR "PKK disarmament") '
+            '(site:reuters.com OR site:bbc.com OR site:dw.com OR site:france24.com '
+            'OR site:euronews.com OR site:aljazeera.com)',
+            '("Turkey PKK peace process" OR "Kurdish peace process") '
+            '(site:theguardian.com OR site:ft.com OR site:al-monitor.com '
+            'OR site:middleeasteye.net OR site:rferl.org)',
+            '(Ocalan OR "PKK disarmament" OR "Turkey Kurdish") '
+            '(site:apnews.com OR site:voanews.com OR site:politico.eu OR site:euractiv.com)'
+        ]
+
+    if mode=='social':
+        return [
+            '("Terörsüz Türkiye" OR PKK OR Öcalan OR Ocalan) '
+            '(site:x.com OR site:twitter.com)',
+            '("Terörsüz Türkiye" OR PKK OR Öcalan OR Ocalan) '
+            '(site:youtube.com OR site:reddit.com OR site:bsky.app)',
+            '(PKK OR KCK OR Öcalan OR Ocalan OR "Turkey peace process") '
+            '(site:t.me OR site:telegram.me OR site:threads.net)',
+            '("Terörsüz Türkiye" OR PKK OR Öcalan) '
+            '(site:tiktok.com OR site:instagram.com OR site:facebook.com)'
+        ]
+    return []
+
+
+def _v35_rescue_mode(mode,hours,cutoff,cache_snapshot,user_query):
+    queries=_v35_rescue_queries(mode)
+    if not queries:
+        return [],[],[]
+
+    jobs=[]
+    for q in queries:
+        # Web engines are more useful than news engines for this fallback.
+        engines=['DDGS','Bing Web']
+        if mode=='foreign':
+            engines=['DDGS','Google News US','Bing Web']
+        for engine in engines:
+            jobs.append((q,engine))
+
+    raw=[]
+    diags=[]
+    cache_updates=[]
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=min(8,max(1,len(jobs)))
+    ) as ex:
+        fmap={
+            ex.submit(
+                _v22_engine_call,
+                engine,q,mode,
+                period_window(hours),
+                hours,
+                cache_snapshot
+            ):(q,engine)
+            for q,engine in jobs
+        }
+
+        for fut in concurrent.futures.as_completed(fmap):
+            q,engine=fmap[fut]
+            try:
+                got=fut.result() or {}
+                chunk=got.get('rows') or []
+                for item in chunk:
+                    if isinstance(item,dict):
+                        item['_origin_query']=q
+                raw.extend(chunk)
+                if got.get('diag'):
+                    diags.append(got['diag'])
+                if got.get('cache_update'):
+                    cache_updates.append(got['cache_update'])
+            except Exception:
+                pass
+
+    if not raw:
+        return [],diags,cache_updates
+
+    try:
+        rows,_=normalize_rows(
+            raw,
+            cutoff,
+            mode,
+            user_query
+        )
+        return dedupe(rows),diags,cache_updates
+    except Exception:
+        return [],diags,cache_updates
+
+# ============================================================
+# /V35 KAPSAM KURTARMA
+# ============================================================
 # ============================================================
 # /V22 TARAMA
 # ============================================================
@@ -13820,6 +13922,50 @@ if run:
 
         mode_counts[mode]=len(combined)
         all_rows=dedupe(all_rows+combined)
+
+    # V35 — Yabancı veya sosyal kapsama çok düşük kaldıysa yalnız eksik modu
+    # hedefli şekilde bir kez daha besle.
+    for _rescue_mode in ['foreign','social']:
+        _current=int(mode_counts.get(_rescue_mode,0) or 0)
+        if _current >= 5:
+            continue
+
+        _rh=int(mode_hours.get(_rescue_mode,hours))
+        _rcutoff=(
+            datetime.now(timezone.utc)-timedelta(hours=_rh)
+        ).astimezone(timezone.utc)
+
+        _rescue_rows,_rescue_diag,_rescue_cache=_v35_rescue_mode(
+            _rescue_mode,
+            _rh,
+            _rcutoff,
+            v11_cache_snapshot,
+            query
+        )
+
+        if _rescue_diag:
+            v11_engine_diag_records.extend(_rescue_diag)
+        if _rescue_cache:
+            v11_cache_updates.extend(_rescue_cache)
+
+        if _rescue_rows:
+            # Existing + fallback; dedupe keeps the actual source/link.
+            all_rows=dedupe(all_rows+_rescue_rows)
+
+            if _rescue_mode=='foreign':
+                mode_counts[_rescue_mode]=sum(
+                    str(r.get('Kaynak_Grubu',''))=='🌍 Yabancı Basın'
+                    for r in all_rows
+                )
+            elif _rescue_mode=='social':
+                mode_counts[_rescue_mode]=sum(
+                    str(r.get('Kaynak_Grubu',''))=='📱 Sosyal Medya / Açık Sosyal'
+                    for r in all_rows
+                )
+
+            # Persist fallback rows too, so the next scan starts from a stable pool.
+            _v21_pool_upsert(_rescue_mode,_rescue_rows)
+            _v21_snapshot_save(_rescue_mode,_rh,_rescue_rows)
 
     # Motor tanısı
     _engine_df=_v11_aggregate_engine_diag(v11_engine_diag_records)
@@ -19795,10 +19941,16 @@ def _v30_build_agenda(df,period_hours=48,limit=20):
             return
         metrics=_v30_cluster_metrics(g,period_hours)
 
-        # Sıkı çok-kaynak koşulu.
+        # V35 — çok kaynak VEYA gerçek karşı-söylem koşulu.
+        # Bir odak içerik + ona bağlı farklı bir kesimin gerçek karşılığı da
+        # gündeme girmek için yeterlidir.
         if not (
             int(metrics['Kaynak']) >= 3
             or int(metrics['Kaynak Ailesi']) >= 2
+            or (
+                int(metrics['Kaynak']) >= 2
+                and int(metrics['Söylem']) >= 2
+            )
         ):
             return
 
@@ -21924,6 +22076,19 @@ else:
         sc5.metric('PKK/KCK',int(movement_mask.sum()))
         sc6.metric('Think Tank',int(think_mask.sum()))
 
+        if int(foreign_mask.sum())==0 or int(social_mask.sum())==0:
+            _missing=[]
+            if int(foreign_mask.sum())==0:
+                _missing.append('Yabancı Basın')
+            if int(social_mask.sum())==0:
+                _missing.append('Sosyal Medya')
+            st.warning(
+                'Bu taramada ' + ' ve '.join(_missing) +
+                ' için doğrulanmış sonuç oluşmadı. V35 otomatik kurtarma taramasını da '
+                'çalıştırmıştır; sıfır görünmesi ilgili arama motorlarının bu zaman penceresinde '
+                'doğrulanabilir sonuç döndürmediği anlamına gelir.'
+            )
+
         tab_local,tab_social,tab_foreign,tab_think,tab_kurdish,tab_movement,tab_commentary=st.tabs([
             '🇹🇷 Yerli Basın',
             '📱 Sosyal Medya',
@@ -21975,7 +22140,11 @@ else:
                  'Çerçeve','İçerik Türü','Başlık','İçerik_Özeti','URL']
             )
 
-        st.markdown('##### Kronoloji / Seçici İzleme / Olay / Trend')
+        st.markdown('---')
+        st.caption(
+            'Aşağıdaki görünüm seçenekleri Kaynak Bazlı İzleme bölümünün devamıdır; '
+            'aynı tarama verisini kronolojik, seçici, olay veya trend biçiminde gösterir.'
+        )
         view=st.radio(
             'Görünüm',
             ['📰 Kronolojik','⚠️ Eleştirel / Riskli','🚨 Yüksek Risk',
@@ -22133,7 +22302,7 @@ else:
             )
         else:
             agenda_cols=[
-                'Sıra','Odak Kaynak','Odak Haber / Açıklama','Önem','Risk',
+                'Sıra','Odak Kaynak','Odak Haber / Açıklama','Önem',
                 'İçerik','Kaynak','Kaynak Ailesi','Yabancı','Kürt Bölgesel',
                 'PKK/KCK','Sosyal','Baskın Çerçeve','Trend','Odak Bağlantı'
             ]
