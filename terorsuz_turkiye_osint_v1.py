@@ -18145,6 +18145,855 @@ def _v26_topic_candidates(df,period_hours=48,limit=15):
 # ============================================================
 # /V27 ÇAPRAZ-KAYNAK OLAY KÜMELEME
 # ============================================================
+
+# ============================================================
+# V28 — HIZLI GÜNDEM + GERÇEK SÖYLEM / GERÇEK BAĞLANTI KATMANI
+#
+# HEDEF
+# - Son 24/48 saatte konuşulanları OLAY/KONU düzeyinde (en fazla 20) sıralar.
+# - Önem, risk, söylem çeşitliliği, kaynak ailesi, sosyal/yabancı/Kürt/PKK-KCK
+#   görünürlüğünü birlikte hesaplar.
+# - "Şu An Ne Konuşuluyor?" artık ham tema sayımı değil, olay-kümesi tablosudur.
+# - Kaynak ailesi sayımları raw emoji etiketiyle değil _v23_source_family()
+#   üzerinden yapılır; yabancı/Kürt/PKK-KCK/sosyal içerikler yanlışlıkla 0'a düşmez.
+# - Seçilen olayda Türk milliyetçi, muhafazakâr, muhalif, Türk solu,
+#   Kürt bölgesel, PKK/KCK medyası ve açık sosyal söylemlerin GERÇEK
+#   başlık/spot/link karşılıkları gösterilir.
+# - "Kim Ne Diyor?" aktör tablosunda son link ve seçilen aktörün TÜM gerçek
+#   bağlantıları verilir.
+# - Olay sıralaması oturumda cache edilir; her checkbox/select değişiminde
+#   yeniden ağır semantik kümeleme yapılmaz.
+# - Derin arama, ağ analizi ve Word raporu yalnız düğmeye basınca çalışır.
+#   Böylece sayfanın aşağısına inerken yüklenme/donma azaltılır.
+#
+# METODOLOJİ
+# - Bireysel sosyal medya kullanıcısına siyasi kimlik/üyelik atfedilmez.
+# - "PKK sempatizanı" kişi etiketi yerine "PKK/KCK çizgisiyle uyumlu sosyal
+#   söylem" ifadesi kullanılır. Bu sınıflandırma içeriğin açık diline dayanır.
+# ============================================================
+
+V28_MEDIA_PROFILES = {
+    'Türk Milliyetçi / Güvenlikçi Medya': {
+        'turkgun.com','benguturk.com','veryansintv.com'
+    },
+    'Muhafazakâr Medya': {
+        'sabah.com.tr','ahaber.com.tr','yenisafak.com','turkiyegazetesi.com.tr',
+        'takvim.com.tr','haber7.com','aksam.com.tr','yeniakit.com.tr',
+        'milligazete.com.tr'
+    },
+    'Muhalif / Eleştirel Medya': {
+        'sozcu.com.tr','cumhuriyet.com.tr','halktv.com.tr','t24.com.tr',
+        'medyascope.tv','diken.com.tr','karar.com','gazeteduvar.com.tr',
+        'tele1.com.tr','gercekgundem.com'
+    },
+    'Türk Solu / Sosyalist Medya': {
+        'birgun.net','evrensel.net','sol.org.tr','ilerihaber.org'
+    },
+    'Liberal / Çoğulcu Medya': {
+        'serbestiyet.com','yetkinreport.com'
+    }
+}
+
+V28_GROUP_ORDER = [
+    'Türk Milliyetçi / Güvenlikçi Medya',
+    'Türk Milliyetçi / Güvenlikçi Sosyal Söylem',
+    'Muhafazakâr Medya',
+    'Muhafazakâr / Süreç Destekleyici Sosyal Söylem',
+    'Muhalif / Eleştirel Medya',
+    'Muhalif / Eleştirel Sosyal Söylem',
+    'Türk Solu / Sosyalist Medya',
+    'Türk Solu / Hak-Temelli Sosyal Söylem',
+    'Liberal / Çoğulcu Medya',
+    'Kürt Bölgesel Medyası',
+    'PKK/KCK Çevresi Medyası / Açık Kaynak',
+    'PKK/KCK Çizgisiyle Uyumlu Sosyal Söylem',
+    'Uluslararası Basın',
+    'Think Tank / Uzman Analizi',
+    'Diğer Yerli / Ana Akım Medya',
+    'Diğer Sosyal / Belirsiz Söylem',
+    'Diğer Açık Kaynak'
+]
+
+V28_KEY_REACTION_GROUPS = {
+    'Türk Milliyetçi / Güvenlikçi Medya',
+    'Türk Milliyetçi / Güvenlikçi Sosyal Söylem',
+    'Muhafazakâr Medya',
+    'Muhafazakâr / Süreç Destekleyici Sosyal Söylem',
+    'Muhalif / Eleştirel Medya',
+    'Muhalif / Eleştirel Sosyal Söylem',
+    'Türk Solu / Sosyalist Medya',
+    'Türk Solu / Hak-Temelli Sosyal Söylem',
+    'Kürt Bölgesel Medyası',
+    'PKK/KCK Çevresi Medyası / Açık Kaynak',
+    'PKK/KCK Çizgisiyle Uyumlu Sosyal Söylem',
+    'Uluslararası Basın',
+    'Think Tank / Uzman Analizi'
+}
+
+V28_STOP = set(V25_EVENT_STOP) | {
+    'terorsuz','türkiye’nin','turkiyenin','süreci','sureci','mesajı','mesaji',
+    'açıklama','aciklama','açıklaması','aciklamasi','dedi','haberleri'
+}
+
+def _v28_discourse_group(row):
+    fam=_v23_source_family(row)
+    domain=_tt_norm_domain(row.get('Domain','') or row.get('URL',''))
+
+    if fam=='Sosyal Medya':
+        old=_v25_social_discourse(row)
+        return {
+            'Sosyal Medya — Milliyetçi / Güvenlikçi Söylem':
+                'Türk Milliyetçi / Güvenlikçi Sosyal Söylem',
+            'Sosyal Medya — Hükümet / Süreç Destekleyici Söylem':
+                'Muhafazakâr / Süreç Destekleyici Sosyal Söylem',
+            'Sosyal Medya — Muhalif / Eleştirel Söylem':
+                'Muhalif / Eleştirel Sosyal Söylem',
+            'Sosyal Medya — Sol / Hak-Temelli Söylem':
+                'Türk Solu / Hak-Temelli Sosyal Söylem',
+            'Sosyal Medya — PKK/KCK Çizgisiyle Uyumlu Söylem':
+                'PKK/KCK Çizgisiyle Uyumlu Sosyal Söylem',
+            'Sosyal Medya — Karma Söylem':
+                'Diğer Sosyal / Belirsiz Söylem',
+            'Sosyal Medya — Diğer / Belirsiz Söylem':
+                'Diğer Sosyal / Belirsiz Söylem'
+        }.get(old,'Diğer Sosyal / Belirsiz Söylem')
+
+    if fam=='PKK/KCK Açık Kaynak':
+        return 'PKK/KCK Çevresi Medyası / Açık Kaynak'
+    if fam=='Kürt Bölgesel Medyası':
+        return 'Kürt Bölgesel Medyası'
+    if fam=='Yabancı Basın':
+        return 'Uluslararası Basın'
+    if fam=='Think Tank / Analiz':
+        return 'Think Tank / Uzman Analizi'
+
+    for label,domains in V28_MEDIA_PROFILES.items():
+        if domain in domains:
+            return label
+
+    if fam=='Yerli Basın':
+        return 'Diğer Yerli / Ana Akım Medya'
+    return 'Diğer Açık Kaynak'
+
+
+def _v28_row_uid(row):
+    u=str(row.get('URL','') or '').strip()
+    if u:
+        return 'U:'+u
+    return 'T:'+title_key(row.get('Başlık',''))
+
+
+def _v28_title_tokens(row):
+    s=_v24_frame_norm(str(row.get('Başlık','') or ''))
+    return {
+        t for t in re.findall(r'[a-z0-9ğüşöçı]+',s)
+        if len(t)>=4 and t not in V28_STOP
+    }
+
+
+def _v28_title_people(row):
+    title=str(row.get('Başlık','') or '')
+    dummy={'Başlık':title,'İçerik_Özeti':''}
+    return _v18_people(dummy)
+
+
+def _v28_dt_safe(row):
+    try:
+        d=_v18_dt(row)
+        return d
+    except Exception:
+        return pd.NaT
+
+
+def _v28_group_feature(x,idxs):
+    g=x.loc[list(idxs)]
+    people=set()
+    concepts=set()
+    frames=set()
+    tokens=set()
+    title_people=set()
+
+    for _,r in g.iterrows():
+        people |= set(r['_v28_people'])
+        concepts |= set(r['_v28_concepts'])
+        frames |= set(r['_v28_frames'])
+        tokens |= set(r['_v28_tokens'])
+        title_people |= set(r['_v28_title_people'])
+
+    dates=g['_v28_dt'].dropna()
+    newest=dates.max() if not dates.empty else pd.NaT
+
+    return {
+        'people':people,
+        'concepts':concepts,
+        'frames':frames,
+        'tokens':tokens,
+        'title_people':title_people,
+        'newest':newest,
+        'idxs':set(idxs)
+    }
+
+
+def _v28_should_merge(a,b):
+    da=a.get('newest'); db=b.get('newest')
+    if pd.notna(da) and pd.notna(db):
+        hours_gap=abs((da-db).total_seconds())/3600
+    else:
+        hours_gap=999
+
+    people=a['people'] & b['people']
+    concepts=a['concepts'] & b['concepts']
+    frames=a['frames'] & b['frames']
+    toks=a['tokens'] & b['tokens']
+
+    union_t=a['tokens'] | b['tokens']
+    jac=len(toks)/max(1,len(union_t))
+
+    # Aynı aktör + aynı özel kavram/çerçeve + yakın zaman.
+    if people and hours_gap<=42:
+        if concepts:
+            return True
+        if len(frames)>=2 and len(toks)>=1:
+            return True
+        if jac>=0.22 and len(toks)>=2:
+            return True
+
+    # Aktör adı başlıklarda ortaksa daha güçlü sinyal.
+    if (a['title_people'] & b['title_people']) and hours_gap<=36:
+        if frames or len(toks)>=2:
+            return True
+
+    # Aktörsüz ama başlığı ve kavramları belirgin biçimde aynı olay.
+    if not people and hours_gap<=36:
+        if len(concepts)>=2 and jac>=0.16:
+            return True
+        if jac>=0.42 and len(toks)>=3:
+            return True
+
+    return False
+
+
+def _v28_event_name(g):
+    if g is None or g.empty:
+        return 'Gündem'
+
+    actor_counts={}
+    title_actor_counts={}
+    for _,r in g.iterrows():
+        for p in r.get('_v28_people',set()):
+            actor_counts[p]=actor_counts.get(p,0)+1
+        for p in r.get('_v28_title_people',set()):
+            title_actor_counts[p]=title_actor_counts.get(p,0)+1
+
+    actor=None
+    if title_actor_counts:
+        actor=max(title_actor_counts.items(),key=lambda z:z[1])[0]
+        if title_actor_counts[actor] < max(1,int(round(len(g)*0.30))):
+            actor=None
+    if actor is None and actor_counts:
+        cand,cnt=max(actor_counts.items(),key=lambda z:z[1])
+        if cnt>=max(2,int(round(len(g)*0.55))):
+            actor=cand
+
+    all_titles=' '.join(g.get('Başlık',pd.Series('',index=g.index)).fillna('').astype(str).tolist())
+    nt=_v24_frame_norm(all_titles)
+
+    if actor:
+        if any(k in nt for k in ['roportaj','interview']):
+            return f'{actor} röportajı ve yankıları'
+        if any(k in nt for k in ['aciklama','mesaj','dedi','sozleri','konustu','çağrı','cagri']):
+            return f'{actor} açıklamaları ve yankıları'
+        return f'{actor} gündemi'
+
+    # En yüksek riskli, sonra en yeni gerçek başlığı temsilci olarak kullan.
+    tmp=g.copy()
+    tmp['_rr']=pd.to_numeric(tmp.get('Risk_Skoru',0),errors='coerce').fillna(0)
+    tmp=tmp.sort_values(['_rr','_v28_dt'],ascending=[False,False],na_position='last')
+    title=str(tmp.iloc[0].get('Başlık','') or '').strip()
+    if len(title)>130:
+        title=title[:129].rstrip()+'…'
+    return title or 'Gündem'
+
+
+def _v28_build_agenda(df,period_hours=48,limit=20):
+    """
+    Tek ağır işlem: ana tarama sonrasında bir kez çalışır ve session_state'te cache edilir.
+    Exact olay gruplarını precompute özelliklerle semantik olarak birleştirir.
+    """
+    x=_v25_recent_df(df,period_hours)
+    cols=[
+        'EventKey','Sıra','Tarih','Konu / Olay','Önem','Risk','Risk Düzeyi',
+        'Söylem Çevresi','İçerik','Kaynak Ailesi','Yerli','Yabancı',
+        'Kürt Bölgesel','PKK/KCK','Think Tank','Sosyal','Baskın Çerçeve',
+        'Trend','Neden Önemli?'
+    ]
+    if x is None or x.empty:
+        return pd.DataFrame(columns=cols),{}
+
+    x=x.copy().reset_index(drop=True)
+    if 'Tarih_dt' in x.columns:
+        x['Tarih_dt']=pd.to_datetime(x['Tarih_dt'],utc=True,errors='coerce')
+
+    # Özellikler yalnız bir kez hesaplanır.
+    x['_v28_people']=[_v18_people(r) for _,r in x.iterrows()]
+    x['_v28_title_people']=[_v28_title_people(r) for _,r in x.iterrows()]
+    x['_v28_concepts']=[_v18_concepts(r) for _,r in x.iterrows()]
+    x['_v28_frames']=[set(_v23_frame_scores(r)) for _,r in x.iterrows()]
+    x['_v28_tokens']=[_v28_title_tokens(r) for _,r in x.iterrows()]
+    x['_v28_family']=[_v23_source_family(r) for _,r in x.iterrows()]
+    x['_v28_discourse']=[_v28_discourse_group(r) for _,r in x.iterrows()]
+    x['_v28_uid']=[_v28_row_uid(r) for _,r in x.iterrows()]
+    x['_v28_dt']=[_v28_dt_safe(r) for _,r in x.iterrows()]
+    x['_v28_event']=[_v25_event_key(r) for _,r in x.iterrows()]
+
+    # Exact Olay_ID / başlık grupları.
+    base_groups=[]
+    for _,g in x.groupby('_v28_event',dropna=False):
+        base_groups.append(set(g.index.tolist()))
+
+    features=[_v28_group_feature(x,g) for g in base_groups]
+    parent=list(range(len(base_groups)))
+
+    def find(i):
+        while parent[i]!=i:
+            parent[i]=parent[parent[i]]
+            i=parent[i]
+        return i
+
+    def union(a,b):
+        ra,rb=find(a),find(b)
+        if ra==rb:
+            return
+        parent[rb]=ra
+
+    # Base-group sayısı genelde satır sayısından küçüktür.
+    # Precompute özelliklerle O(n²) ama pahalı DataFrame.apply yok.
+    for i in range(len(base_groups)):
+        for j in range(i+1,len(base_groups)):
+            if _v28_should_merge(features[i],features[j]):
+                union(i,j)
+
+    merged={}
+    for i,g in enumerate(base_groups):
+        merged.setdefault(find(i),set()).update(g)
+
+    now=pd.Timestamp.now(tz='UTC')
+    half=max(6,int(period_hours)//2)
+    rows=[]
+    cluster_map={}
+
+    for idxs in merged.values():
+        g=x.loc[sorted(idxs)].copy()
+        if g.empty:
+            continue
+
+        families=g['_v28_family'].fillna('Diğer').astype(str)
+        disc=g['_v28_discourse'].fillna('Diğer Açık Kaynak').astype(str)
+
+        content_n=len(g)
+        fam_n=max(1,families.nunique())
+        discourse_n=max(1,disc.nunique())
+
+        local_n=int(families.eq('Yerli Basın').sum())
+        foreign_n=int(families.eq('Yabancı Basın').sum())
+        kurdish_n=int(families.eq('Kürt Bölgesel Medyası').sum())
+        movement_n=int(families.eq('PKK/KCK Açık Kaynak').sum())
+        think_n=int(families.eq('Think Tank / Analiz').sum())
+        social_n=int(families.eq('Sosyal Medya').sum())
+
+        risk=int(
+            pd.to_numeric(g.get('Risk_Skoru',0),errors='coerce')
+            .fillna(0).max() or 0
+        )
+        risk_level='Yüksek' if risk>=70 else ('Orta' if risk>=45 else 'Düşük')
+
+        # Söylem gruplarında gerçekten kaç farklı çevre olaya karşılık vermiş?
+        key_disc=len(set(disc.tolist()) & V28_KEY_REACTION_GROUPS)
+
+        # Baskın çerçeve
+        fcounts={}
+        for fs in g['_v28_frames']:
+            for f in fs:
+                fcounts[f]=fcounts.get(f,0)+1
+        top_frame=max(fcounts.items(),key=lambda z:z[1])[0] if fcounts else '—'
+
+        # Trend: seçilen pencerenin son yarısı / önceki yarısı.
+        dates=pd.to_datetime(g['_v28_dt'],utc=True,errors='coerce')
+        last=int((dates>=now-pd.Timedelta(hours=half)).sum())
+        prev=int(((dates<now-pd.Timedelta(hours=half)) &
+                  (dates>=now-pd.Timedelta(hours=period_hours))).sum())
+        if last>=max(3,prev*1.5):
+            trend='↑ Yükseliyor'
+        elif prev>=max(3,last*1.5):
+            trend='↓ Geriliyor'
+        else:
+            trend='→ Dengeli'
+
+        # Önem = hacim + kaynak çeşitliliği + söylem çeşitliliği + risk +
+        # dış/sosyal yankı. 0-100 aralığında sunulur.
+        importance=int(round(min(
+            100,
+            12
+            + min(content_n,15)*2.7
+            + max(0,fam_n-1)*7.0
+            + min(key_disc,7)*4.2
+            + min(risk,100)*0.18
+            + min(social_n,8)*1.0
+            + min(foreign_n+kurdish_n+movement_n+think_n,10)*1.5
+        )))
+
+        g=g.sort_values('_v28_dt',ascending=False,na_position='last')
+        newest=g.iloc[0]
+        event_name=_v28_event_name(g)
+
+        uids=sorted(set(g['_v28_uid'].tolist()))
+        ek='V28:'+hashlib.sha1(
+            ('|'.join(uids)).encode('utf-8','ignore')
+        ).hexdigest()[:16]
+
+        reasons=[
+            f'{content_n} içerik',
+            f'{fam_n} kaynak ailesi',
+            f'{discourse_n} söylem çevresi',
+            f'risk {risk}/100'
+        ]
+        if foreign_n: reasons.append(f'{foreign_n} yabancı')
+        if kurdish_n: reasons.append(f'{kurdish_n} Kürt bölgesel')
+        if movement_n: reasons.append(f'{movement_n} PKK/KCK')
+        if social_n: reasons.append(f'{social_n} sosyal')
+
+        rows.append({
+            'EventKey':ek,
+            'Sıra':0,
+            'Tarih':str(newest.get('Tarih','') or ''),
+            'Konu / Olay':event_name,
+            'Önem':importance,
+            'Risk':risk,
+            'Risk Düzeyi':risk_level,
+            'Söylem Çevresi':discourse_n,
+            'İçerik':content_n,
+            'Kaynak Ailesi':fam_n,
+            'Yerli':local_n,
+            'Yabancı':foreign_n,
+            'Kürt Bölgesel':kurdish_n,
+            'PKK/KCK':movement_n,
+            'Think Tank':think_n,
+            'Sosyal':social_n,
+            'Baskın Çerçeve':top_frame,
+            'Trend':trend,
+            'Neden Önemli?':' • '.join(reasons)
+        })
+        cluster_map[ek]=uids
+
+    if not rows:
+        return pd.DataFrame(columns=cols),{}
+
+    out=pd.DataFrame(rows).sort_values(
+        ['Önem','Risk','Kaynak Ailesi','İçerik'],
+        ascending=[False,False,False,False]
+    ).head(int(limit)).reset_index(drop=True)
+
+    out['Sıra']=range(1,len(out)+1)
+    keep_keys=set(out['EventKey'].tolist())
+    cluster_map={k:v for k,v in cluster_map.items() if k in keep_keys}
+    return out[cols],cluster_map
+
+
+def _v28_get_agenda_cached(df,period_hours=48,limit=20):
+    cache=st.session_state.setdefault('_v28_agenda_cache',{})
+    scan_token=str(st.session_state.get('scan_time',''))
+    key=f'{scan_token}|{int(period_hours)}|{len(df)}|{int(limit)}'
+
+    if key not in cache:
+        agenda,clusters=_v28_build_agenda(df,period_hours,limit)
+        # Sadece mevcut taramanın iki pencere cache'i kalsın.
+        cache={
+            k:v for k,v in cache.items()
+            if str(k).startswith(scan_token+'|')
+        }
+        cache[key]={
+            'agenda':agenda.to_dict('records'),
+            'clusters':clusters
+        }
+        st.session_state['_v28_agenda_cache']=cache
+
+    item=st.session_state['_v28_agenda_cache'][key]
+    return pd.DataFrame(item.get('agenda') or []),item.get('clusters') or {}
+
+
+def _v28_cluster_from_uids(df,uids,period_hours=48):
+    x=_v25_recent_df(df,period_hours)
+    if x is None or x.empty:
+        return pd.DataFrame()
+    wanted=set(uids or [])
+    mask=[]
+    for _,r in x.iterrows():
+        mask.append(_v28_row_uid(r) in wanted)
+    out=x.loc[mask].copy()
+    if not out.empty and 'Tarih_dt' in out.columns:
+        out['Tarih_dt']=pd.to_datetime(out['Tarih_dt'],utc=True,errors='coerce')
+        out=out.sort_values('Tarih_dt',ascending=False,na_position='last')
+    return out.reset_index(drop=True)
+
+
+def _v28_real_sentence(row):
+    """
+    Model cümlesi üretmez. Kaynakta yakalanmış spot/özetin ilk anlamlı
+    cümlesini; yoksa gerçek başlığı gösterir.
+    """
+    snippet=re.sub(
+        r'\s+',' ',
+        str(row.get('İçerik_Özeti','') or '')
+    ).strip()
+    if snippet:
+        parts=re.split(r'(?<=[.!?])\s+',snippet)
+        for p in parts:
+            p=p.strip()
+            if len(p)>=35:
+                return p[:360]
+        return snippet[:360]
+    return str(row.get('Başlık','') or '')[:360]
+
+
+def _v28_evidence(df):
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    x=df.copy().reset_index(drop=True)
+    x['Söylem Çevresi']=[_v28_discourse_group(r) for _,r in x.iterrows()]
+    x['Kaynak Ailesi']=[_v23_source_family(r) for _,r in x.iterrows()]
+    x['Tutum']=[_v25_stance(r) for _,r in x.iterrows()]
+    x['Çerçeveler']=[
+        ' • '.join(_v23_frame_scores(r))
+        for _,r in x.iterrows()
+    ]
+    x['Gerçek Söylem / Spot']=[
+        _v28_real_sentence(r)
+        for _,r in x.iterrows()
+    ]
+
+    if 'Tarih_dt' in x.columns:
+        x['Tarih_dt']=pd.to_datetime(x['Tarih_dt'],utc=True,errors='coerce')
+        x=x.sort_values('Tarih_dt',ascending=False,na_position='last')
+
+    return x.reset_index(drop=True)
+
+
+def _v28_reaction_summary(evidence):
+    cols=['Söylem Çevresi','İçerik','Kaynak','Ne Dedi?','Kaynak / Yayın','Bağlantı']
+    if evidence is None or evidence.empty:
+        return pd.DataFrame(columns=cols)
+
+    rows=[]
+    order={g:i for i,g in enumerate(V28_GROUP_ORDER)}
+
+    for group,g in evidence.groupby('Söylem Çevresi'):
+        g=g.copy()
+        # Gerçek URL'li ve daha yeni satır temsilci olsun.
+        has_url=g.get('URL',pd.Series('',index=g.index)).fillna('').astype(str).str.startswith('http')
+        g['_has_url']=has_url.astype(int)
+        if 'Tarih_dt' in g.columns:
+            g=g.sort_values(['_has_url','Tarih_dt'],ascending=[False,False],na_position='last')
+        else:
+            g=g.sort_values('_has_url',ascending=False)
+
+        rep=g.iloc[0]
+        rows.append({
+            'Söylem Çevresi':group,
+            'İçerik':len(g),
+            'Kaynak':g.get('Kaynak',pd.Series('',index=g.index)).fillna('').astype(str).nunique(),
+            'Ne Dedi?':str(rep.get('Gerçek Söylem / Spot','') or ''),
+            'Kaynak / Yayın':str(rep.get('Kaynak','') or ''),
+            'Bağlantı':str(rep.get('URL','') or '')
+        })
+
+    out=pd.DataFrame(rows)
+    out['_ord']=out['Söylem Çevresi'].map(lambda z:order.get(z,999))
+    return out.sort_values(['_ord','İçerik'],ascending=[True,False]).drop(columns=['_ord']).reset_index(drop=True)
+
+
+def _v28_actor_summary(df,period_hours=48):
+    x=_v25_recent_df(df,period_hours)
+    cols=[
+        'Aktör','İçerik','Kaynak Ailesi','Baskın Vurgu',
+        'Yaklaşım','Son Görünüm','Son Tarih','Son Bağlantı'
+    ]
+    if x is None or x.empty:
+        return pd.DataFrame(columns=cols)
+
+    x=x.copy().reset_index(drop=True)
+    x['_v28_text']=[
+        _v24_frame_norm(
+            f"{r.get('Başlık','')} {r.get('İçerik_Özeti','')}"
+        )
+        for _,r in x.iterrows()
+    ]
+    if 'Tarih_dt' in x.columns:
+        x['Tarih_dt']=pd.to_datetime(x['Tarih_dt'],utc=True,errors='coerce')
+
+    rows=[]
+    actor_rules=dict(V22_ACTORS)
+    # V18'de olup V22'de bulunmayan aktörleri de ekle.
+    for actor,variants in V18_PERSON_RULES.items():
+        actor_rules.setdefault(actor,variants)
+
+    for actor,variants in actor_rules.items():
+        nv=[_v24_frame_norm(v) for v in variants]
+        mask=x['_v28_text'].map(
+            lambda t:any(v and v in t for v in nv)
+        )
+        g=x[mask].copy()
+        if g.empty:
+            continue
+
+        if 'Tarih_dt' in g.columns:
+            g=g.sort_values('Tarih_dt',ascending=False,na_position='last')
+
+        frame_counts={}
+        for _,r in g.iterrows():
+            for f in _v23_frame_scores(r):
+                frame_counts[f]=frame_counts.get(f,0)+1
+        focus=' / '.join(
+            [k for k,_ in sorted(frame_counts.items(),key=lambda z:z[1],reverse=True)[:2]]
+        ) or 'Genel süreç'
+
+        stances=[_v25_stance(r) for _,r in g.iterrows()]
+        stance=_v23_mode_value(stances,'Nötr / Bilgilendirici')
+
+        latest=g.iloc[0]
+        rows.append({
+            'Aktör':actor,
+            'İçerik':len(g),
+            'Kaynak Ailesi':len(set(_v23_source_family(r) for _,r in g.iterrows())),
+            'Baskın Vurgu':focus,
+            'Yaklaşım':stance,
+            'Son Görünüm':_v28_real_sentence(latest)[:180],
+            'Son Tarih':str(latest.get('Tarih','') or ''),
+            'Son Bağlantı':str(latest.get('URL','') or '')
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=cols)
+
+    return pd.DataFrame(rows).sort_values(
+        ['İçerik','Kaynak Ailesi'],
+        ascending=[False,False]
+    ).reset_index(drop=True)
+
+
+def _v28_actor_links(df,actor,period_hours=48):
+    x=_v25_recent_df(df,period_hours)
+    if x is None or x.empty:
+        return pd.DataFrame()
+
+    variants=dict(V22_ACTORS)
+    for a,v in V18_PERSON_RULES.items():
+        variants.setdefault(a,v)
+    vv=[_v24_frame_norm(v) for v in variants.get(actor,[actor])]
+
+    rows=[]
+    for _,r in x.iterrows():
+        t=_v24_frame_norm(
+            f"{r.get('Başlık','')} {r.get('İçerik_Özeti','')}"
+        )
+        if any(v and v in t for v in vv):
+            z=r.to_dict()
+            z['Kaynak Ailesi']=_v23_source_family(r)
+            z['Gerçek Söylem / Spot']=_v28_real_sentence(r)
+            rows.append(z)
+
+    out=pd.DataFrame(rows)
+    if not out.empty and 'Tarih_dt' in out.columns:
+        out['Tarih_dt']=pd.to_datetime(out['Tarih_dt'],utc=True,errors='coerce')
+        out=out.sort_values('Tarih_dt',ascending=False,na_position='last')
+    return out.reset_index(drop=True)
+
+
+def _v28_focus_queries(seed):
+    """
+    V26'ya göre daha az ama daha hedefli sorgu.
+    Ana taramaya karışmaz; yalnız seçilen olay için çalışır.
+    """
+    base=_v25_event_anchor(seed)
+    ascii_base=_v24_frame_norm(base)
+
+    qmap={
+        'turkish':[
+            base,
+            f'{base} (yorum OR görüş OR analiz OR röportaj)'
+        ],
+        'foreign':[
+            f'{ascii_base} Turkey PKK',
+            f'{ascii_base} (peace process OR disarmament OR Ocalan)'
+        ],
+        'thinktank':[
+            f'{ascii_base} Turkey Kurdish peace process analysis'
+        ],
+        'kurdish':[
+            f'{ascii_base} Kurdistan Turkey Ocalan'
+        ],
+        'movement':[
+            f'{ascii_base} PKK KCK Ocalan'
+        ],
+        'commentary':[],
+        'social':[
+            f'{base} (site:x.com OR site:youtube.com)',
+            f'{base} (site:reddit.com OR site:bsky.app)',
+            f'{base} (site:tiktok.com OR site:instagram.com OR site:facebook.com)',
+            f'{base} (site:t.me OR site:threads.net OR site:linkedin.com)'
+        ]
+    }
+
+    # İdeolojik medya profilleri: her profil için tek kompakt site sorgusu.
+    for _,domains in V28_MEDIA_PROFILES.items():
+        sites=_v22_group_sites(sorted(domains),8)
+        if sites:
+            qmap['commentary'].append(f'{base} {sites[0]}')
+
+    # Kürt bölgesel ve hareket medyasından en fazla iki site grubu.
+    try:
+        kg=_v22_group_sites(TT_KURDISH_REGIONAL_V9,8)
+        for s in kg[:2]:
+            qmap['kurdish'].append(f'{ascii_base} {s}')
+    except Exception:
+        pass
+
+    try:
+        mg=_v22_group_sites(TT_MOVEMENT_V9,8)
+        for s in mg[:2]:
+            qmap['movement'].append(f'{ascii_base} {s}')
+    except Exception:
+        pass
+
+    for mode in list(qmap):
+        seen=set()
+        clean=[]
+        for q in qmap[mode]:
+            q=re.sub(r'\s+',' ',str(q)).strip()
+            if q and q not in seen:
+                seen.add(q)
+                clean.append(q)
+        qmap[mode]=clean
+
+    return qmap
+
+
+def _v28_event_match(seed,row):
+    if _v25_event_key(seed)==_v25_event_key(row) and _v25_event_key(seed).startswith('OID:'):
+        return True
+
+    score=_v25_same_event_score(seed,row)
+    if score>=0.42:
+        return True
+
+    sp=_v18_people(seed)
+    rp=_v18_people(row)
+    sc=_v18_concepts(seed)
+    rc=_v18_concepts(row)
+    sf=set(_v23_frame_scores(seed))
+    rf=set(_v23_frame_scores(row))
+    st=_v25_row_tokens(seed)
+    rt=_v25_row_tokens(row)
+
+    if (sp & rp) and ((sc & rc) or (sf & rf)):
+        return True
+    if len(st & rt)>=3 and (sf & rf):
+        return True
+    return False
+
+
+def _v28_event_deep_search(seed,period_hours=48):
+    qmap=_v28_focus_queries(seed)
+    cache_snapshot=dict(st.session_state.get('_v11_source_cache',{}) or {})
+    timespan=f'{max(1,int(period_hours)//24)}d'
+
+    jobs=[]
+    for mode,queries in qmap.items():
+        for q in queries:
+            for engine in _v22_engines(mode,q):
+                jobs.append((mode,q,engine))
+
+    # Maksimum iş sayısı: derin analiz geniş ama sınırsız değil.
+    jobs=jobs[:48]
+
+    raw_by_mode={m:[] for m in qmap}
+    cache_updates=[]
+    diag=[]
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=min(20,max(1,len(jobs)))
+    ) as ex:
+        fmap={
+            ex.submit(
+                _v22_engine_call,
+                engine,q,mode,timespan,period_hours,cache_snapshot
+            ):(mode,q,engine)
+            for mode,q,engine in jobs
+        }
+
+        for fut in concurrent.futures.as_completed(fmap):
+            mode,q,engine=fmap[fut]
+            try:
+                result=fut.result() or {}
+                raw_by_mode[mode].extend(result.get('rows') or [])
+                if result.get('cache_update'):
+                    cache_updates.append(result['cache_update'])
+                if result.get('diag'):
+                    diag.append(result['diag'])
+            except Exception:
+                pass
+
+    if cache_updates:
+        cache=dict(st.session_state.get('_v11_source_cache',{}) or {})
+        for k,v in cache_updates:
+            cache[k]=v
+        st.session_state['_v11_source_cache']=cache
+
+    cutoff=(
+        datetime.now(timezone.utc)-timedelta(hours=int(period_hours))
+    ).astimezone(timezone.utc)
+
+    normalized=[]
+    broad='Terörsüz Türkiye PKK Öcalan peace process'
+
+    for mode,raw in raw_by_mode.items():
+        if not raw:
+            continue
+        try:
+            nr,_=normalize_rows(raw,cutoff,mode,broad)
+        except Exception:
+            nr=[]
+        normalized.extend(nr)
+
+    rows=dedupe(normalized)
+    filtered=[]
+    for r in rows:
+        if _v28_event_match(seed,r):
+            filtered.append(r)
+
+    return pd.DataFrame(filtered),pd.DataFrame(diag)
+
+
+def _v28_combine_event(base_cluster,extra):
+    if base_cluster is None or base_cluster.empty:
+        return pd.DataFrame()
+    records=base_cluster.to_dict('records')
+    if extra is not None and not extra.empty:
+        records.extend(extra.to_dict('records'))
+    return pd.DataFrame(dedupe(records)).reset_index(drop=True)
+
+
+def _v28_package_matches(pkg,event_key,period):
+    return bool(
+        pkg
+        and str(pkg.get('scan_time',''))==str(st.session_state.get('scan_time',''))
+        and str(pkg.get('event_key',''))==str(event_key)
+        and int(pkg.get('period',0) or 0)==int(period)
+    )
+
+# ============================================================
+# /V28 HIZLI GÜNDEM + GERÇEK SÖYLEM
+# ============================================================
 # V3 — SADELEŞTİRİLMİŞ TERÖRSÜZ TÜRKİYE ANALİST ARAYÜZÜ
 # Amaç: Yerli basın + sosyal medya/açık sosyal + yabancı basın + think tank
 # Ayrı sekmeler; yalnız Detaylı Bilgi Notu ve Analiz Sepeti işlemleri.
@@ -18315,427 +19164,428 @@ else:
 
 st.markdown('---')
 
-# ---------------- ŞU AN NE KONUŞULUYOR? ----------------
-st.subheader('🧭 Şu An Ne Konuşuluyor?')
-if st.session_state.get('rows'):
-    _now_df=pd.DataFrame(st.session_state.rows)
-    if not _now_df.empty and 'Tarih_dt' in _now_df.columns:
-        _now_df['Tarih_dt']=pd.to_datetime(_now_df['Tarih_dt'],utc=True,errors='coerce')
-    _topic_df=_v22_topic_table(_now_df)
-    if _topic_df.empty:
-        st.info('Henüz yeterli konu yoğunluğu oluşmamıştır.')
-    else:
-        st.info(_v22_topic_summary(_topic_df))
-        st.dataframe(
-            _topic_df.head(9),
-            hide_index=True,
-            use_container_width=True,
-            height=min(440,115+38*len(_topic_df.head(9)))
-        )
-else:
-    st.info('Tarama tamamlandığında ana gündem kümeleri burada otomatik olarak gösterilecektir.')
-
-st.markdown('---')
-
-# ---------------- KİM NE DİYOR? ----------------
-st.subheader('🗣️ Kim Ne Diyor? — Aktör Analizi')
-st.caption('Aktörlerin son görünürlüğünü, hangi konularla birlikte anıldığını ve başlıklarda öne çıkan son söylemi mevcut açık kaynak verisi üzerinden gösterir.')
-if st.session_state.get('rows'):
-    _actor_df=_v22_actor_rows(pd.DataFrame(st.session_state.rows))
-    if _actor_df.empty:
-        st.info('Bu taramada aktör analizi için yeterli eşleşme bulunmamıştır.')
-    else:
-        st.dataframe(
-            _actor_df.head(12),
-            hide_index=True,
-            use_container_width=True,
-            height=min(540,120+38*len(_actor_df.head(12)))
-        )
-
-else:
-    st.info('Tarama tamamlandığında aktör analizi burada oluşacaktır.')
-
-st.markdown('---')
-
-# ---------------- GÜNLÜK OLAY ANALİZİ VE RAPORLAMA — V26 ----------------
-st.subheader('📑 Günlük Olay Analizi — Gerçek Söylem / Gerçek Kaynak')
+# ---------------- V28: SON 24/48 SAAT GÜNDEM VE SÖYLEM HARİTASI ----------------
+st.subheader('🧭 Son 24 / 48 Saatte Ne Konuşuluyor? — Gündem ve Söylem Haritası')
 st.caption(
-    'Ana taramadan son 24 veya 48 saatin tartışılan önemli konularını getirir. '
-    'Bir konuyu seçtikten sonra “Derin Analiz Yap” düğmesi yalnız o olay için ek açık kaynak araması yapar. '
-    'Sonuçlarda temsili söylem yerine gerçek haber/paylaşım başlığı, yakalanan içerik ve gerçek bağlantı gösterilir.'
+    'Ana taramadaki içerikleri olay düzeyinde gruplar; önem, risk, kaynak çeşitliliği ve söylem çeşitliliğine göre en fazla 20 gündem başlığını sıralar. '
+    'Yabancı, Kürt bölgesel, PKK/KCK ve sosyal sayımları normalize edilmiş kaynak ailesi üzerinden yapılır.'
 )
 
-_v26_period=st.radio(
+_v28_period=st.radio(
     'Gündem penceresi',
     [24,48],
-    index=1,
+    index=0,
     horizontal=True,
     format_func=lambda x:f'Son {x} saat',
-    key='v26_daily_period'
+    key='v28_period'
 )
 
 if not st.session_state.get('rows'):
-    st.info('Önce ana taramayı çalıştırın. Son 24/48 saatin önemli konuları tarama sonucundan üretilecektir.')
-
+    st.info('Tarama tamamlandığında son 24/48 saatin olay bazlı gündem listesi burada otomatik olarak oluşacaktır.')
 else:
-    _v26_main_df=pd.DataFrame(st.session_state.rows)
+    _v28_all=pd.DataFrame(st.session_state.rows)
+    if not _v28_all.empty and 'Tarih_dt' in _v28_all.columns:
+        _v28_all['Tarih_dt']=pd.to_datetime(_v28_all['Tarih_dt'],utc=True,errors='coerce')
 
-    if not _v26_main_df.empty and 'Tarih_dt' in _v26_main_df.columns:
-        _v26_main_df['Tarih_dt']=pd.to_datetime(
-            _v26_main_df['Tarih_dt'],
-            utc=True,
-            errors='coerce'
+    with st.spinner('Gündem kümeleri hazırlanıyor...'):
+        _v28_agenda,_v28_clusters=_v28_get_agenda_cached(
+            _v28_all,
+            _v28_period,
+            20
         )
 
-    _v26_candidates=_v26_topic_candidates(
-        _v26_main_df,
-        _v26_period,
-        15
-    )
-
-    st.markdown('### 1. Son Dönemin Tartışılan / Önemli Konuları')
-    st.caption('Bu sayılar artık yalnız aynı Olay_ID\'yi değil; aktör + çerçeve + kavram + zaman yakınlığıyla aynı olaya bağlanan mevcut ana tarama içeriklerini sayar. Derin Analiz daha sonra yeni kaynaklar da bulabilir.')
-
-    if _v26_candidates.empty:
-        st.info('Seçilen zaman penceresinde tarih doğrulaması yapılmış önemli konu bulunamadı.')
-
+    if _v28_agenda.empty:
+        st.info('Seçilen zaman penceresinde tarih doğrulaması yapılmış gündem kümesi bulunamadı.')
     else:
-        _candidate_view=_v26_candidates.copy()
-        _candidate_view.insert(0,'Seç',False)
+        _a1,_a2,_a3,_a4=st.columns(4)
+        _a1.metric('Gündem Başlığı',len(_v28_agenda))
+        _a2.metric('Çok Kaynaklı',int((_v28_agenda['Kaynak Ailesi']>=2).sum()))
+        _a3.metric('Yüksek Risk',int((_v28_agenda['Risk']>=70).sum()))
+        _a4.metric('Yükselen',int(_v28_agenda['Trend'].astype(str).str.startswith('↑').sum()))
 
-        _candidate_edit=st.data_editor(
-            _candidate_view[
-                ['Seç','Tarih','Önemli Konu / Olay','İçerik','Kaynak Ailesi',
-                 'Sosyal','Yabancı','Kürt Bölgesel','PKK/KCK','Think Tank',
-                 'Neden Önemli?']
+        st.dataframe(
+            _v28_agenda[
+                ['Sıra','Konu / Olay','Önem','Risk','Risk Düzeyi','Söylem Çevresi',
+                 'İçerik','Kaynak Ailesi','Yerli','Yabancı','Kürt Bölgesel',
+                 'PKK/KCK','Think Tank','Sosyal','Baskın Çerçeve','Trend']
             ],
             hide_index=True,
             use_container_width=True,
-            height=min(650,135+42*len(_candidate_view)),
+            height=min(760,125+33*len(_v28_agenda)),
             column_config={
-                'Seç':st.column_config.CheckboxColumn('Seç',default=False),
-                'Önemli Konu / Olay':st.column_config.TextColumn('Önemli Konu / Olay',width='large'),
-                'Neden Önemli?':st.column_config.TextColumn('Neden Önemli?',width='large')
-            },
-            disabled=[
-                'Tarih','Önemli Konu / Olay','İçerik','Kaynak Ailesi',
-                'Sosyal','Yabancı','Kürt Bölgesel','PKK/KCK','Think Tank','Neden Önemli?'
-            ],
-            key='v26_topic_selector'
+                'Konu / Olay':st.column_config.TextColumn('Konu / Olay',width='large'),
+                'Önem':st.column_config.ProgressColumn(
+                    'Önem',
+                    min_value=0,max_value=100,format='%d'
+                ),
+                'Risk':st.column_config.ProgressColumn(
+                    'Risk',
+                    min_value=0,max_value=100,format='%d'
+                ),
+                'Baskın Çerçeve':st.column_config.TextColumn(
+                    'Baskın Çerçeve',width='medium'
+                )
+            }
         )
 
-        _selected_indices=list(
-            _candidate_edit.index[
-                _candidate_edit['Seç'].fillna(False).astype(bool)
-            ]
+        _event_options={
+            f"{int(r['Sıra'])}. {r['Konu / Olay']}  |  Önem {int(r['Önem'])}  |  {int(r['İçerik'])} içerik":
+                str(r['EventKey'])
+            for _,r in _v28_agenda.iterrows()
+        }
+
+        _event_label=st.selectbox(
+            'İncelenecek gündem / olay',
+            list(_event_options.keys()),
+            key='v28_event_select'
+        )
+        _event_key=_event_options[_event_label]
+        _event_row=_v28_agenda[
+            _v28_agenda['EventKey'].astype(str)==str(_event_key)
+        ].iloc[0]
+
+        _base_cluster=_v28_cluster_from_uids(
+            _v28_all,
+            _v28_clusters.get(_event_key,[]),
+            _v28_period
         )
 
-        st.markdown('### 2. Seçili Konuyu Derinleştir')
+        st.markdown(f"### 🎯 {_event_row['Konu / Olay']}")
+        st.caption(_event_row['Neden Önemli?'])
+
+        _pkg=st.session_state.get('_v28_deep_package')
+        _using_deep=_v28_package_matches(
+            _pkg,
+            _event_key,
+            _v28_period
+        )
+
+        if _using_deep:
+            _working=pd.DataFrame(_pkg.get('rows') or [])
+            st.success(
+                f"Derin analiz aktif: {_pkg.get('base_count',0)} ana tarama + "
+                f"{_pkg.get('extra_count',0)} yeni doğrulanmış/eşleşmiş içerik."
+            )
+        else:
+            _working=_base_cluster.copy()
+
+        _evidence=_v28_evidence(_working)
+        _reaction=_v28_reaction_summary(_evidence)
+
+        st.markdown('#### Bu olay hangi çevrede nasıl karşılık buldu?')
         st.caption(
-            'Derin analiz; yerli/yabancı basın, köşe yazıları, bilinen medya profilleri, '
-            'Kürt bölgesel medya, PKK/KCK çevresi açık kaynaklar ve X/YouTube/Reddit/Bluesky/'
-            'TikTok/Instagram/Facebook/Telegram/LinkedIn gibi açık sosyal kaynaklarda seçili olayın yankısını arar.'
+            '“Ne Dedi?” alanı model tarafından yazılmış temsili bir cümle değildir; taramada yakalanan gerçek haber/paylaşım spotu veya gerçek başlıktır. '
+            'Bağlantı sütunu doğrudan ilgili kaynağa gider.'
+        )
+
+        if _reaction.empty:
+            st.info('Bu olay için mevcut taramada karşılaştırmalı söylem verisi bulunamadı.')
+        else:
+            st.dataframe(
+                _reaction,
+                hide_index=True,
+                use_container_width=True,
+                height=min(600,125+44*len(_reaction)),
+                column_config={
+                    'Ne Dedi?':st.column_config.TextColumn('Ne Dedi?',width='large'),
+                    'Bağlantı':st.column_config.LinkColumn(
+                        'Gerçek Bağlantı',
+                        display_text='Aç'
+                    )
+                }
+            )
+
+            _group_order={g:i for i,g in enumerate(V28_GROUP_ORDER)}
+            _groups=sorted(
+                _evidence['Söylem Çevresi'].dropna().astype(str).unique().tolist(),
+                key=lambda z:_group_order.get(z,999)
+            )
+            _selected_group=st.selectbox(
+                'Bir çevrenin tüm gerçek haber/paylaşım bağlantılarını göster',
+                _groups,
+                key='v28_group_select'
+            )
+            _gg=_evidence[
+                _evidence['Söylem Çevresi'].astype(str)==str(_selected_group)
+            ].copy()
+
+            _show_cols=[
+                c for c in [
+                    'Tarih','Kaynak Ailesi','Kaynak','Başlık',
+                    'Gerçek Söylem / Spot','Tutum','Çerçeveler','URL'
+                ] if c in _gg.columns
+            ]
+            st.dataframe(
+                _gg[_show_cols].head(50),
+                hide_index=True,
+                use_container_width=True,
+                height=min(640,130+40*min(50,len(_gg))),
+                column_config={
+                    'Başlık':st.column_config.TextColumn('Gerçek Başlık',width='large'),
+                    'Gerçek Söylem / Spot':st.column_config.TextColumn(
+                        'Gerçek Söylem / Spot',width='large'
+                    ),
+                    'URL':st.column_config.LinkColumn(
+                        'Gerçek Haber / Paylaşım',
+                        display_text='Aç'
+                    )
+                }
+            )
+
+        st.markdown('#### Olayı daha derin tara')
+        st.caption(
+            'Bu işlem yalnız seçilen olay için çalışır. Türk milliyetçi, muhafazakâr, muhalif ve sol medya; '
+            'Kürt bölgesel ve PKK/KCK çevresi açık kaynaklar; uluslararası basın, think tankler ve açık sosyal platformlarda yeni gerçek bağlantılar arar.'
         )
 
         if st.button(
-            '🔬 Seçili Konuda Derin Analiz Yap',
+            '🔬 Seçili Olayda Derin Analiz Yap',
             type='primary',
             use_container_width=True,
-            key='v26_deep_analyze'
+            key='v28_deep_btn'
         ):
-            if len(_selected_indices)!=1:
-                st.warning('Derin analiz için listeden yalnızca bir önemli konu seçin.')
+            if _base_cluster.empty:
+                st.warning('Seçili olay için temel olay kümesi bulunamadı.')
             else:
-                _sel_i=int(_selected_indices[0])
-                _selected=_v26_candidates.iloc[_sel_i]
-
-                with st.spinner('Seçili olayın mevcut içerikleri eşleştiriliyor...'):
-                    _base_cluster=_v25_event_cluster(
-                        _v26_main_df,
-                        _selected['EventKey'],
-                        _selected['Önemli Konu / Olay'],
-                        _v26_period
+                _seed=_base_cluster.iloc[0]
+                with st.spinner('Seçili olay için hedefli açık kaynak taraması yapılıyor...'):
+                    _extra,_diag=_v28_event_deep_search(
+                        _seed,
+                        _v28_period
                     )
 
-                if _base_cluster is None or _base_cluster.empty:
-                    st.warning('Seçili olay için temel olay kümesi oluşturulamadı.')
-                else:
-                    _seed=_base_cluster.iloc[0]
+                _combined=_v28_combine_event(
+                    _base_cluster,
+                    _extra
+                )
+                _deep_evidence=_v28_evidence(_combined)
 
-                    with st.spinner('Olay için gerçek haber, yorum ve sosyal medya bağlantıları derin taranıyor...'):
-                        _extra,_diag=_v26_event_deep_search(
-                            _seed,
-                            _v26_period
-                        )
+                st.session_state['_v28_deep_package']={
+                    'scan_time':str(st.session_state.get('scan_time','')),
+                    'period':int(_v28_period),
+                    'event_key':str(_event_key),
+                    'event_title':str(_event_row['Konu / Olay']),
+                    'rows':_combined.to_dict('records'),
+                    'base_count':int(len(_base_cluster)),
+                    'extra_count':int(max(0,len(_combined)-len(_base_cluster))),
+                    'evidence':_deep_evidence.to_dict('records'),
+                    'diag':(
+                        _diag.to_dict('records')
+                        if _diag is not None and not _diag.empty
+                        else []
+                    )
+                }
+                st.session_state.pop('_v28_network_package',None)
+                st.session_state.pop('_v28_report_bytes',None)
+                st.success(
+                    f'✅ Derin analiz tamamlandı. Toplam {len(_combined)} gerçek olay-ilişkili içerik bulundu. '
+                    'Sonuçları görmek için sayfa otomatik yenilenecektir.'
+                )
+                try:
+                    st.rerun()
+                except Exception:
+                    pass
 
-                    _combined=_base_cluster.copy()
+        if _using_deep:
+            _act1,_act2,_act3=st.columns(3)
 
-                    if _extra is not None and not _extra.empty:
-                        _tmp=pd.concat(
-                            [_v26_main_df,_extra],
-                            ignore_index=True,
-                            sort=False
-                        )
-                        _combined=_v25_event_cluster(
-                            _tmp,
-                            _selected['EventKey'],
-                            _selected['Önemli Konu / Olay'],
-                            _v26_period
-                        )
+            with _act1:
+                if st.button(
+                    '🧩 PKK/KCK Söylem Ayrışmasını Hesapla',
+                    use_container_width=True,
+                    key='v28_movement_btn'
+                ):
+                    _m=_v25_movement_divergence(_working)
+                    st.session_state['_v28_movement_rows']=_m.to_dict('records')
 
-                    _evidence=_v26_prepare_evidence(_combined)
-                    _groups=_v26_group_summary(_evidence)
-                    _frames=_v25_frame_summary(_combined)
-                    _movement=_v25_movement_divergence(_combined)
-                    _nodes,_edges,_network=_v26_event_network(_combined,1)
-
-                    st.session_state['_v26_daily_package']={
-                        'scan_time':str(st.session_state.get('scan_time','')),
-                        'period':int(_v26_period),
-                        'event_key':str(_selected['EventKey']),
-                        'event_title':str(_selected['Önemli Konu / Olay']),
-                        'rows':_combined.to_dict('records'),
-                        'evidence':_evidence.to_dict('records'),
-                        'groups':_groups.to_dict('records'),
-                        'frames':_frames.to_dict('records'),
-                        'movement':_movement.to_dict('records'),
-                        'network':_network.to_dict('records'),
+            with _act2:
+                if st.button(
+                    '🕸️ Olay-Özel Gephi Ağını Hazırla',
+                    use_container_width=True,
+                    key='v28_network_btn'
+                ):
+                    _nodes,_edges,_net=_v26_event_network(_working,1)
+                    st.session_state['_v28_network_package']={
+                        'event_key':str(_event_key),
                         'nodes':_nodes.to_dict('records'),
                         'edges':_edges.to_dict('records'),
-                        'base_count':int(len(_base_cluster)),
-                        'extra_count':int(max(0,len(_combined)-len(_base_cluster))),
-                        'diag':(
-                            _diag.to_dict('records')
-                            if _diag is not None and not _diag.empty
-                            else []
-                        )
+                        'summary':_net.to_dict('records')
                     }
 
-                    st.session_state.pop('_v26_daily_report_bytes',None)
-
-                    st.success(
-                        f'✅ Derin analiz tamamlandı: {len(_combined)} olay-ilişkili gerçek içerik / bağlantı.'
-                    )
-
-    _v26_pkg=st.session_state.get('_v26_daily_package')
-
-    if _v26_pkg:
-        if str(_v26_pkg.get('scan_time',''))!=str(st.session_state.get('scan_time','')):
-            st.info(
-                'Yeni ana tarama yapıldığı için önceki günlük derin analiz eski taramaya aittir. '
-                'Yeni listeden tekrar bir konu seçin.'
-            )
-        else:
-            _edf=pd.DataFrame(_v26_pkg.get('rows') or [])
-            _evidence=pd.DataFrame(_v26_pkg.get('evidence') or [])
-            _gdf=pd.DataFrame(_v26_pkg.get('groups') or [])
-            _fdf=pd.DataFrame(_v26_pkg.get('frames') or [])
-            _mdf=pd.DataFrame(_v26_pkg.get('movement') or [])
-            _ndf=pd.DataFrame(_v26_pkg.get('network') or [])
-            _nodes=pd.DataFrame(_v26_pkg.get('nodes') or [])
-            _edges=pd.DataFrame(_v26_pkg.get('edges') or [])
-
-            st.markdown('---')
-            st.markdown(f"## 🎯 {_v26_pkg.get('event_title','Seçili Olay')}")
-
-            c1,c2,c3,c4,c5=st.columns(5)
-            c1.metric('İlişkili İçerik',len(_evidence))
-            c2.metric(
-                'Söylem Çevresi',
-                _evidence['Söylem Çevresi'].nunique()
-                if not _evidence.empty and 'Söylem Çevresi' in _evidence.columns
-                else 0
-            )
-            c3.metric(
-                'Gerçek URL',
-                int(
-                    _evidence.get('URL',pd.Series(dtype=str))
-                    .fillna('')
-                    .astype(str)
-                    .str.startswith('http')
-                    .sum()
-                ) if not _evidence.empty else 0
-            )
-            c4.metric('Ana Küme',int(_v26_pkg.get('base_count',0)))
-            c5.metric('Derin Tarama Katkısı',int(_v26_pkg.get('extra_count',0)))
-
-            st.markdown('### 3. Hangi Çevrede Ne Karşılık Buldu?')
-            st.caption(
-                'Aşağıdaki özet yalnız içerik sayısı/çerçeve sınıflandırmasıdır. '
-                'Asıl kanıt, hemen altındaki gerçek haber/paylaşım satırları ve bağlantılarıdır.'
-            )
-
-            if not _gdf.empty:
-                st.dataframe(
-                    _gdf,
-                    hide_index=True,
+            with _act3:
+                if st.button(
+                    '📄 Günlük Olay Raporunu Oluştur',
                     use_container_width=True,
-                    height=min(520,120+40*len(_gdf))
-                )
+                    key='v28_report_btn'
+                ):
+                    with st.spinner('Gerçek kaynak/link içeren Word raporu hazırlanıyor...'):
+                        _group_df=_v26_group_summary(_v28_evidence(_working))
+                        _frame_df=_v25_frame_summary(_working)
+                        _movement_df=_v25_movement_divergence(_working)
+                        _nodes,_edges,_network_df=_v26_event_network(_working,1)
 
-            st.markdown('### 4. Gerçek Söylemler ve Gerçek Bağlantılar')
-            st.caption(
-                'Bireysel kullanıcıların siyasi kimliği tahmin edilmez. '
-                'Sosyal medya satırları yalnız paylaşım metnindeki açık söylem işaretlerine göre gruplandırılır. '
-                'Her satırda gerçek başlık/spot ve kaynak bağlantısı gösterilir.'
-            )
-
-            if _evidence.empty:
-                st.info('Gösterilecek gerçek bağlantılı içerik bulunmamaktadır.')
-            else:
-                _order={g:i for i,g in enumerate(V26_GROUP_ORDER)}
-                _present=sorted(
-                    _evidence['Söylem Çevresi'].dropna().astype(str).unique().tolist(),
-                    key=lambda x:_order.get(x,999)
-                )
-
-                for _group in _present:
-                    _gg=_evidence[_evidence['Söylem Çevresi']==_group].copy()
-                    if _gg.empty:
-                        continue
-
-                    _title=f"{_group} — {len(_gg)} içerik"
-                    with st.expander(_title,expanded=(_group in V26_GROUP_ORDER[:4])):
-                        _desc=V26_GROUP_EXPLANATIONS.get(_group)
-                        if _desc:
-                            st.caption(_desc)
-
-                        _show=[
-                            c for c in [
-                                'Tarih','Platform / Kaynak Türü','Kaynak','Başlık',
-                                'Yakalanan Gerçek İçerik','Tutum','Çerçeveler','URL'
-                            ]
-                            if c in _gg.columns
-                        ]
-
-                        st.dataframe(
-                            _gg[_show].head(30),
-                            hide_index=True,
-                            use_container_width=True,
-                            height=min(650,130+46*min(30,len(_gg))),
-                            column_config={
-                                'URL':st.column_config.LinkColumn(
-                                    'Gerçek Kaynak / Paylaşım',
-                                    display_text='Aç'
-                                ),
-                                'Başlık':st.column_config.TextColumn(
-                                    'Gerçek Başlık',
-                                    width='large'
-                                ),
-                                'Yakalanan Gerçek İçerik':st.column_config.TextColumn(
-                                    'Yakalanan İçerik / Spot',
-                                    width='large'
-                                )
-                            }
+                        st.session_state['_v28_report_bytes']=_v26_daily_report_docx(
+                            str(_event_row['Konu / Olay']),
+                            int(_v28_period),
+                            _working,
+                            _v28_evidence(_working),
+                            _group_df,
+                            _frame_df,
+                            _movement_df,
+                            _network_df
                         )
 
-            st.markdown('### 5. PKK/KCK Çevresindeki Açık Aktör Söylemleri')
-            st.caption(
-                'Bu tablo yalnız kamuya açık açıklamalardaki söylem farklılaşmasını ölçer; '
-                'örgütsel bölünme veya iç kırılmanın doğrudan kanıtı değildir.'
-            )
-
-            if _mdf.empty:
-                st.info('Bu olayda karşılaştırılabilir birden fazla PKK/KCK çevresi aktör açıklaması bulunmadı.')
-            else:
+            _mov=pd.DataFrame(st.session_state.get('_v28_movement_rows') or [])
+            if not _mov.empty:
+                st.markdown('##### PKK/KCK çevresi aktör söylem ayrışması')
+                st.caption(
+                    'Bu tablo kamuya açık söylem farklılaşmasını gösterir; örgütsel bölünme veya fiilî iç kırılma kanıtı değildir.'
+                )
                 st.dataframe(
-                    _mdf,
+                    _mov,
                     hide_index=True,
                     use_container_width=True
                 )
 
-            st.markdown('### 6. Olay-Özel Ağ Analizi — Söylem Çevresi ↔ Çerçeve')
-
-            if _ndf.empty:
-                st.info('Olay-özel ağ oluşturacak yeterli bağlantı bulunmadı.')
-            else:
-                st.dataframe(
-                    _ndf,
-                    hide_index=True,
-                    use_container_width=True
-                )
-
-                try:
-                    _gexf=_v26_event_gexf(
-                        _nodes,
-                        _edges,
-                        _v26_pkg.get('event_title','Terörsüz Türkiye Günlük Olay Ağı')
+            _np=st.session_state.get('_v28_network_package') or {}
+            if str(_np.get('event_key',''))==str(_event_key):
+                _nodes=pd.DataFrame(_np.get('nodes') or [])
+                _edges=pd.DataFrame(_np.get('edges') or [])
+                _net=pd.DataFrame(_np.get('summary') or [])
+                if not _net.empty:
+                    st.markdown('##### Olay-özel söylem çevresi ↔ çerçeve ağı')
+                    st.dataframe(
+                        _net,
+                        hide_index=True,
+                        use_container_width=True
                     )
-
-                    d1,d2,d3=st.columns(3)
-
-                    d1.download_button(
-                        '⬇️ Olay Ağı GEXF',
-                        _gexf,
-                        'terorsuz_turkiye_gunluk_olay_agi_v26.gexf',
-                        'application/xml',
-                        use_container_width=True,
-                        key='v26_event_gexf'
-                    )
-
-                    d2.download_button(
-                        '⬇️ Olay Nodes CSV',
-                        _nodes.to_csv(index=False).encode('utf-8-sig'),
-                        'terorsuz_turkiye_gunluk_nodes_v26.csv',
-                        'text/csv',
-                        use_container_width=True,
-                        key='v26_event_nodes'
-                    )
-
-                    d3.download_button(
-                        '⬇️ Olay Edges CSV',
-                        _edges.to_csv(index=False).encode('utf-8-sig'),
-                        'terorsuz_turkiye_gunluk_edges_v26.csv',
-                        'text/csv',
-                        use_container_width=True,
-                        key='v26_event_edges'
-                    )
-
-                except Exception as _e:
-                    st.warning(f'Olay ağı dışa aktarılamadı: {_e}')
-
-            st.markdown('### 7. Analitik Özet')
-            st.info(
-                _v25_analytic_summary(
-                    _gdf,
-                    _fdf,
-                    _mdf,
-                    _ndf
-                )
-                or 'Yeterli karşılaştırmalı veri oluşmamıştır.'
-            )
-
-            if st.button(
-                '📄 Gerçek Kaynaklı Günlük Raporu Oluştur',
-                type='primary',
-                use_container_width=True,
-                key='v26_make_daily_report'
-            ):
-                with st.spinner('Gerçek başlık, spot ve bağlantılar rapora ekleniyor...'):
                     try:
-                        st.session_state['_v26_daily_report_bytes']=_v26_daily_report_docx(
-                            _v26_pkg.get('event_title','Terörsüz Türkiye Günlük Olay'),
-                            int(_v26_pkg.get('period',48)),
-                            _edf,
-                            _evidence,
-                            _gdf,
-                            _fdf,
-                            _mdf,
-                            _ndf
+                        _gexf=_v26_event_gexf(
+                            _nodes,_edges,
+                            str(_event_row['Konu / Olay'])
                         )
-                        st.success('✅ Gerçek kaynak bağlantılı günlük rapor hazırlanmıştır.')
+                        n1,n2,n3=st.columns(3)
+                        n1.download_button(
+                            '⬇️ GEXF',
+                            _gexf,
+                            'terorsuz_turkiye_olay_agi_v28.gexf',
+                            'application/xml',
+                            use_container_width=True,
+                            key='v28_gexf_dl'
+                        )
+                        n2.download_button(
+                            '⬇️ Nodes CSV',
+                            _nodes.to_csv(index=False).encode('utf-8-sig'),
+                            'terorsuz_turkiye_olay_nodes_v28.csv',
+                            'text/csv',
+                            use_container_width=True,
+                            key='v28_nodes_dl'
+                        )
+                        n3.download_button(
+                            '⬇️ Edges CSV',
+                            _edges.to_csv(index=False).encode('utf-8-sig'),
+                            'terorsuz_turkiye_olay_edges_v28.csv',
+                            'text/csv',
+                            use_container_width=True,
+                            key='v28_edges_dl'
+                        )
                     except Exception as _e:
-                        st.error(f'Günlük rapor hazırlanamadı: {_e}')
+                        st.warning(f'Olay ağı dışa aktarılamadı: {_e}')
 
-            if st.session_state.get('_v26_daily_report_bytes'):
+            if st.session_state.get('_v28_report_bytes'):
                 st.download_button(
                     '⬇️ Günlük Olay ve Söylem Analiz Raporunu İndir',
-                    st.session_state['_v26_daily_report_bytes'],
-                    file_name=f"Terorsuz_Turkiye_Gunluk_Olay_Soylem_Raporu_{date.today()}.docx",
+                    st.session_state['_v28_report_bytes'],
+                    file_name=f'Terorsuz_Turkiye_Gunluk_Olay_Raporu_{date.today()}.docx',
                     mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                     use_container_width=True,
-                    key='v26_daily_report_download'
+                    key='v28_report_dl'
                 )
+
+st.markdown('---')
+
+# ---------------- V28: KİM NE DİYOR? GERÇEK BAĞLANTILAR ----------------
+st.subheader('🗣️ Kim Ne Diyor? — Gerçek Bağlantılar')
+st.caption(
+    'Aktörün kaç içerikte göründüğünü özetler; “Son Bağlantı” gerçek habere gider. '
+    'Aşağıdan bir aktör seçildiğinde o aktörle eşleşen tüm gerçek haber/paylaşım bağlantıları listelenir.'
+)
+
+if not st.session_state.get('rows'):
+    st.info('Tarama tamamlandığında aktör analizi burada oluşacaktır.')
+else:
+    _actor_base=pd.DataFrame(st.session_state.rows)
+
+    _actor_cache=st.session_state.setdefault('_v28_actor_cache',{})
+    _actor_key=f"{st.session_state.get('scan_time','')}|{int(_v28_period)}|{len(_actor_base)}"
+    if _actor_key not in _actor_cache:
+        _adf=_v28_actor_summary(_actor_base,_v28_period)
+        _actor_cache={
+            k:v for k,v in _actor_cache.items()
+            if str(k).startswith(str(st.session_state.get('scan_time',''))+'|')
+        }
+        _actor_cache[_actor_key]=_adf.to_dict('records')
+        st.session_state['_v28_actor_cache']=_actor_cache
+
+    _actor_df=pd.DataFrame(
+        st.session_state['_v28_actor_cache'].get(_actor_key) or []
+    )
+
+    if _actor_df.empty:
+        st.info('Bu zaman penceresinde aktör analizi için yeterli eşleşme bulunmamıştır.')
+    else:
+        st.dataframe(
+            _actor_df.head(15),
+            hide_index=True,
+            use_container_width=True,
+            height=min(620,125+38*len(_actor_df.head(15))),
+            column_config={
+                'Son Görünüm':st.column_config.TextColumn(
+                    'Son Görünüm',width='large'
+                ),
+                'Son Bağlantı':st.column_config.LinkColumn(
+                    'Son Bağlantı',
+                    display_text='Aç'
+                )
+            }
+        )
+
+        _actor_sel=st.selectbox(
+            'Aktörün tüm gerçek bağlantılarını göster',
+            _actor_df['Aktör'].astype(str).tolist(),
+            key='v28_actor_select'
+        )
+        _actor_links=_v28_actor_links(
+            _actor_base,
+            _actor_sel,
+            _v28_period
+        )
+
+        if not _actor_links.empty:
+            _cols=[
+                c for c in [
+                    'Tarih','Kaynak Ailesi','Kaynak','Başlık',
+                    'Gerçek Söylem / Spot','URL'
+                ] if c in _actor_links.columns
+            ]
+            st.dataframe(
+                _actor_links[_cols].head(50),
+                hide_index=True,
+                use_container_width=True,
+                height=min(620,125+40*min(50,len(_actor_links))),
+                column_config={
+                    'Başlık':st.column_config.TextColumn(
+                        'Gerçek Başlık',width='large'
+                    ),
+                    'Gerçek Söylem / Spot':st.column_config.TextColumn(
+                        'Gerçek Söylem / Spot',width='large'
+                    ),
+                    'URL':st.column_config.LinkColumn(
+                        'Gerçek Bağlantı',
+                        display_text='Aç'
+                    )
+                }
+            )
 
 st.markdown('---')
 
