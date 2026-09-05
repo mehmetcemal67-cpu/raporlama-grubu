@@ -3041,6 +3041,30 @@ def _init_history_db():
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_event_snapshots_scan ON event_snapshots(scan_id)")
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS scan_items(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    scan_id INTEGER NOT NULL,
+                    published_at TEXT,
+                    source_family TEXT,
+                    source TEXT,
+                    domain TEXT,
+                    title TEXT,
+                    summary TEXT,
+                    url TEXT,
+                    category TEXT,
+                    content_type TEXT,
+                    risk_score INTEGER,
+                    FOREIGN KEY(scan_id) REFERENCES scans(scan_id)
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_scan_items_scan ON scan_items(scan_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_scan_items_url ON scan_items(url)"
+            )
+
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS shift_marks(
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     marked_at TEXT NOT NULL,
@@ -3184,6 +3208,48 @@ def _save_scan_history(rows, scanned_at, period_hours):
                     sentiment,verification,source_count,event_first_seen,event_last_seen,tokens_json
                 ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,rows_to_insert)
+
+            # V34 — ham tarama satırlarının tamamını da sakla.
+            raw_items=[]
+            for _,rr in dfh.iterrows():
+                dt=rr.get('Tarih_dt')
+                if pd.notna(dt):
+                    try:
+                        dt=pd.to_datetime(dt,utc=True,errors='coerce')
+                        pub=dt.isoformat() if pd.notna(dt) else str(rr.get('Tarih','') or '')
+                    except Exception:
+                        pub=str(rr.get('Tarih','') or '')
+                else:
+                    pub=str(rr.get('Tarih','') or '')
+
+                fam=''
+                try:
+                    fam=_v23_source_family(rr)
+                except Exception:
+                    fam=str(rr.get('Kaynak_Grubu','') or '')
+
+                raw_items.append((
+                    scan_id,
+                    pub,
+                    str(fam or ''),
+                    str(rr.get('Kaynak','') or ''),
+                    str(rr.get('Domain','') or ''),
+                    str(rr.get('Başlık','') or ''),
+                    str(rr.get('İçerik_Özeti','') or '')[:8000],
+                    str(rr.get('URL','') or ''),
+                    str(rr.get('Kategori','') or ''),
+                    str(rr.get('İçerik Türü','') or ''),
+                    int(rr.get('Risk_Skoru',0) or 0)
+                ))
+
+            if raw_items:
+                conn.executemany("""
+                    INSERT INTO scan_items(
+                        scan_id,published_at,source_family,source,domain,title,
+                        summary,url,category,content_type,risk_score
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                """,raw_items)
+
             conn.commit()
         return scan_id
     except Exception:
@@ -10232,22 +10298,10 @@ def _v31_catchup_summary(rows):
 # ============================================================
 # /V31 İLK BAKIŞ
 # ============================================================
-# V60: Yeni browser oturumunda önceki giriş zamanı otomatik belirlenir.
+# V34: Açılış özeti ziyaret zamanına göre değil, son iki TAM TARAMA arasındaki
+# farktan üretilir. Böylece uygulama açılırken ek web taraması çalışmaz ve
+# V33'teki fonksiyon-sıralaması NameError sorunu ortadan kalkar.
 _v60_previous_visit=_v60_register_visit_once()
-if '_v60_catchup_done' not in st.session_state:
-    st.session_state['_v60_catchup_done']=False
-if '_v60_catchup_rows' not in st.session_state:
-    st.session_state['_v60_catchup_rows']=[]
-if '_v60_catchup_hours' not in st.session_state:
-    st.session_state['_v60_catchup_hours']=None
-
-if not st.session_state['_v60_catchup_done']:
-    st.session_state['_v60_catchup_done']=True
-    if _v60_previous_visit is not None and not pd.isna(_v60_previous_visit):
-        with st.spinner('⏱️ Son girişinizden bu yana gelişmeler otomatik kontrol ediliyor...'):
-            _catch_rows,_catch_hours=_v33_auto_catchup(_v60_previous_visit,query)
-            st.session_state['_v60_catchup_rows']=_catch_rows
-            st.session_state['_v60_catchup_hours']=_catch_hours
 
 
 
@@ -21533,6 +21587,202 @@ def _v33_dossier_to_event_rows(dossier):
 # /V33
 # ============================================================
 # ============================================================
+
+# ============================================================
+# V34 — ŞU AN BİLMEM GEREKENLER
+# Son iki TAM TARAMA arasında sisteme yeni giren TÜM içerikler.
+# Önem/risk filtresi YOKTUR.
+# ============================================================
+
+def _v34_scan_pair():
+    if not _init_history_db():
+        return None,None
+    try:
+        with _history_connect() as conn:
+            rows=conn.execute("""
+                SELECT scan_id,scanned_at,period_hours,total_news,total_events
+                FROM scans
+                ORDER BY scan_id DESC
+                LIMIT 2
+            """).fetchall()
+        if not rows:
+            return None,None
+
+        cols=['scan_id','scanned_at','period_hours','total_news','total_events']
+        latest=dict(zip(cols,rows[0]))
+        previous=dict(zip(cols,rows[1])) if len(rows)>1 else None
+        return latest,previous
+    except Exception:
+        return None,None
+
+
+def _v34_item_key(row):
+    url=str(row.get('url','') or '').strip()
+    if url:
+        return 'U:'+url
+
+    title=re.sub(
+        r'[^a-z0-9çğıöşü]+',
+        ' ',
+        str(row.get('title','') or '').lower()
+    ).strip()
+    src=str(row.get('source','') or '').lower().strip()
+    return 'T:'+src+'|'+title
+
+
+def _v34_load_raw_scan(scan_id):
+    if not scan_id or not _init_history_db():
+        return pd.DataFrame()
+    try:
+        with _history_connect() as conn:
+            x=pd.read_sql_query("""
+                SELECT
+                    scan_id,published_at,source_family,source,domain,title,
+                    summary,url,category,content_type,risk_score
+                FROM scan_items
+                WHERE scan_id=?
+                ORDER BY id ASC
+            """,conn,params=(int(scan_id),))
+        return x
+    except Exception:
+        return pd.DataFrame()
+
+
+def _v34_load_event_scan(scan_id):
+    """
+    Eski V33 öncesi taramalar için geriye dönük fallback.
+    Ham scan_items yoksa olay snapshot'larından değişiklik çıkarılır.
+    """
+    if not scan_id or not _init_history_db():
+        return pd.DataFrame()
+    try:
+        with _history_connect() as conn:
+            x=pd.read_sql_query("""
+                SELECT
+                    scan_id,
+                    event_last_seen AS published_at,
+                    '' AS source_family,
+                    source,
+                    '' AS domain,
+                    title,
+                    summary,
+                    url,
+                    category,
+                    '' AS content_type,
+                    risk_score
+                FROM event_snapshots
+                WHERE scan_id=?
+                ORDER BY id ASC
+            """,conn,params=(int(scan_id),))
+        return x
+    except Exception:
+        return pd.DataFrame()
+
+
+def _v34_between_last_scans():
+    """
+    "Son tarama ile önceki tarama arasında ne oldu?"
+
+    Çıktı:
+    - Son tamamlanan taramada bulunan,
+    - önceki tamamlanan taramada bulunmayan
+    TÜM benzersiz içerikler.
+
+    Önem / risk / kategori filtresi uygulanmaz.
+    """
+    latest,previous=_v34_scan_pair()
+    if latest is None:
+        return pd.DataFrame(),latest,previous,'Henüz kaydedilmiş tarama yok.'
+
+    latest_df=_v34_load_raw_scan(latest['scan_id'])
+    prev_df=_v34_load_raw_scan(previous['scan_id']) if previous else pd.DataFrame()
+
+    # V34 sonrası ilk çalışmada scan_items henüz dolu olmayabilir.
+    if latest_df.empty:
+        latest_df=_v34_load_event_scan(latest['scan_id'])
+    if previous and prev_df.empty:
+        prev_df=_v34_load_event_scan(previous['scan_id'])
+
+    if latest_df.empty:
+        return pd.DataFrame(),latest,previous,'Son taramanın kaydedilmiş içeriği bulunamadı.'
+
+    latest_df=latest_df.copy()
+    latest_df['_key']=[
+        _v34_item_key(r)
+        for _,r in latest_df.iterrows()
+    ]
+
+    if previous is None or prev_df.empty:
+        new_df=latest_df.copy()
+        note='Karşılaştırılacak önceki tarama bulunamadığı için son taramanın tüm kayıtları gösteriliyor.'
+    else:
+        prev_keys={
+            _v34_item_key(r)
+            for _,r in prev_df.iterrows()
+        }
+        new_df=latest_df[
+            ~latest_df['_key'].isin(prev_keys)
+        ].copy()
+        note='Son tamamlanan taramada yeni görülen ve önceki taramada bulunmayan tüm içerikler.'
+
+    # Dedupe without ranking/filtering.
+    seen=set()
+    keep=[]
+    for i,r in new_df.iterrows():
+        k=str(r['_key'])
+        if k in seen:
+            continue
+        seen.add(k)
+        keep.append(i)
+    new_df=new_df.loc[keep].copy()
+
+    if 'published_at' in new_df.columns:
+        new_df['_dt']=pd.to_datetime(
+            new_df['published_at'],
+            utc=True,
+            errors='coerce'
+        )
+        new_df=new_df.sort_values(
+            '_dt',
+            ascending=False,
+            na_position='last'
+        )
+
+    new_df=new_df.rename(columns={
+        'published_at':'Tarih',
+        'source_family':'Kaynak Ailesi',
+        'source':'Kaynak',
+        'title':'Başlık',
+        'summary':'İçerik / Özet',
+        'url':'Gerçek Bağlantı',
+        'category':'Kategori',
+        'content_type':'İçerik Türü'
+    })
+
+    return (
+        new_df.drop(columns=['_key','_dt'],errors='ignore').reset_index(drop=True),
+        latest,
+        previous,
+        note
+    )
+
+
+def _v34_scan_time_text(scan):
+    if not scan:
+        return '—'
+    try:
+        d=pd.to_datetime(scan.get('scanned_at'),utc=True,errors='coerce')
+        if pd.notna(d):
+            return d.tz_convert(
+                datetime.now().astimezone().tzinfo
+            ).strftime('%d.%m.%Y %H:%M')
+    except Exception:
+        pass
+    return str(scan.get('scanned_at','') or '—')
+
+# ============================================================
+# /V34 ŞU AN BİLMEM GEREKENLER
+# ============================================================
 # V33 — SADE GÜNLÜK ANA PANEL
 #
 # TARMA ÖNCESİ:
@@ -21549,67 +21799,74 @@ def _v33_dossier_to_event_rows(dossier):
 rows=st.session_state.rows
 
 if rows is None:
-    st.subheader('👁️ İlk Bakış Analizi')
+    st.subheader('⚡ Şu An Bilmem Gerekenler')
     st.caption(
-        'Önceki girişiniz ile şu an arasında açık kaynaklarda yakalanan Terörsüz Türkiye içeriklerini '
-        'önem veya risk filtresi uygulamadan listeler. Bu, ana 24/48 saatlik tarama değildir.'
+        'Son tamamlanan tarama ile ondan önceki tamamlanan tarama arasındaki farkı gösterir. '
+        'Önem, risk veya konu filtresi uygulanmaz; son taramada yeni görülen bütün içerikler listelenir.'
     )
 
-    _v33_prev=st.session_state.get('_v60_previous_visit')
-    _v33_hours=st.session_state.get('_v60_catchup_hours')
-    _v33_rows=st.session_state.get('_v60_catchup_rows') or []
+    _v34_diff,_v34_latest,_v34_previous,_v34_note=_v34_between_last_scans()
 
-    if _v33_prev is None or pd.isna(_v33_prev):
+    if _v34_latest is None:
         st.info(
-            'Önceki giriş kaydı bulunamadı. Bu giriş kaydedildi; bir sonraki girişinizde '
-            'iki ziyaret arasındaki gelişmeler burada otomatik listelenecektir.'
+            'Henüz kayıtlı bir tarama bulunmuyor. İlk taramayı tamamladığınızda sonuçlar geçmişe kaydedilecek; '
+            'ikinci taramadan itibaren iki tarama arasındaki bütün yeni içerikler burada görünecektir.'
         )
     else:
-        try:
-            _v33_prev_local=pd.to_datetime(_v33_prev,utc=True).tz_convert(
-                datetime.now().astimezone().tzinfo
-            )
-            _v33_prev_txt=_v33_prev_local.strftime('%d.%m.%Y %H:%M')
-        except Exception:
-            _v33_prev_txt=str(_v33_prev)
+        _latest_txt=_v34_scan_time_text(_v34_latest)
+        _prev_txt=_v34_scan_time_text(_v34_previous)
 
         st.markdown(
-            f'**Son giriş:** {_v33_prev_txt}  \\  '
-            f'**Şimdiye kadar geçen süre:** yaklaşık {float(_v33_hours or 0):.1f} saat'
+            f'**Son tarama:** {_latest_txt}  \\\\  '
+            f'**Önceki tarama:** {_prev_txt}'
         )
+        st.caption(_v34_note)
 
-        if not _v33_rows:
-            st.info('Bu iki giriş arasında otomatik kontrolde yeni içerik yakalanmadı.')
+        if _v34_diff.empty:
+            st.success(
+                'Son tamamlanan taramada, önceki taramaya göre yeni bir içerik kaydı bulunmadı.'
+            )
         else:
-            _v33_first_df=pd.DataFrame(_v33_rows)
-
             c1,c2,c3=st.columns(3)
-            c1.metric('Yeni İçerik',len(_v33_first_df))
+            c1.metric('Yeni İçerik',len(_v34_diff))
             c2.metric(
                 'Kaynak Ailesi',
-                _v33_first_df['Kaynak Ailesi'].nunique()
-                if 'Kaynak Ailesi' in _v33_first_df.columns else 0
+                _v34_diff.get(
+                    'Kaynak Ailesi',
+                    pd.Series(dtype=str)
+                ).replace('',pd.NA).dropna().nunique()
             )
             c3.metric(
                 'Benzersiz Kaynak',
-                _v33_first_df['Kaynak'].replace('',pd.NA).dropna().nunique()
-                if 'Kaynak' in _v33_first_df.columns else 0
+                _v34_diff.get(
+                    'Kaynak',
+                    pd.Series(dtype=str)
+                ).replace('',pd.NA).dropna().nunique()
             )
 
+            _show=[
+                c for c in [
+                    'Tarih','Kaynak Ailesi','Kaynak','Kategori',
+                    'İçerik Türü','Başlık','İçerik / Özet','Gerçek Bağlantı'
+                ]
+                if c in _v34_diff.columns
+            ]
+
             st.dataframe(
-                _v33_first_df[
-                    [c for c in ['Tarih','Kaynak Ailesi','Kaynak','Başlık','URL']
-                     if c in _v33_first_df.columns]
-                ],
+                _v34_diff[_show],
                 hide_index=True,
                 use_container_width=True,
-                height=min(760,130+34*min(100,len(_v33_first_df))),
+                height=min(780,130+34*min(120,len(_v34_diff))),
                 column_config={
                     'Başlık':st.column_config.TextColumn(
-                        'Son Girişten Bu Yana Olanlar',
+                        'Son İki Tarama Arasında Yeni Görülen İçerik',
                         width='large'
                     ),
-                    'URL':st.column_config.LinkColumn(
+                    'İçerik / Özet':st.column_config.TextColumn(
+                        'İçerik / Özet',
+                        width='large'
+                    ),
+                    'Gerçek Bağlantı':st.column_config.LinkColumn(
                         'Gerçek Bağlantı',
                         display_text='Aç'
                     )
@@ -21617,10 +21874,9 @@ if rows is None:
             )
 
     st.info(
-        'Ana taramayı başlatmak için üstteki **TARAMAYI BAŞLAT / YENİLE** düğmesini kullanın. '
-        'Gephi ve diğer analiz panelleri tarama tamamlandıktan sonra görünür.'
+        'Yeni ana taramayı başlatmak için üstteki **TARAMAYI BAŞLAT / YENİLE** düğmesini kullanın. '
+        'Kaynak Bazlı İzleme, Gündem ve Söylem Haritası ve Gephi tarama tamamlandıktan sonra açılır.'
     )
-
 else:
     df=pd.DataFrame(rows)
 
@@ -22435,5 +22691,5 @@ else:
     st.caption(
         'Günlük çalışma akışı: Kaynak Bazlı İzleme → Gündem ve Söylem Haritası → '
         'Gephi → Analiz Sepeti → Gün Sonu Performans Özeti. '
-        'İlk Bakış yalnız tarama öncesinde son girişten bu yana değişiklikleri gösterir.'
+        'Şu An Bilmem Gerekenler yalnız tarama öncesinde son iki tamamlanmış tarama arasındaki bütün yeni içerikleri gösterir.'
     )
