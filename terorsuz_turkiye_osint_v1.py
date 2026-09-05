@@ -23869,24 +23869,55 @@ else:
                 'Odak Bağlantı'
             ]
 
-            st.dataframe(
-                _v110_agenda[
-                    [c for c in _agenda_cols if c in _v110_agenda.columns]
-                ],
-                hide_index=True,
-                use_container_width=True,
-                height=min(760,135+39*len(_v110_agenda)),
-                column_config={
-                    'Odak Haber / Açıklama':st.column_config.TextColumn(
-                        'Gündem / Odak Haber',
-                        width='large'
-                    ),
-                    'Odak Bağlantı':st.column_config.LinkColumn(
-                        'Odak Haber',
-                        display_text='Aç'
-                    )
-                }
-            )
+            _agenda_show=_v110_agenda[
+                [c for c in _agenda_cols if c in _v110_agenda.columns]
+            ].reset_index(drop=True)
+            _agenda_show.insert(0,'Seç',False)
+
+            with st.form('v110_agenda_form',clear_on_submit=False):
+                _agenda_edited=st.data_editor(
+                    _agenda_show,
+                    column_config={
+                        'Seç':st.column_config.CheckboxColumn('Seç'),
+                        'Odak Haber / Açıklama':st.column_config.TextColumn(
+                            'Gündem / Odak Haber',
+                            width='large'
+                        ),
+                        'Odak Bağlantı':st.column_config.LinkColumn(
+                            'Odak Haber',
+                            display_text='Aç'
+                        )
+                    },
+                    disabled=[c for c in _agenda_show.columns if c!='Seç'],
+                    hide_index=True,
+                    use_container_width=True,
+                    height=min(760,135+39*len(_v110_agenda)),
+                    key='v110_agenda_editor'
+                )
+                _agenda_basket_btn=st.form_submit_button(
+                    '🧺 Seçili Gündemleri Analiz Sepetine Ekle',
+                    use_container_width=True
+                )
+
+            if _agenda_basket_btn:
+                # _agenda_show ile _v110_agenda aynı satır sırasını paylaşır (ikisi de
+                # aynı reset_index(drop=True) uygulanmış kaynaktan türetildi); bu yüzden
+                # işaretli konumlar doğrudan orijinal EventKey'lere eşlenebilir.
+                _sel_pos=_agenda_edited.index[_agenda_edited['Seç'].astype(bool)].tolist()
+                _agenda_ordered=_v110_agenda.reset_index(drop=True)
+                _sel_keys=[
+                    str(_agenda_ordered.loc[i,'EventKey'])
+                    for i in _sel_pos if i in _agenda_ordered.index
+                ]
+                if not _sel_keys:
+                    st.warning('Önce en az bir gündem seçin.')
+                else:
+                    _sel_records=[
+                        _v110_anchor_map[k] for k in _sel_keys
+                        if k in _v110_anchor_map
+                    ]
+                    _n=_v3_add_analysis(_sel_records)
+                    st.success(f'✅ {_n} odak haber Analiz Sepetine eklenmiştir.')
 
             _opts={
                 f"{int(r['Sıra'])}. {r.get('Odak Kaynak','')} — "
@@ -23971,45 +24002,74 @@ else:
                         'İsterseniz aşağıdaki derin tarama ile açık web ve sosyal indekslerde özel arama yapabilirsiniz.'
                     )
                 else:
-                    st.dataframe(
-                        _dossier[
-                            [c for c in [
-                                'Kesim','Bağ Türü','Tarih','Kaynak Ailesi',
-                                'Kaynak','İçerik Türü','Aktörler',
-                                'Ne Dedi / Ne Yazdı?','Başlık','Çerçeve',
-                                'İlişki Kanıtı','Gerçek Bağlantı'
-                            ] if c in _dossier.columns]
-                        ],
-                        hide_index=True,
-                        use_container_width=True,
-                        height=min(980,145+39*min(140,len(_dossier))),
-                        column_config={
-                            'Kesim':st.column_config.TextColumn(
-                                'Kesim / Kaynak Ekosistemi',
-                                width='medium'
-                            ),
-                            'Bağ Türü':st.column_config.TextColumn(
-                                'İlişki',
-                                width='medium'
-                            ),
-                            'Ne Dedi / Ne Yazdı?':st.column_config.TextColumn(
-                                'Bu Olay Hakkında Ne Dedi / Ne Yazdı?',
-                                width='large'
-                            ),
-                            'Başlık':st.column_config.TextColumn(
-                                'Gerçek İçerik',
-                                width='large'
-                            ),
-                            'İlişki Kanıtı':st.column_config.TextColumn(
-                                'Odak Olayla Bağı',
-                                width='large'
-                            ),
-                            'Gerçek Bağlantı':st.column_config.LinkColumn(
-                                'Gerçek Link',
-                                display_text='Aç'
-                            )
-                        }
-                    )
+                    _dossier_show=_dossier[
+                        [c for c in [
+                            'Kesim','Bağ Türü','Tarih','Kaynak Ailesi',
+                            'Kaynak','İçerik Türü','Aktörler',
+                            'Ne Dedi / Ne Yazdı?','Başlık','Çerçeve',
+                            'İlişki Kanıtı','Gerçek Bağlantı'
+                        ] if c in _dossier.columns]
+                    ].reset_index(drop=True)
+                    _dossier_show.insert(0,'Seç',False)
+
+                    with st.form('v110_dossier_form',clear_on_submit=False):
+                        _dossier_edited=st.data_editor(
+                            _dossier_show,
+                            hide_index=True,
+                            use_container_width=True,
+                            height=min(980,145+39*min(140,len(_dossier))),
+                            column_config={
+                                'Seç':st.column_config.CheckboxColumn('Seç'),
+                                'Kesim':st.column_config.TextColumn(
+                                    'Kesim / Kaynak Ekosistemi',
+                                    width='medium'
+                                ),
+                                'Bağ Türü':st.column_config.TextColumn(
+                                    'İlişki',
+                                    width='medium'
+                                ),
+                                'Ne Dedi / Ne Yazdı?':st.column_config.TextColumn(
+                                    'Bu Olay Hakkında Ne Dedi / Ne Yazdı?',
+                                    width='large'
+                                ),
+                                'Başlık':st.column_config.TextColumn(
+                                    'Gerçek İçerik',
+                                    width='large'
+                                ),
+                                'İlişki Kanıtı':st.column_config.TextColumn(
+                                    'Odak Olayla Bağı',
+                                    width='large'
+                                ),
+                                'Gerçek Bağlantı':st.column_config.LinkColumn(
+                                    'Gerçek Link',
+                                    display_text='Aç'
+                                )
+                            },
+                            disabled=[c for c in _dossier_show.columns if c!='Seç'],
+                            key='v110_dossier_editor'
+                        )
+                        _dossier_basket_btn=st.form_submit_button(
+                            '🧺 Seçili Söylemleri Analiz Sepetine Ekle',
+                            use_container_width=True
+                        )
+
+                    if _dossier_basket_btn:
+                        _dsel=_dossier_edited[_dossier_edited['Seç'].astype(bool)]
+                        if _dsel.empty:
+                            st.warning('Önce en az bir söylem/içerik seçin.')
+                        else:
+                            _drecords=[{
+                                'Tarih':str(r.get('Tarih','') or ''),
+                                'Kaynak':str(r.get('Kaynak','') or ''),
+                                'Başlık':str(r.get('Başlık','') or ''),
+                                'URL':str(r.get('Gerçek Bağlantı','') or ''),
+                                'Çerçeve':str(r.get('Çerçeve','') or ''),
+                                'Kategori':str(r.get('Kesim','') or ''),
+                                'Yaklaşım':str(r.get('Bağ Türü','') or ''),
+                                'İçerik_Özeti':str(r.get('Ne Dedi / Ne Yazdı?','') or '')
+                            } for _,r in _dsel.iterrows()]
+                            _n=_v3_add_analysis(_drecords)
+                            st.success(f'✅ {_n} söylem/içerik Analiz Sepetine eklenmiştir.')
 
                     st.markdown('##### 3. Söylem Yoğunluğu')
                     _density=_v110_section_density(_dossier)
