@@ -3142,6 +3142,16 @@ def _init_history_db():
                     UNIQUE(url,title)
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS analysis_basket_v3(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    added_at TEXT NOT NULL,
+                    dedup_key TEXT NOT NULL UNIQUE,
+                    title TEXT,
+                    url TEXT,
+                    record_json TEXT NOT NULL
+                )
+            """)
             conn.commit()
         return True
     except Exception:
@@ -19687,28 +19697,85 @@ def _v29_reaction_summary(evidence):
 # Ayrı sekmeler; yalnız Detaylı Bilgi Notu ve Analiz Sepeti işlemleri.
 # Eski ÖGN / AKT / Sunum sepetleri ve vardiya panelleri bu arayüzde kullanılmaz.
 
+def _v3_analysis_dedup_key(rec):
+    return f"{str(rec.get('URL','') or '').strip()}|{title_key(rec.get('Başlık',''))}"
+
+def _v3_analysis_basket_load_from_db():
+    rows=[]
+    if not _init_history_db():
+        return rows
+    try:
+        with _history_connect() as conn:
+            cur=conn.execute(
+                "SELECT record_json FROM analysis_basket_v3 ORDER BY id ASC"
+            )
+            for (rec_json,) in cur.fetchall():
+                try:
+                    rows.append(json.loads(rec_json))
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return rows
+
 def _v3_analysis_basket():
+    # Kalıcı depo: bir kez SQLite'tan okunur, oturum içinde önbellekte tutulur.
+    # Kullanıcı silmediği sürece ertesi gün / yeni oturumda da aynen görünür.
     if 'v3_analysis_basket' not in st.session_state:
-        st.session_state['v3_analysis_basket']=[]
+        st.session_state['v3_analysis_basket']=_v3_analysis_basket_load_from_db()
     return st.session_state['v3_analysis_basket']
 
 def _v3_add_analysis(rows):
     basket=_v3_analysis_basket()
-    known={(str(x.get('URL','')), title_key(x.get('Başlık',''))) for x in basket}
+    known={_v3_analysis_dedup_key(x) for x in basket}
     n=0
+    to_persist=[]
     for r in rows:
         rec=dict(r)
-        k=(str(rec.get('URL','')),title_key(rec.get('Başlık','')))
+        k=_v3_analysis_dedup_key(rec)
         if k in known:
             continue
         basket.append(rec); known.add(k); n+=1
+        to_persist.append((k,rec))
     st.session_state['v3_analysis_basket']=basket
+
+    if to_persist and _init_history_db():
+        added_now=datetime.now(timezone.utc).isoformat()
+        try:
+            with _history_connect() as conn:
+                for k,rec in to_persist:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO analysis_basket_v3"
+                        "(added_at,dedup_key,title,url,record_json) VALUES (?,?,?,?,?)",
+                        (
+                            added_now,k,
+                            str(rec.get('Başlık','') or ''),
+                            str(rec.get('URL','') or ''),
+                            json.dumps(rec,ensure_ascii=False,default=str)
+                        )
+                    )
+                conn.commit()
+        except Exception:
+            pass
     return n
 
 def _v3_remove_analysis(indices):
     basket=_v3_analysis_basket()
     kill=set(int(i) for i in indices)
+    removed=[r for i,r in enumerate(basket) if i in kill]
     st.session_state['v3_analysis_basket']=[r for i,r in enumerate(basket) if i not in kill]
+
+    if removed and _init_history_db():
+        try:
+            with _history_connect() as conn:
+                for r in removed:
+                    conn.execute(
+                        "DELETE FROM analysis_basket_v3 WHERE dedup_key=?",
+                        (_v3_analysis_dedup_key(r),)
+                    )
+                conn.commit()
+        except Exception:
+            pass
 
 def _v3_make_note(selected,key_prefix):
     if selected is None or selected.empty:
@@ -24378,7 +24445,9 @@ else:
     # ---------------- ANALİZ SEPETİ ----------------
     st.markdown('---')
     st.subheader('🧺 Analiz Sepeti')
-    st.caption('Yerli basın, sosyal medya, yabancı basın ve think tank sekmelerinden seçilen içerikleri tek yerde biriktirir.')
+    st.caption('Yerli basın, sosyal medya, yabancı basın ve think tank sekmelerinden seçilen içerikleri tek yerde biriktirir. '
+               'Sepete eklenen içerikler kalıcı olarak diskteki veritabanına kaydedilir; siz silmediğiniz sürece '
+               'uygulamayı kapatıp tekrar açtığınızda (ertesi gün dahil) aynen burada durur.')
     basket=_v3_analysis_basket()
     if not basket:
         st.info('Analiz Sepeti henüz boş.')
