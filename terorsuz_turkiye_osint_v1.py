@@ -14392,6 +14392,8 @@ def _v117_article_sections(doc,records):
 
         p.add_run(' ')
         _v114_add_citation(p,rec)
+
+def _v117_reference_list(doc,records):
     """
     PDF örneğindeki dipnot sayfası mantığıyla: doküman sonunda numaralandırılmış,
     sade bir kaynak/link listesi. Her satır 'n. Kaynak — URL' biçimindedir ve URL
