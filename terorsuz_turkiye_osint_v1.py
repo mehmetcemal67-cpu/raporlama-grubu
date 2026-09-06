@@ -28832,6 +28832,790 @@ _v114_analysis_basket_report_docx = _v123_analysis_basket_report_docx
 # ============================================================
 
 
+
+
+# ============================================================
+# V124 — ATIF-METİN UYUMU + GERÇEK WORD DİPNOT NUMARASI
+#
+# Sorun:
+# - Analiz cümlesi bazen kaynakla uyumsuz sınıflandırılıyordu.
+#   Örn. Medyascope/Ruşen Çakır bağlantısına MHP çizgisi analizi yazılması.
+# - Dipnot altında "11 https..." gibi çift numara oluşabiliyordu.
+#
+# Çözüm:
+# - Analiz önce URL/domain/kaynak/başlık üzerinden kaynak-aktör hattını
+#   belirler; MHP/DEM/Öcalan/Mazlum Abdi gibi güçlü okumalar yalnız ilgili
+#   kaynak veya açık başlık/metin dayanağı varsa üretilir.
+# - Gövde içi atıf Word'ün gerçek footnoteReference alanıdır ve akademik
+#   üstsimge biçiminde zorlanır.
+# - Sayfa altı dipnotta Word'ün otomatik dipnot numarası kullanılır; metinde
+#   manuel "1" yazılmaz. Böylece dipnot "1 https://..." görünür,
+#   "11 https://..." görünmez.
+# ============================================================
+
+def _v124_norm(value):
+    return norm(_v116_clean_original_text(value))
+
+def _v124_url(rec):
+    return str(rec.get('URL','') or '').strip()
+
+def _v124_domain(rec):
+    try:
+        return _tt_norm_domain(_v124_url(rec))
+    except Exception:
+        try:
+            return domain(_v124_url(rec))
+        except Exception:
+            return ''
+
+def _v124_text(rec):
+    return _v116_clean_original_text(
+        f"{rec.get('Kaynak','')} {rec.get('Başlık','')} {rec.get('Özet','')} {rec.get('URL','')}"
+    )
+
+def _v124_textn(rec):
+    return _v124_norm(_v124_text(rec))
+
+def _v124_source(rec):
+    try:
+        return _v120_source_line_name(rec)
+    except Exception:
+        try:
+            return _v119_source_label(rec)
+        except Exception:
+            return _v116_clean_original_text(rec.get('Kaynak','') or 'Açık Kaynak')
+
+def _v124_has_any(textn, terms):
+    return any(t in textn for t in terms)
+
+def _v124_source_key(rec):
+    d=_v124_domain(rec)
+    t=_v124_textn(rec)
+    src=_v124_norm(_v124_source(rec))
+
+    # Domain/source first. This prevents a Ruşen Çakır/Medyascope item that
+    # merely mentions Bahçeli or Öcalan from being treated as MHP.
+    if 'medyascope' in d or 'medyascope' in src or 'ruşen çakır' in t or 'rusen cakir' in t:
+        return 'medyascope_rusen_cakir'
+    if 'yenicaggazetesi.com' in d or 'yeniçağ' in src or 'yenicag' in src:
+        return 'yenicag_muhalif_milliyetci'
+    if 'canakkalehaber.com' in d or 'gökhan uz' in t or 'gokhan uz' in t or 'gaziler derneği' in t:
+        return 'gaziler_gokhan_uz'
+    if 'etikhaber.com' in d or 'ahmet selim yurdakul' in t:
+        return 'mhp_yurdakul'
+    if 'gazetepano.com' in d or 'mustafa destici' in t:
+        return 'bbp_destici'
+    if 'medyahabertv.digital' in d or 'medyahabertv.com' in d or 'medya haber' in src:
+        return 'medya_haber_hatimogullari'
+    if 'guneydoguekspres.com' in d:
+        return 'guneydogu_ocalan'
+    if 'politikahaber.com' in d:
+        return 'politika_haber_mazlum_abdi'
+    if 'darkamazi.site' in d or 'darka mazi' in src:
+        return 'darka_mazi'
+    if 'rudaw.net' in d or 'rûdaw' in src or 'rudaw' in src:
+        return 'rudaw'
+    if 'shafaq.com' in d or 'shafaq' in src:
+        return 'shafaq'
+    if 'thenewregion.com' in d or 'the new region' in src:
+        return 'the_new_region'
+    if 'kurdpress' in d or 'kurdpress' in src:
+        return 'kurdpress'
+    if 'bosphorusnews.com' in d or 'bosphorus' in src:
+        return 'bosphorus_news'
+    if 'themedialine.org' in d or 'the media line' in src:
+        return 'the_media_line'
+    if 'alestiklal.net' in d or 'al estiklal' in src or 'alestiklal' in src:
+        return 'alestiklal'
+    if 'habersunum.com' in d:
+        return 'haber_sunum_mazlum_abdi'
+    if 'devapartisi' in t or 'deva partisi' in t or 'facebook.com/devapartisi' in d + '/' + _v124_url(rec):
+        return 'deva_partisi'
+    if 'lutfu.turkkan' in _v124_url(rec) or 'lütfü türkkan' in t or 'lutfu turkkan' in t:
+        return 'lutfu_turkkan'
+    if 'dr.turhancomez' in _v124_url(rec) or 'turhan çömez' in t or 'turhan comez' in t:
+        return 'turhan_comez'
+    if 'ayyuceturkestas' in _v124_url(rec) or 'ayyüce türkeş' in t or 'ayyuce turkes' in t:
+        return 'ayyuce_turkes_tas'
+    if 'milliyetcihbr' in _v124_url(rec) or 'milliyetc' in src:
+        return 'milliyetci_hbr'
+    if 'mctvhaber' in _v124_url(rec) or 'gizli görüşme' in t or 'gizli gorusme' in t:
+        return 'mc_haber_gizli_gorusme'
+    if 'numedya24' in _v124_url(rec) or 'numedya' in src:
+        return 'numedya_ocalan'
+    if 'turkishindy' in _v124_url(rec) or 'independent turkish' in src:
+        return 'independent_turkish_ocalan'
+    if 'tiktok.com' in d and ('demtvyoutube' in _v124_url(rec) or 'selahattin demirtaş' in t or 'selahattin demirtas' in t):
+        return 'dem_tv_tiktok'
+    if 'instagram.com' in d and ('cemil bayık' in t or 'cemil bayik' in t):
+        return 'instagram_cemil_bayik'
+    if 'reddit.com' in d:
+        return 'reddit_sosyal'
+    return ''
+
+def _v124_mhp_direct(rec):
+    t=_v124_textn(rec)
+    d=_v124_domain(rec)
+    source=_v124_norm(_v124_source(rec))
+    return (
+        _v124_source_key(rec) in {'mhp_yurdakul','bbp_destici'}
+        or 'etikhaber.com' in d
+        or (
+            'mhp genel başkan yardımcısı' in t
+            or 'mhp genel baskan yardimcisi' in t
+            or 'ahmet selim yurdakul' in t
+            or 'devlet bahçeli' in t
+            or 'devlet bahceli' in t
+        ) and not ('medyascope' in source or 'ruşen çakır' in t or 'rusen cakir' in t)
+    )
+
+def _v124_line(rec):
+    key=_v124_source_key(rec)
+    t=_v124_textn(rec)
+
+    mapping={
+        'medyascope_rusen_cakir':'Muhalif/analitik medya — DEM kongresi ve parti dönüşümü',
+        'yenicag_muhalif_milliyetci':'Muhalif-milliyetçi medya — DEM/Öcalan eleştirisi',
+        'gaziler_gokhan_uz':'Güvenlikçi-milliyetçi / gaziler hassasiyeti',
+        'mhp_yurdakul':'MHP / devlet merkezli güvenlik söylemi',
+        'bbp_destici':'Cumhur İttifakı içi güvenlikçi-temkinli çizgi',
+        'medya_haber_hatimogullari':'DEM Parti / demokratik çözüm ve barış söylemi',
+        'guneydogu_ocalan':'Öcalan merkezli teorik/siyasal süreç söylemi',
+        'politika_haber_mazlum_abdi':'Suriye Kürtleri / Mazlum Abdi kurumsallaşma söylemi',
+        'darka_mazi':'Kürt milliyetçi / Barzani-KDP perspektifli eleştirel çizgi',
+        'rudaw':'Kürt bölgesel / Barzani-KDP eksenli bölgesel okuma',
+        'shafaq':'Kürt bölgesel / Suriye-Irak saha perspektifi',
+        'the_new_region':'Kürt bölgesel / süreç hassasiyeti',
+        'kurdpress':'Kürt bölgesel / dış gözlem ve süreç tartışması',
+        'bosphorus_news':'Uluslararası basın / hukuki-siyasi süreç okuması',
+        'the_media_line':'Uluslararası basın / dış güvenlik okuması',
+        'alestiklal':'Uluslararası basın / bölgesel güvenlik okuması',
+        'haber_sunum_mazlum_abdi':'Yerli basın / Mazlum Abdi güvenlik statüsü tartışması',
+        'deva_partisi':'Merkez/çoğulcu siyaset — temkinli destek',
+        'lutfu_turkkan':'Muhalif-milliyetçi siyaset — PKK normalleşmesi eleştirisi',
+        'turhan_comez':'Muhalif siyaset — af ve hukuk devleti kaygısı',
+        'ayyuce_turkes_tas':'Milliyetçi-muhalif siyaset — PKK ve seçim siyaseti eleştirisi',
+        'milliyetci_hbr':'Milliyetçi sosyal medya — güvenlik tehdidi okuması',
+        'mc_haber_gizli_gorusme':'Sosyal medya / iddia-haber hattı — İmralı temasları',
+        'numedya_ocalan':'Öcalan merkezli sosyal medya aktarımı',
+        'independent_turkish_ocalan':'Öcalan merkezli haber aktarımı',
+        'dem_tv_tiktok':'DEM/Selahattin Demirtaş sosyal medya dolaşımı',
+        'instagram_cemil_bayik':'Sosyal medya / Cemil Bayık-İmralı iddiası',
+        'reddit_sosyal':'Açık sosyal medya — toplumsal tepki/yorum hattı',
+    }
+    if key in mapping:
+        return mapping[key]
+
+    if _v124_mhp_direct(rec):
+        return 'MHP / devlet merkezli güvenlik söylemi'
+
+    if 'medyascope' in t or 'ruşen çakır' in t or 'rusen cakir' in t:
+        return 'Muhalif/analitik medya — DEM kongresi ve parti dönüşümü'
+
+    if 'mazlum abdi' in t or 'mazloum abdi' in t:
+        return 'Suriye Kürtleri / Mazlum Abdi kurumsallaşma söylemi'
+
+    if ('hatimoğulları' in t or 'hatimogullari' in t or 'dem parti' in t) and ('barış' in t or 'baris' in t or 'kongre' in t):
+        return 'DEM Parti / demokratik çözüm ve barış söylemi'
+
+    if ('öcalan' in t or 'ocalan' in t) and _v124_has_any(t,['demokratik entegrasyon','teorik','umut hakk','imralı','imrali']):
+        return 'Öcalan merkezli teorik/siyasal süreç söylemi'
+
+    try:
+        return _v119_line(rec)
+    except Exception:
+        return _v118_report_group(rec) if '_v118_report_group' in globals() else 'Diğer açık kaynak değerlendirmesi'
+
+def _v124_analysis_line(rec):
+    key=_v124_source_key(rec)
+    t=_v124_textn(rec)
+    source=_v124_source(rec)
+
+    if key=='medyascope_rusen_cakir':
+        return (
+            "Medyascope/Ruşen Çakır içeriği, DEM Parti kongresini yalnız parti içi bir seçim veya teknik kongre "
+            "başlığı olarak değil, yeni çözüm/normalleşme sürecinin parti kimliği ve temsil alanı üzerindeki etkisi "
+            "bakımından okumaktadır. Bu analiz hattında DEM Parti'nin mevcut ad ve örgütlenme biçimiyle sürecin sonuna "
+            "kadar gidip gidemeyeceği, yeni bir parti veya yeni bir siyasal dil ihtimaliyle birlikte tartışılmaktadır. "
+            "Dolayısıyla burada öne çıkan yaklaşım, sürecin muhalif-analitik medya tarafından kurumsal dönüşüm, siyasal "
+            "temsil ve DEM Parti'nin gelecekteki pozisyonu üzerinden sorgulanmasıdır."
+        )
+
+    if key=='yenicag_muhalif_milliyetci':
+        return (
+            "Yeniçağ çizgisindeki içerik, DEM Parti ve Öcalan merkezli yeni program tartışmasını muhalif-milliyetçi "
+            "bir şüpheyle ele almaktadır. Haberde öne çıkan yaklaşım, demokratikleşme veya parti yenilenmesi iddiasının "
+            "arkasında Öcalan'ın yönlendirme kapasitesi ve PKK-DEM ilişkisi bulunduğu yönündeki eleştirel okumadır. "
+            "Bu nedenle kaynak, süreci normalleşme başlığından çok siyasi meşruiyet, örgüt etkisi ve parti yönetiminin "
+            "hareket alanı üzerinden sorgulayan bir söylem hattını temsil etmektedir."
+        )
+
+    if key=='gaziler_gokhan_uz':
+        return (
+            "Gaziler Derneği Başkanı Gökhan Uz'un açıklamaları, güvenlikçi ve milliyetçi hassasiyetleri önceleyen "
+            "çevrelerde Terörsüz Türkiye sürecinin 'terörün siyasallaşmasına izin verilmeden' yürütülmesi gerektiği "
+            "yönündeki yaklaşımın devam ettiğini göstermektedir. Haberde sürece doğrudan toptan bir karşı çıkıştan "
+            "ziyade, siyasi aktörlerin terör örgütünün veya terörün oluşturduğu psikolojik baskıyı parti siyaseti için "
+            "kullanmaması gerektiği vurgulanmaktadır. Bu yaklaşım, sürecin ancak devlet otoritesinin korunması, "
+            "şehit-gazi hassasiyetlerinin gözetilmesi ve terör mağdurlarının meşruiyet algısının zedelenmemesi halinde "
+            "toplumsal kabul üretebileceğini savunan milliyetçi-güvenlikçi söylemle uyumludur."
+        )
+
+    if key=='mhp_yurdakul':
+        return (
+            "MHP çizgisi, Terörsüz Türkiye sürecini devletin stratejik inisiyatifi ve bölgesel güvenlik mimarisi "
+            "bağlamında destekleyen bir çerçeveye yerleştirmektedir. Etik Haber'de aktarılan açıklamada süreç, örgüte "
+            "taviz verilmesi olarak değil; Türkiye'nin içeride terör baskısını azaltması ve sınır ötesinde terörsüz "
+            "bölge hedefini güçlendirmesi şeklinde okunmaktadır. Bu nedenle MHP yaklaşımında destekleyici ton ile "
+            "güvenlikçi sınır birlikte ilerlemekte; sürecin meşruiyeti devlet aklının yönlendiriciliğine ve terörle "
+            "mücadele kazanımlarının korunmasına bağlanmaktadır."
+        )
+
+    if key=='bbp_destici':
+        return (
+            "Mustafa Destici üzerinden görülen Cumhur İttifakı içi temkinli çizgi, Terörsüz Türkiye sürecini bütünüyle "
+            "reddetmeden fakat güvenlik ve milli hassasiyet sınırları içinde denetlenmesi gereken bir süreç olarak "
+            "okumaktadır. Bu yaklaşım, ittifak içi destek ile eleştirel ihtiyatı aynı anda taşımakta; doğru bulunan "
+            "adımların desteklenmesini, ancak örgüt lehine meşruiyet veya taviz görüntüsü doğurabilecek gelişmelerin "
+            "eleştirilmesini öne çıkarmaktadır."
+        )
+
+    if key=='medya_haber_hatimogullari':
+        return (
+            "DEM Parti yönetiminin süreci yalnız silah bırakma veya güvenlik meselesi olarak değil, demokratik siyaset "
+            "alanının genişletilmesi, toplumsal barışın kurulması ve hukuki-siyasal normalleşme başlıklarıyla birlikte "
+            "ele aldığı değerlendirilmektedir. Medya Haber'de aktarılan Hatimoğulları söylemi, barışın tamamlanması ve "
+            "sürecin limana ulaştırılması fikri üzerinden, meseleyi geçici bir taktik değil uzun vadeli siyasal dönüşüm "
+            "olarak sunmaktadır. Bu yaklaşım, devlet merkezli güvenlik okumasından farklı olarak karşılıklı güven inşasını, "
+            "demokratik temsilin güçlendirilmesini ve sürecin toplumsal zemine yayılmasını öncelemektedir."
+        )
+
+    if key=='guneydogu_ocalan':
+        return (
+            "Abdullah Öcalan'ın yeni mesajı, sürecin yalnız teknik bir silahsızlanma başlığı olarak değil, teorik, siyasi "
+            "ve toplumsal yönleri olan bir yeniden konumlanma tartışması olarak görüldüğünü ortaya koymaktadır. Haberde "
+            "eleştiri ve itirazların olabileceğinin kabul edilmesi, sürecin örgüt/hareket tabanı ve Kürt siyasi çevreleri "
+            "açısından da ikna edilmesi gereken tartışmalı bir zemin taşıdığına işaret etmektedir. Bu çizgide öne çıkan "
+            "düşünce, demokratik entegrasyon, kimlik, temsil ve Öcalan'ın yönlendirici rolü gibi başlıkların sürecin "
+            "meşruiyetinde belirleyici kabul edilmesidir."
+        )
+
+    if key=='politika_haber_mazlum_abdi':
+        return (
+            "Mazlum Abdi'nin açıklamaları, Suriye sahasının Türkiye'deki Terörsüz Türkiye gündeminden ayrı okunamayacağını "
+            "göstermektedir. Haberde öne çıkan temel vurgu, Kürtlerin yüz yıl sonra ilk kez Suriye devletinin kuruluş ve "
+            "yeniden inşa sürecinde yer aldığı iddiasıdır. Bu nedenle SDG/SDF'nin entegrasyonu 'teslimiyet' değil, yeni "
+            "siyasal düzen içinde kurumsallaşma ve temsil arayışı olarak sunulmaktadır. Bu bakış açısı, bazı Kürt "
+            "milliyetçi/Barzani-KDP çizgisindeki yayınlarda görülen 'kazanımlar kaybediliyor' eleştirisiyle belirgin "
+            "şekilde ayrışmakta; gelişmeyi askeri kapasite kaybından çok devlet yapısı içinde varlık gösterme çabası "
+            "olarak yorumlamaktadır."
+        )
+
+    if key=='darka_mazi':
+        return (
+            "Darka Mazi çizgisinde süreç, DEM Parti veya hareket medyasında görülen barış ve kurumsallaşma anlatısından "
+            "farklı biçimde okunmaktadır. Burada tartışmanın odağında silah bırakılması değil, PKK'nin insan kaynağı ve "
+            "bölgesel rolünün nasıl yeniden şekilleneceği bulunmaktadır. Dolayısıyla aynı gelişme bazı kaynaklarda kurumsal "
+            "kazanım ve siyasal entegrasyon olarak yorumlanırken, Darka Mazi hattında bölgesel güç dengelerinin yeniden "
+            "kurulması, Kürt ulusal hedefleri ve örgütün tarihsel rolünün dönüşümü üzerinden analiz edilmektedir."
+        )
+
+    if key=='rudaw':
+        return (
+            "Rudaw içeriği, Terörsüz Türkiye sürecini Kürt bölgesel siyasetinin daha geniş dengeleri içinde ele almaktadır. "
+            "Bu hatta Öcalan'ın ve PKK/KCK çevresinin açıklamaları yalnız Türkiye iç siyasetiyle sınırlı görülmemekte; Irak "
+            "Kürdistan Bölgesel Yönetimi, Barzani/KDP çizgisi ve Suriye-Irak hattındaki yeni güç dağılımı bakımından da "
+            "okunmaktadır. Bu nedenle Rudaw perspektifi, sürecin Kürt aktörler arası rekabet ve bölgesel pozisyon alma "
+            "sonuçlarını görünür kılan bir çizgi üretmektedir."
+        )
+
+    if key=='shafaq':
+        return (
+            "Shafaq News çizgisinde süreç, özellikle Suriye ve Irak sahasındaki somut güvenlik-siyaset dengeleri üzerinden "
+            "okunmaktadır. Mazlum Abdi veya SDG/SDF başlığı öne çıktığında bu yaklaşım, entegrasyonun yalnız askeri bir "
+            "geri çekilme olup olmadığına değil, Kürt aktörlerin yeni devlet yapılanmaları içinde temsil ve güvence elde "
+            "edip edemeyeceğine odaklanmaktadır. Bu nedenle kaynak, Türkiye'deki normalleşme tartışmasını bölgesel saha "
+            "gerçekliğiyle ilişkilendirmektedir."
+        )
+
+    if key=='the_new_region':
+        return (
+            "The New Region içeriği, sürecin Kürt bölgesel medyasında hassas ve kırılgan bir siyasal geçiş olarak izlendiğini "
+            "göstermektedir. Bu yaklaşımda Öcalan'ın rolü, PKK/KCK çevresinin tutumu ve Ankara'nın reform iradesi birbirinden "
+            "kopuk başlıklar olarak değil, barış sürecinin sürdürülebilirliği açısından birbirini etkileyen unsurlar olarak "
+            "okunmaktadır."
+        )
+
+    if key=='kurdpress':
+        return (
+            "KurdPress içeriği, Türkiye-PKK/Kürt meselesi gündemini bölgesel ve uluslararası yankılarıyla birlikte ele alan "
+            "bir Kürt bölgesel haber perspektifi sunmaktadır. Bu hatta mesele yalnız Türkiye iç politikasındaki parti ve aktör "
+            "tartışması değil, Kürt siyasi alanının farklı parçalarında sürecin nasıl algılandığı ve hangi beklentileri ürettiği "
+            "bakımından değerlendirilmektedir."
+        )
+
+    if key=='bosphorus_news':
+        return (
+            "Bosphorus News içeriği, Terörsüz Türkiye sürecini hukuki düzenleme, doğrulanabilir silahsızlanma ve siyasi reform "
+            "başlıkları üzerinden okumaktadır. Uluslararası haber dili açısından öne çıkan nokta, sürecin yalnız sembolik "
+            "açıklamalarla değil, silah teslimi, yasal mekanizmalar ve Öcalan/KCK kadrolarının süreçteki konumu gibi somut "
+            "uygulama eşikleriyle test edileceğidir."
+        )
+
+    if key=='the_media_line':
+        return (
+            "The Media Line içeriği, PKK/KCK çevresinin silahsızlanma sürecinin siyasi reformlar olmadan çözülebileceğine "
+            "ilişkin şüphelerini uluslararası güvenlik gündemi içinde aktarmaktadır. Bu yaklaşımda temel mesele, Ankara'nın "
+            "hukuki ve siyasi adımları ile örgütün silah bırakma taahhüdü arasındaki karşılıklı güven dengesidir."
+        )
+
+    if key=='alestiklal':
+        return (
+            "Al Estiklal içeriği, Türkiye ile Kürt aktörler arasındaki silahlı çatışmanın sona erip ermeyeceği sorusunu bölgesel "
+            "güvenlik ve dış politika çerçevesinde tartışmaktadır. Bu dış gözlem hattı, süreci yalnız iç siyasal pazarlık değil; "
+            "Suriye, Irak, ABD/Batı politikası ve bölgesel güç rekabetiyle bağlantılı bir dönüşüm başlığı olarak görmektedir."
+        )
+
+    if key=='haber_sunum_mazlum_abdi':
+        return (
+            "Haber Sunum içeriği, Mazlum Abdi'nin Türkiye açısından güvenlik statüsüne ilişkin iddiaları yerli basın gündemine "
+            "taşımaktadır. Bu yaklaşımda Mazlum Abdi/SDG başlığı, Suriye'deki kurumsallaşma anlatısından ziyade Türkiye'nin "
+            "terör listeleri, güvenlik algısı ve devletin ilgili aktörlere bakışındaki olası değişim tartışması üzerinden "
+            "okunmaktadır."
+        )
+
+    if key=='deva_partisi':
+        return (
+            "DEVA Partisi çevresinden gelen açıklama, sürece koşulsuz bir destekten ziyade huzur, güvenlik ve bölgesel kalkınma "
+            "hedefleriyle bağlantılı temkinli destek verildiğini göstermektedir. Bu yaklaşım, güvenlikçi çizgiden farklı olarak "
+            "normalleşmenin ekonomik ve toplumsal faydalarına odaklanırken; aynı zamanda sürecin sınır içi ve sınır ötesi "
+            "sonuçlarının birlikte değerlendirilmesi gerektiğini kabul eden ihtiyatlı bir pozisyon üretmektedir."
+        )
+
+    if key=='lutfu_turkkan':
+        return (
+            "Lütfü Türkkan paylaşımı, muhalif-milliyetçi siyaset hattında sürecin PKK'yı veya örgütle ilişkilendirilen söylemleri "
+            "normalleştirme riski üzerinden tartışıldığını göstermektedir. Bu yaklaşımda temel vurgu, barış ve normalleşme dilinin "
+            "hukuk karşısındaki sorumluluğu, kamu vicdanını ve terör mağdurlarının hassasiyetlerini gölgelememesi gerektiği "
+            "yönündedir."
+        )
+
+    if key=='turhan_comez':
+        return (
+            "Turhan Çömez paylaşımı, sürecin olası af, ceza hukuku ve kamu vicdanı sonuçlarına odaklanan muhalif bir eleştiri "
+            "hattını temsil etmektedir. Bu çizgide normalleşme ihtimali doğrudan reddedilmekten ziyade, terör suçları, taziye "
+            "ziyaretleri, hukuk düzeni ve mağdur ailelerin adalet duygusu üzerinden sorgulanmaktadır."
+        )
+
+    if key=='ayyuce_turkes_tas':
+        return (
+            "Ayyüce Türkeş Taş paylaşımı, Cemil Bayık ve PKK/KCK yöneticilerinin siyasal alana etkisi üzerinden milliyetçi-muhalif "
+            "bir güvenlik eleştirisi üretmektedir. Bu yaklaşımda temel mesele, örgüt yöneticilerinin açıklamalarının seçim siyaseti "
+            "ve meşru siyasal rekabet üzerinde baskı veya yönlendirme aracı olarak görülmesidir."
+        )
+
+    if key=='milliyetci_hbr':
+        return (
+            "Milliyetçi sosyal medya hattındaki bu içerik, Cemil Bayık açıklamalarını doğrudan güvenlik tehdidi ve siyasi baskı "
+            "dili içinde yorumlamaktadır. Bu çerçevede süreç, demokratik çözüm veya entegrasyon başlığından ziyade, örgüt "
+            "yöneticilerinin Türkiye'ye dönük tehdit algısı ve milli güvenlik hassasiyeti üzerinden okunmaktadır."
+        )
+
+    if key=='mc_haber_gizli_gorusme':
+        return (
+            "Sosyal medyada dolaşıma giren gizli görüşme iddiası, İmralı-Kandil hattındaki temasların sürecin yönünü belirlediği "
+            "algısını güçlendiren bir iddia-haber hattı oluşturmaktadır. Bu yaklaşımda süreç, resmi açıklamalardan çok kapalı "
+            "görüşmeler, sızdırıldığı ileri sürülen notlar ve örgüt içi koordinasyon iddiaları üzerinden tartışılmaktadır."
+        )
+
+    if key=='numedya_ocalan' or key=='independent_turkish_ocalan':
+        return (
+            "Öcalan merkezli bu aktarımda demokratik entegrasyonun kimlikten vazgeçme anlamına gelmediği; aksine kimlik, temsil "
+            "ve siyasal katılım başlıklarının yeni süreçte kurucu unsurlar olarak görülmesi gerektiği yaklaşımı öne çıkmaktadır. "
+            "Bu söylem, süreci yalnız güvenlik tedbiri veya örgütsel fesih olarak değil, demokratik ortak yaşam ve siyasal "
+            "entegrasyon tartışması olarak okumaktadır."
+        )
+
+    if key=='dem_tv_tiktok':
+        return (
+            "DEM/Selahattin Demirtaş etrafında dolaşıma giren sosyal medya içeriği, sürecin yalnız kurumsal parti açıklamalarıyla "
+            "değil, Kürt siyasi tabanında sembolik karşılığı olan aktörlerin sözleri ve kısa video/paylaşım kesitleri üzerinden de "
+            "tartışıldığını göstermektedir. Bu hat, demokratik siyaset ve barış beklentisini görünür kılarken aynı zamanda sosyal "
+            "medyanın sürece ilişkin duygu ve mobilizasyon üretme işlevini ortaya koymaktadır."
+        )
+
+    if key=='instagram_cemil_bayik':
+        return (
+            "Cemil Bayık'ın İmralı ile temasına ilişkin sosyal medya içeriği, PKK/KCK yönetici kadrosu ile Öcalan arasındaki ilişkiyi "
+            "sürecin seyrini belirleyen temel unsur olarak sunmaktadır. Bu yaklaşımda süreç, yalnız Ankara'nın açıklamalarıyla değil, "
+            "örgüt içi dengeler ve İmralı-Kandil hattındaki koordinasyon iddiaları üzerinden okunmaktadır."
+        )
+
+    if key=='reddit_sosyal':
+        return (
+            "Reddit'teki sosyal medya yorumu, sürecin taban düzeyinde güvenlik, dış destek ve bölücülük algısıyla tartışıldığını "
+            "göstermektedir. Bu hatta kurumsal bir politika analizi yerine, kamuoyundaki anlık kuşku, tepki ve tehdit algısı öne "
+            "çıkmaktadır."
+        )
+
+    # Source-safe fallbacks.
+    if _v124_mhp_direct(rec):
+        return (
+            "Bu içerikte MHP veya Cumhur İttifakı çizgisine yakın güvenlik merkezli bir söylem öne çıkmaktadır. Süreç, desteklenebilir "
+            "bir devlet inisiyatifi olarak görülmekle birlikte, meşruiyetini terörle mücadele kazanımlarının korunması, devlet "
+            "otoritesinin zedelenmemesi ve örgüt lehine taviz görüntüsü oluşmaması şartına bağlamaktadır."
+        )
+
+    if 'medyascope' in t or 'ruşen çakır' in t or 'rusen cakir' in t:
+        return (
+            "Bu içerik, muhalif-analitik medya hattında DEM Parti'nin kongresi ve yeni süreç içindeki pozisyonunun parti kimliği, "
+            "temsil krizi ve olası kurumsal dönüşüm başlıklarıyla tartışıldığını göstermektedir."
+        )
+
+    if 'mazlum abdi' in t or 'mazloum abdi' in t:
+        return (
+            "Bu içerik, Mazlum Abdi ve Suriye Kürtleri başlığını Türkiye'deki sürecin bölgesel yansıması olarak ele almaktadır. "
+            "Öne çıkan yaklaşım, SDG/SDF'nin geleceği, Suriye devlet yapısı içindeki temsil arayışı ve Kürt siyasi-idari kazanımları "
+            "arasındaki ilişkinin sürecin seyrini doğrudan etkileyeceği yönündedir."
+        )
+
+    if ('hatimoğulları' in t or 'hatimogullari' in t or 'dem parti' in t) and ('barış' in t or 'baris' in t or 'kongre' in t):
+        return (
+            "Bu içerik, DEM Parti çevresinde sürecin demokratik siyaset, toplumsal barış ve yeni siyasal temsil alanı üzerinden "
+            "okunduğunu göstermektedir. Güvenlik merkezli yaklaşımdan farklı olarak burada öne çıkan vurgu, sürecin toplumsal "
+            "meşruiyetinin demokratikleşme ve siyasi normalleşme adımlarıyla kurulabileceğidir."
+        )
+
+    if ('öcalan' in t or 'ocalan' in t) and _v124_has_any(t,['demokratik entegrasyon','teorik','umut hakk','özgürlük','ozgurluk','imralı','imrali']):
+        return (
+            "Bu içerik, Öcalan merkezli söylemde sürecin hukuki/statüsel konum, demokratik entegrasyon ve siyasal yönlendirme "
+            "başlıklarıyla okunduğunu göstermektedir. Bu hatta mesele, yalnız silah bırakma değil, kimlik ve temsil zemininin "
+            "yeniden tanımlanması olarak ele alınmaktadır."
+        )
+
+    try:
+        return _v119_political_reading(rec,[])
+    except Exception:
+        return (
+            "Bu içerik, seçili açık kaynak havuzu içinde Terörsüz Türkiye gündemine ilişkin farklı bir siyasi okuma üretmektedir. "
+            "Kaynakta öne çıkan vurgu, olay aktarımından çok sürecin meşruiyeti, güvenlik sonucu ve ilgili aktörlerin pozisyonu "
+            "üzerinden değerlendirilmelidir."
+        )
+
+def _v124_day_assessment(records):
+    buckets={}
+    for rec in records:
+        line=_v124_line(rec)
+        buckets.setdefault(line,[]).append(rec)
+
+    order=[
+        'Güvenlikçi-milliyetçi / gaziler hassasiyeti',
+        'MHP / devlet merkezli güvenlik söylemi',
+        'Cumhur İttifakı içi güvenlikçi-temkinli çizgi',
+        'Muhalif/analitik medya — DEM kongresi ve parti dönüşümü',
+        'Muhalif-milliyetçi medya — DEM/Öcalan eleştirisi',
+        'DEM Parti / demokratik çözüm ve barış söylemi',
+        'Öcalan merkezli teorik/siyasal süreç söylemi',
+        'Öcalan merkezli haber aktarımı',
+        'Öcalan merkezli sosyal medya aktarımı',
+        'Suriye Kürtleri / Mazlum Abdi kurumsallaşma söylemi',
+        'Yerli basın / Mazlum Abdi güvenlik statüsü tartışması',
+        'Kürt milliyetçi / Barzani-KDP perspektifli eleştirel çizgi',
+        'Kürt bölgesel / Barzani-KDP eksenli bölgesel okuma',
+        'Kürt bölgesel / Suriye-Irak saha perspektifi',
+        'Kürt bölgesel / süreç hassasiyeti',
+        'Uluslararası basın / hukuki-siyasi süreç okuması',
+        'Uluslararası basın / dış güvenlik okuması',
+        'Uluslararası basın / bölgesel güvenlik okuması',
+        'Muhalif siyaset — af ve hukuk devleti kaygısı',
+        'Muhalif-milliyetçi siyaset — PKK normalleşmesi eleştirisi',
+        'Milliyetçi-muhalif siyaset — PKK ve seçim siyaseti eleştirisi',
+        'Milliyetçi sosyal medya — güvenlik tehdidi okuması',
+        'Açık sosyal medya — toplumsal tepki/yorum hattı',
+    ]
+
+    def idx(line):
+        try:
+            return order.index(line)
+        except ValueError:
+            return 999
+
+    parts=[
+        "Günün açık kaynak görünümü, Terörsüz Türkiye sürecinin tek bir destek/karşıtlık ekseninde değil, "
+        "birbirinden ayrışan siyasi okuma hatları üzerinden tartışıldığını göstermektedir."
+    ]
+
+    for i,(line,items) in enumerate(sorted(buckets.items(),key=lambda kv:idx(kv[0]))[:8],1):
+        srcs=[]
+        for r in items[:3]:
+            s=_v124_source(r)
+            if s and s not in srcs:
+                srcs.append(s)
+
+        if 'gaziler' in line.lower():
+            desc="devlet otoritesi, şehit-gazi hassasiyeti ve terör mağdurlarının meşruiyet algısının sürecin sınırı olması gerektiğini savunmaktadır"
+        elif line.startswith('MHP'):
+            desc="süreci devlet aklı ve bölgesel güvenlik stratejisi içinde desteklemekte, fakat bu desteği terörle mücadele kazanımlarının korunmasına bağlamaktadır"
+        elif line.startswith('Muhalif/analitik medya'):
+            desc="DEM Parti kongresi ve yeni süreci parti kimliği, temsil krizi ve kurumsal dönüşüm ihtimali üzerinden okumaktadır"
+        elif line.startswith('Muhalif-milliyetçi medya'):
+            desc="DEM/Öcalan hattını demokratikleşmeden çok meşruiyet ve örgüt etkisi sorunu olarak değerlendirmektedir"
+        elif line.startswith('DEM Parti'):
+            desc="süreci demokratik siyaset, toplumsal barış ve hukuki-siyasal normalleşme alanının genişlemesi olarak okumaktadır"
+        elif line.startswith('Öcalan'):
+            desc="Öcalan'ın teorik/siyasal yönlendirmesini, kimlik ve demokratik entegrasyon tartışmasını sürecin merkezine koymaktadır"
+        elif line.startswith('Suriye Kürtleri'):
+            desc="Suriye sahasında entegrasyonu teslimiyet değil, devlet inşasına katılım ve kurumsal temsil arayışı olarak sunmaktadır"
+        elif line.startswith('Kürt milliyetçi'):
+            desc="PKK/KCK'nin dönüşümünü Kürt ulusal hedefleri, Barzani-KDP çizgisi ve bölgesel güç dengeleri bakımından sorgulamaktadır"
+        elif line.startswith('Uluslararası basın'):
+            desc="süreci Türkiye iç siyasetiyle sınırlamayıp hukuki reform, silahsızlanma ve bölgesel güvenlik etkileriyle birlikte değerlendirmektedir"
+        elif 'sosyal' in line.lower():
+            desc="gündemin kamuoyundaki kuşku, tepki, güvenlik kaygısı ve meşruiyet tartışmalarıyla parçalı biçimde dolaşıma girdiğini göstermektedir"
+        else:
+            desc="süreci kendi kaynak çevresinin öncelikleri doğrultusunda yorumlamaktadır"
+
+        parts.append(
+            f"{i}. söylem hattı olarak {line} öne çıkmakta; "
+            f"{', '.join(srcs) if srcs else 'ilgili kaynaklar'} üzerinden bu çizgi {desc}."
+        )
+
+    parts.append(
+        "Bu tablo, güvenlikçi-milliyetçi ve MHP hattının devlet otoritesi ile terörle mücadele kazanımlarını; "
+        "DEM/hareket medyası hattının demokratik siyaset ve barışın kurumsallaşmasını; Öcalan merkezli hattın "
+        "teorik meşruiyet ve kimlik/entegrasyon tartışmasını; Suriye Kürtleri hattının ise kurumsal temsil ve "
+        "bölgesel kazanım arayışını öne çıkardığını göstermektedir."
+    )
+    return ' '.join(parts)
+
+def _v124_add_body_footnote(paragraph, fid):
+    """
+    Academic superscript footnote number at sentence end.
+    """
+    run=paragraph.add_run()
+    rpr=OxmlElement('w:rPr')
+
+    rstyle=OxmlElement('w:rStyle')
+    rstyle.set(qn('w:val'),'FootnoteReference')
+    rpr.append(rstyle)
+
+    vert=OxmlElement('w:vertAlign')
+    vert.set(qn('w:val'),'superscript')
+    rpr.append(vert)
+
+    sz=OxmlElement('w:sz')
+    sz.set(qn('w:val'),'16')
+    rpr.append(sz)
+
+    run._r.append(rpr)
+
+    ref=OxmlElement('w:footnoteReference')
+    ref.set(qn('w:id'),str(int(fid)))
+    run._r.append(ref)
+
+def _v124_escape_xml(value):
+    from xml.sax.saxutils import escape
+    return escape(str(value or ''), {'"':'&quot;'})
+
+def _v124_safe_url(url):
+    return str(url or '').strip().replace('&','&amp;')
+
+def _v124_patch_docx_footnotes(docx_bytes, footnotes):
+    """
+    Creates actual Word footnotes with one visible number and direct link:
+
+    Body:       ... değerlendirilmiştir.¹
+    Footnote:   1 https://...
+
+    Implementation detail:
+    At the bottom note, Word's automatic <w:footnoteRef/> prints the number.
+    We do NOT write a manual number. This prevents 11/22/33 duplicates.
+    """
+    import zipfile
+    from io import BytesIO
+
+    notes=[]
+    for note in footnotes or []:
+        url=str(note.get('url') or '').strip()
+        if url.startswith('http'):
+            notes.append({'id':len(notes)+1,'url':url})
+
+    if not notes:
+        return docx_bytes
+
+    zin=zipfile.ZipFile(BytesIO(docx_bytes),'r')
+    files={n:zin.read(n) for n in zin.namelist()}
+    zin.close()
+
+    rels_path='word/_rels/document.xml.rels'
+    rels=files.get(
+        rels_path,
+        b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>'
+    ).decode('utf-8')
+
+    if 'officeDocument/2006/relationships/footnotes' not in rels:
+        rels=rels.replace(
+            '</Relationships>',
+            '<Relationship Id="rIdV124Footnotes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/></Relationships>'
+        )
+        files[rels_path]=rels.encode('utf-8')
+
+    ct=files['[Content_Types].xml'].decode('utf-8')
+    if 'word/footnotes.xml' not in ct:
+        ct=ct.replace(
+            '</Types>',
+            '<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/></Types>'
+        )
+        files['[Content_Types].xml']=ct.encode('utf-8')
+
+    foot_xml=[
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">',
+        '<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>',
+        '<w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>'
+    ]
+    foot_rels=[
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    ]
+
+    for note in notes:
+        fid=int(note['id'])
+        url=note['url']
+        rid=f'rIdV124Fn{fid}'
+        foot_xml.append(
+            f'<w:footnote w:id="{fid}">'
+            '<w:p>'
+            '<w:pPr><w:pStyle w:val="FootnoteText"/></w:pPr>'
+            # automatic footnote number, no manual fid
+            '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/></w:r>'
+            '<w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t xml:space="preserve"> </w:t></w:r>'
+            f'<w:hyperlink r:id="{rid}"><w:r><w:rPr><w:rStyle w:val="Hyperlink"/><w:sz w:val="18"/></w:rPr>'
+            f'<w:t>{_v124_escape_xml(url)}</w:t></w:r></w:hyperlink>'
+            '</w:p>'
+            '</w:footnote>'
+        )
+        foot_rels.append(
+            f'<Relationship Id="{rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="{_v124_safe_url(url)}" TargetMode="External"/>'
+        )
+
+    foot_xml.append('</w:footnotes>')
+    foot_rels.append('</Relationships>')
+
+    files['word/footnotes.xml']=''.join(foot_xml).encode('utf-8')
+    files['word/_rels/footnotes.xml.rels']=''.join(foot_rels).encode('utf-8')
+
+    out=BytesIO()
+    with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as zout:
+        for name,data in files.items():
+            zout.writestr(name,data)
+    return out.getvalue()
+
+def _v124_analysis_basket_report_docx(df):
+    doc=Document()
+    sec=doc.sections[0]
+    sec.top_margin=Cm(2.0)
+    sec.bottom_margin=Cm(2.0)
+    sec.left_margin=Cm(2.3)
+    sec.right_margin=Cm(2.3)
+
+    normal=doc.styles['Normal']
+    normal.font.name='Times New Roman'
+    normal.font.size=Pt(11)
+    normal._element.rPr.rFonts.set(qn('w:eastAsia'),'Times New Roman')
+
+    title=doc.add_paragraph()
+    title.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    tr=title.add_run('TERÖRSÜZ TÜRKİYE - AÇIK KAYNAK SÖYLEM ANALİZİ')
+    tr.bold=True
+    tr.font.name='Times New Roman'
+    tr.font.size=Pt(12)
+
+    datep=doc.add_paragraph()
+    datep.alignment=WD_ALIGN_PARAGRAPH.RIGHT
+    dr=datep.add_run(datetime.now().astimezone().strftime('%d.%m.%Y'))
+    dr.font.name='Times New Roman'
+    dr.font.size=Pt(9)
+
+    rows,details=_v114_resolve_basket_rows(df)
+    records=_v116_citation_records(rows,details)
+    footnotes=[]
+
+    if not records:
+        p=doc.add_paragraph('Analiz sepetinde raporlanabilecek içerik bulunmamaktadır.')
+        p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+    else:
+        records=sorted(records,key=lambda r:(_v124_line(r),int(r.get('No',9999))))
+
+        intro=doc.add_paragraph()
+        intro.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        intro.paragraph_format.first_line_indent=Cm(1.0)
+        intro.paragraph_format.line_spacing=1.15
+        intro.paragraph_format.space_after=Pt(8)
+        intro.add_run(
+            "Aşağıdaki değerlendirme, Analiz Sepetine seçilen açık kaynak içeriklerin yalnız haber değeri bakımından değil; "
+            "hangi siyasi yaklaşımı, hangi kesimin görüşünü ve hangi karşıtlık hattını görünür kıldığı bakımından okunması "
+            "amacıyla hazırlanmıştır. Her paragrafta doğrudan analitik değerlendirmeye girilmiş; atıf numaraları ilgili "
+            "paragrafın sonunda üstsimge olarak, bağlantılar ise sayfa altı dipnotunda doğrudan link şeklinde verilmiştir."
+        )
+
+        for rec in records:
+            p=doc.add_paragraph()
+            p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+            p.paragraph_format.first_line_indent=Cm(1.0)
+            p.paragraph_format.line_spacing=1.15
+            p.paragraph_format.space_after=Pt(8)
+
+            analysis=_v124_analysis_line(rec)
+            p.add_run(analysis)
+
+            # Only add a concise factual support sentence when it does not
+            # contradict the source-specific analysis. No title listing.
+            fact=''
+            try:
+                fact=_v120_underlying_fact(rec)
+            except Exception:
+                fact=''
+            fact=_v116_clean_original_text(fact)
+            if fact:
+                fact=re.sub(r'^(Haberde|İçerikte|Paylaşımda)\s*','',fact,flags=re.I).strip()
+                if len(fact)>280:
+                    fact=fact[:277].rstrip()+'…'
+                if fact and not any(bad in _v124_norm(fact) for bad in ['missing:', 'show results with']):
+                    p.add_run(' Kaynak içeriğinde bu değerlendirmeyi destekleyen unsur olarak ')
+                    p.add_run(fact[0].lower()+fact[1:] if fact[0].isupper() else fact)
+                    if p.text and p.text[-1] not in '.!?':
+                        p.add_run('.')
+
+            url=_v124_url(rec)
+            if url.startswith('http'):
+                fid=len(footnotes)+1
+                p.add_run(' ')
+                _v124_add_body_footnote(p,fid)
+                footnotes.append({'id':fid,'url':url})
+
+        final=doc.add_paragraph()
+        final.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        final.paragraph_format.first_line_indent=Cm(1.0)
+        final.paragraph_format.line_spacing=1.15
+        final.paragraph_format.space_before=Pt(6)
+        final.paragraph_format.space_after=Pt(10)
+        fr=final.add_run('Günün genel değerlendirmesi: ')
+        fr.bold=True
+        final.add_run(_v124_day_assessment(records))
+
+    bio=BytesIO()
+    doc.save(bio)
+    return _v124_patch_docx_footnotes(bio.getvalue(),footnotes)
+
+# Active report generator
+_v114_analysis_basket_report_docx = _v124_analysis_basket_report_docx
+
+# ============================================================
+# /V124
+# ============================================================
+
+
 # V33 — SADE GÜNLÜK ANA PANEL
 #
 # TARMA ÖNCESİ:
@@ -29919,8 +30703,8 @@ else:
         with c3:
             if st.button('🧠 PDF TARZI SÖYLEM ANALİZİ OLUŞTUR',type='primary',use_container_width=True,key='v3_report'):
                 with st.spinner(
-                    'Analiz sepetindeki içerikler okunuyor; akademik üstsimge atıflar ve sayfa altı doğrudan '
-                    'tıklanabilir bağlantı dipnotları hazırlanıyor...'
+                    'Analiz sepetindeki içerikler okunuyor; metin-kaynak uyumu kontrol edilerek akademik üstsimge '
+                    'atıflar ve sayfa altı doğrudan bağlantı dipnotları hazırlanıyor...'
                 ):
                     try:
                         st.session_state['v3_report_bytes']=_v114_analysis_basket_report_docx(
@@ -29937,7 +30721,7 @@ else:
         if st.session_state.get('v3_report_bytes'):
             st.download_button('⬇️ KAYNAKLI ANALİZ RAPORUNU İNDİR',
                 st.session_state['v3_report_bytes'],
-                file_name=f'Terorsuz_Turkiye_PDF_Tarzi_Soylem_Analizi_V123_{date.today()}.docx',
+                file_name=f'Terorsuz_Turkiye_PDF_Tarzi_Soylem_Analizi_V124_{date.today()}.docx',
                 mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                 use_container_width=True,key='v3_report_download')
 
