@@ -14067,19 +14067,56 @@ def _v114_group_records(records):
         key=lambda kv:(order.get(kv[0],999),-len(kv[1]),kv[0])
     )
 
+def _v114_superscript_hyperlink(paragraph, url, label):
+    """
+    _word_hyperlink ile aynı mantıkla, ancak metni üstsimge (dipnot numarası
+    görünümü) olarak ekler; tıklanınca gerçek kaynak sayfasını açar.
+    """
+    if not url:
+        r=paragraph.add_run(label)
+        r.font.superscript=True
+        return
+    try:
+        rid=paragraph.part.relate_to(
+            url,
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+            is_external=True,
+        )
+        hyperlink=OxmlElement("w:hyperlink")
+        hyperlink.set(qn("r:id"),rid)
+
+        run=OxmlElement("w:r")
+        rpr=OxmlElement("w:rPr")
+        rstyle=OxmlElement("w:rStyle")
+        rstyle.set(qn("w:val"),"Hyperlink")
+        rpr.append(rstyle)
+        vert=OxmlElement("w:vertAlign")
+        vert.set(qn("w:val"),"superscript")
+        rpr.append(vert)
+        run.append(rpr)
+
+        text=OxmlElement("w:t")
+        text.text=label
+        run.append(text)
+        hyperlink.append(run)
+
+        paragraph._p.append(hyperlink)
+    except Exception:
+        r=paragraph.add_run(label)
+        r.font.superscript=True
+
 def _v114_add_citation(paragraph, rec, label=None):
     """
-    Adds a clickable [n] citation when a real URL exists.
+    Adds a clickable superscript citation number (footnote-style) when a
+    real URL exists; clicking it opens the real source page directly.
     """
-    txt=label or f"[{int(rec['No'])}]"
+    txt=label or str(int(rec['No']))
     url=str(rec.get('URL','') or '').strip()
     if url.startswith('http'):
-        try:
-            _word_hyperlink(paragraph,url,txt)
-            return
-        except Exception:
-            pass
-    paragraph.add_run(txt)
+        _v114_superscript_hyperlink(paragraph,url,txt)
+        return
+    r=paragraph.add_run(txt)
+    r.font.superscript=True
 
 def _v114_general_analysis(doc,records):
     p=doc.add_paragraph()
@@ -14308,10 +14345,83 @@ def _v114_conclusion(doc,records):
             "değerlendirilmelidir."
         )
 
-def _v114_analysis_basket_report_docx(df):
+def _v117_article_sections(doc,records):
     """
-    Main V114 Analysis Basket report generator.
+    PDF örneğindeki gibi: form/etiket görünümü yerine akıcı anlatı paragrafı.
+    Her içerik için: kaynak+tarih girişi, gerçek özet, kesim/görüş değerlendirmesi
+    ve paragraf sonunda üstsimge, tıklanabilir atıf numarası tek paragrafta birleşir.
     """
+    _v25_add_doc_heading(doc,'3. İçerik Bazlı Analiz')
+
+    if not records:
+        p=doc.add_paragraph('İncelenecek içerik bulunmamaktadır.')
+        p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        return
+
+    for rec in records:
+        source=_v116_clean_original_text(rec.get('Kaynak','')) or 'Açık Kaynak'
+        title=_v116_clean_original_text(rec.get('Başlık',''))
+        date_txt=_v115_valid_date_text(rec.get('Tarih',''))
+        body=_v116_clean_original_text(rec.get('Özet',''))
+        social=_v115_is_social_record(rec)
+
+        p=doc.add_paragraph()
+        p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        p.paragraph_format.first_line_indent=Cm(1.25)
+        p.paragraph_format.line_spacing=1.15
+        p.paragraph_format.space_after=Pt(9)
+
+        if title and date_txt:
+            p.add_run(f"{source} tarafından {date_txt} tarihinde paylaşılan “{title}” başlıklı içerikte, ")
+        elif title:
+            p.add_run(f"{source} tarafından paylaşılan “{title}” başlıklı içerikte, ")
+        else:
+            p.add_run(f"{source} kaynaklı içerikte, ")
+
+        if body:
+            p.add_run(body)
+            if p.text and p.text[-1] not in '.!?':
+                p.add_run('.')
+        else:
+            p.add_run('kaynak içeriğine ilişkin yeterli metin bulunmamaktadır.')
+
+        analysis=_v116_turkish_view_analysis(rec)
+        if analysis:
+            p.add_run(' ')
+            p.add_run(analysis)
+
+        p.add_run(' ')
+        _v114_add_citation(p,rec)
+    """
+    PDF örneğindeki dipnot sayfası mantığıyla: doküman sonunda numaralandırılmış,
+    sade bir kaynak/link listesi. Her satır 'n. Kaynak — URL' biçimindedir ve URL
+    tıklanabilir gerçek bağlantıdır.
+    """
+    if not records:
+        return
+    _v25_add_doc_heading(doc,'Kaynaklar')
+    for rec in records:
+        p=doc.add_paragraph()
+        p.paragraph_format.space_after=Pt(2)
+        p.paragraph_format.line_spacing=1.0
+        run=p.add_run(f"{int(rec['No'])}. ")
+        run.font.size=Pt(9)
+        src=_v116_clean_original_text(rec.get('Kaynak','')) or 'Açık Kaynak'
+        r2=p.add_run(f"{src} — ")
+        r2.font.size=Pt(9)
+        url=str(rec.get('URL','') or '').strip()
+        if url.startswith('http'):
+            try:
+                _word_hyperlink(p,url,url)
+            except Exception:
+                p.add_run(url)
+        else:
+            p.add_run('—')
+        for run in p.runs:
+            if not run.font.size:
+                run.font.size=Pt(9)
+
+def _v117_analysis_basket_report_docx(df):
     doc=Document()
     sec=doc.sections[0]
     sec.top_margin=Cm(2)
@@ -14346,6 +14456,7 @@ def _v114_analysis_basket_report_docx(df):
 
     _v114_article_sections(doc,records)
     _v114_conclusion(doc,records)
+    _v117_reference_list(doc,records)
 
     end=doc.add_paragraph()
     end.paragraph_format.space_before=Pt(10)
@@ -14359,6 +14470,9 @@ def _v114_analysis_basket_report_docx(df):
 # ============================================================
 # /V114 ANALİZ SEPETİ KAYNAKLI RAPOR MOTORU
 # ============================================================
+
+# V117: Kaynaklar (dipnot listesi) eklenmiş nihai rapor üretici.
+_v114_analysis_basket_report_docx = _v117_analysis_basket_report_docx
 
 
 # ============================================================
@@ -15260,6 +15374,10 @@ _v114_citation_records = _v116_citation_records
 _v114_source_table = _v116_source_table
 _v114_general_analysis = _v116_general_analysis
 _v114_article_sections = _v116_article_sections
+
+# V117: form/etiket görünümü yerine akıcı anlatı paragrafı + üstsimge atıf
+# (V114/V115/V116 katmanlarından SONRA uygulanmalı ki nihai override bu olsun).
+_v114_article_sections = _v117_article_sections
 _v114_conclusion = _v116_conclusion
 
 # ============================================================
