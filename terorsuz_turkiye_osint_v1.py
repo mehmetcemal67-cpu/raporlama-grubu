@@ -27589,6 +27589,704 @@ _v114_analysis_basket_report_docx = _v120_analysis_basket_report_docx
 # ============================================================
 
 
+
+
+# ============================================================
+# V121 — FOOTNOTE RAPOR + TREND HATASI + DAHA ÇEŞİTLİ GÜNDEM
+#
+# V120 korunur; yalnız aşağıdaki runtime override'lar eklenir.
+# ============================================================
+
+# ------------------------------------------------------------
+# 1) KRONOLOJİ / TREND ANALİZ HATASI
+# ------------------------------------------------------------
+
+def trend_table(df):
+    """
+    Pandas NaT bool hatasını önleyen güvenli trend tablosu.
+    Eski hata:
+      if d else ...
+    NaT boolean değerlendirmesi pandas'ta ValueError üretir.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    x=df.copy()
+
+    if 'Tarih_dt' in x.columns:
+        dt=pd.to_datetime(x['Tarih_dt'],utc=True,errors='coerce')
+        x['Saat']=dt.dt.strftime('%Y-%m-%d %H:00').fillna('Bilinmiyor')
+    elif 'Tarih' in x.columns:
+        dt=pd.to_datetime(x['Tarih'],utc=True,errors='coerce')
+        x['Saat']=dt.dt.strftime('%Y-%m-%d %H:00').fillna('Bilinmiyor')
+    else:
+        x['Saat']='Bilinmiyor'
+
+    if 'Kategori' not in x.columns:
+        x['Kategori']='Genel / Terörsüz Türkiye'
+
+    return (
+        x.groupby(['Kategori'])
+        .size()
+        .reset_index(name='Haber')
+        .sort_values('Haber',ascending=False)
+        .reset_index(drop=True)
+    )
+
+
+# ------------------------------------------------------------
+# 2) GÜNDEM VE SÖYLEM HARİTASI — DAHA DENGELİ ODAK
+# ------------------------------------------------------------
+
+V121_MOVEMENT_DOMAINS = {
+    'medyahabertv.digital','medyahabertv.com','politikahaber.com',
+    'anfenglish.com','anf-news.com','anfturkce.com','hawarnews.com',
+    'ozgurpolitika.com','medyanews.net','yeniyasamgazetesi9.com',
+    'mezopotamyaajansi35.com','jinnews.net','jinnews.org'
+}
+
+V121_KURDISH_DOMAINS = {
+    'rudaw.net','kurdistan24.net','shafaq.com','basnews.com','thenewregion.com',
+    'darkamazi.site','kurdpress.com','kurdpress.net','kurdistanchronicle.com',
+    'kurdistanpress.net','guneydoguekspres.com','ilketv.com.tr','hengaw.net',
+    'aranews.net','npasyria.com','rojavainformationcenter.org'
+}
+
+V121_LOCAL_SECURITY_DOMAINS = {
+    'canakkalehaber.com','etikhaber.com','yenisafak.com','yeniakit.com.tr',
+    'turkiyegazetesi.com.tr','benguturk.com','ahaber.com.tr','takvim.com.tr'
+}
+
+V121_AGENDA_SEQUENCE = [
+    'Kürt Bölgesel Medyası',
+    'PKK/KCK Açık Kaynak',
+    'Yabancı Basın',
+    'Think Tank / Analiz',
+    'Yerli Basın',
+    'Sosyal Medya',
+    'Diğer'
+]
+
+V121_AGENDA_QUOTA = {
+    'Kürt Bölgesel Medyası':5,
+    'PKK/KCK Açık Kaynak':4,
+    'Yabancı Basın':4,
+    'Think Tank / Analiz':2,
+    'Yerli Basın':4,
+    'Sosyal Medya':2,
+    'Diğer':1,
+}
+
+def _v121_domain_from_row(row):
+    try:
+        return _tt_norm_domain(
+            row.get('URL','') or row.get('Gerçek Bağlantı','') or row.get('Domain','')
+        )
+    except Exception:
+        try:
+            return domain(row.get('URL','') or row.get('Gerçek Bağlantı',''))
+        except Exception:
+            return ''
+
+def _v121_family(row):
+    d=_v121_domain_from_row(row)
+
+    if d in V121_MOVEMENT_DOMAINS:
+        return 'PKK/KCK Açık Kaynak'
+    if d in V121_KURDISH_DOMAINS:
+        return 'Kürt Bölgesel Medyası'
+
+    try:
+        if _tt_domain_match(d,TT_MOVEMENT_V9):
+            return 'PKK/KCK Açık Kaynak'
+    except Exception:
+        pass
+
+    try:
+        if _tt_domain_match(d,TT_KURDISH_REGIONAL_V9) or _tt_domain_match(d,V113_KURDISH_UMBRELLA):
+            return 'Kürt Bölgesel Medyası'
+    except Exception:
+        pass
+
+    try:
+        if _tt_is_foreign_press_domain(d):
+            return 'Yabancı Basın'
+    except Exception:
+        pass
+
+    try:
+        if _tt_is_thinktank_domain(d):
+            return 'Think Tank / Analiz'
+    except Exception:
+        pass
+
+    try:
+        fam=str(row.get('_v110_family','') or _v110_family(row) or '')
+        if fam:
+            return fam
+    except Exception:
+        pass
+
+    try:
+        return _v23_source_family(row)
+    except Exception:
+        return 'Diğer'
+
+def _v121_anchor_score(row):
+    fam=_v121_family(row)
+    score=0
+    try:
+        score+=_v110_anchor_quality(row)
+    except Exception:
+        score+=0
+
+    if fam=='Kürt Bölgesel Medyası':
+        score+=35
+    elif fam=='PKK/KCK Açık Kaynak':
+        score+=32
+    elif fam=='Yabancı Basın':
+        score+=22
+    elif fam=='Think Tank / Analiz':
+        score+=15
+    elif fam=='Sosyal Medya':
+        score+=5
+
+    title=norm(row.get('Başlık',''))
+    summary=norm(row.get('İçerik_Özeti',''))
+    both=title+' '+summary
+
+    # User-relevant specific actors/events get additional lift.
+    for key in [
+        'hatimoğulları','hatimogullari','mazlum abdi','mazloum abdi',
+        'darka mazi','gökhan uz','gokhan uz','ahmet selim yurdakul',
+        'mhp','dem parti','medya haber','öcalan','ocalan','cemil bayık',
+        'cemil bayik','mustafa karasu','sdf','sdg','ypg'
+    ]:
+        if key in both:
+            score+=4
+
+    return score
+
+def _v121_issue(row):
+    text=norm(f"{row.get('Başlık','')} {row.get('İçerik_Özeti','')} {row.get('Kaynak','')} {row.get('URL','')}")
+    issues=set()
+
+    pairs={
+        'DEM-Hatimoğulları-kongre/barış': ['dem parti','hatimoğulları','hatimogullari','bakırhan','bakirhan','kongre','barışın gemisini','barisin gemisini'],
+        'MHP-güvenlik/devlet aklı': ['mhp','bahçeli','bahceli','yurdakul','bülent turan','bulent turan','terörsüz bölge','terorsuz bolge'],
+        'Gaziler-güvenlik hassasiyeti': ['gazi','gaziler','gökhan uz','gokhan uz','şehit','sehit','terörün gölgesinde','terorun golgesinde'],
+        'Öcalan-İmralı-teorik/statü': ['öcalan','ocalan','imralı','imrali','umut hakkı','umut hakki','demokratik entegrasyon','teorik boyut'],
+        'PKK/KCK-yönetici açıklaması': ['pkk','kck','cemil bayık','cemil bayik','mustafa karasu','murat karayılan','duran kalkan','bese hozat'],
+        'Suriye-SDG/YPG-Mazlum Abdi': ['sdf','sdg','ypg','pyd','mazlum abdi','mazloum abdi','suriye','syria','şam','damascus'],
+        'Kürt bölgesel/Barzani-KDP': ['barzani','kdp','rudaw','darka mazi','kurdistan24','kurdpress','kürt milliyetçi','kurdish nationalist'],
+        'af-hukuk-kamu vicdanı': ['af','affı','amnesty','ceza hukuku','kamu vicdanı','mağdur','magdur','propaganda','normalleşme']
+    }
+    for k,vals in pairs.items():
+        if any(v in text for v in vals):
+            issues.add(k)
+
+    # specific tokens for matching
+    for tok in re.findall(r'[a-z0-9ğüşöçı]+',text):
+        if len(tok)>=5 and tok not in {
+            'haber','türkiye','turkiye','terörsüz','terorsuz','süreç','surec',
+            'barış','baris','kurdish','turkey','açıklama','aciklama','oldu',
+            'dedi','için','icin','parti','genel','başkan','baskan'
+        }:
+            issues.add(tok)
+
+    return issues
+
+def _v121_counter_dossier(anchor,pool):
+    cols=[
+        'Kesim','Bağ Türü','Tarih','Kaynak Ailesi','Kaynak','İçerik Türü',
+        'Gerçek İçerik','Başlık','Olayla Bağ','İlişki Skoru','Gerçek Bağlantı'
+    ]
+    if pool is None or pool.empty:
+        return pd.DataFrame(columns=cols)
+
+    aissue=_v121_issue(anchor)
+    afam=_v121_family(anchor)
+    asec=str(anchor.get('_v110_section','') or _v110_section(anchor))
+    rows=[]
+    seen=set()
+
+    for _,cand in pool.iterrows():
+        if str(anchor.get('_v110_uid',''))==str(cand.get('_v110_uid','')):
+            continue
+
+        cissue=_v121_issue(cand)
+        shared=aissue & cissue
+        if not shared:
+            continue
+
+        cfam=_v121_family(cand)
+        csec=str(cand.get('_v110_section','') or _v110_section(cand))
+        ctext=norm(f"{cand.get('Başlık','')} {cand.get('İçerik_Özeti','')} {cand.get('Kaynak','')}")
+
+        cross=(cfam!=afam) or (csec!=asec)
+        reaction=any(x in ctext for x in [
+            'tepki','yanıt','yanit','eleştiri','elestiri','değerlendirdi',
+            'degerlendirdi','yorumladı','yorumladi','yorum','analiz','sert',
+            'destek','karşı çıktı','karsi cikti','reddetti','reject','critic','warn'
+        ])
+
+        # Use a wider gate for underrepresented anchors, but still require same issue.
+        if not cross and len(shared)<3:
+            continue
+        if len(shared)<2 and not reaction:
+            continue
+
+        rel='Aynı tartışma / farklı kesim' if cross else 'Aynı olay hattı'
+        if reaction and cross:
+            rel='Karşı söylem / tepki'
+        if cfam=='Think Tank / Analiz':
+            rel='Analiz / değerlendirme'
+        if cfam=='Sosyal Medya':
+            rel='Sosyal tepki / yorum'
+
+        url=str(cand.get('URL','') or '').strip()
+        key=url or str(cand.get('_v110_uid',''))
+        if key in seen:
+            continue
+        seen.add(key)
+
+        score=len(shared)*4 + (10 if cross else 0) + (6 if reaction else 0)
+        if cfam in {'Kürt Bölgesel Medyası','PKK/KCK Açık Kaynak','Yabancı Basın','Think Tank / Analiz'}:
+            score+=4
+
+        rows.append({
+            'Kesim':csec,
+            'Bağ Türü':rel,
+            'Tarih':str(cand.get('Tarih','') or ''),
+            'Kaynak Ailesi':cfam,
+            'Kaynak':str(cand.get('Kaynak','') or ''),
+            'İçerik Türü':str(cand.get('_v110_kind','') or _v110_content_kind(cand)),
+            'Gerçek İçerik':_v110_real_text(cand),
+            'Başlık':str(cand.get('Başlık','') or ''),
+            'Olayla Bağ':'ortak tartışma başlığı: '+', '.join(sorted(shared)[:5]),
+            'İlişki Skoru':score,
+            'Gerçek Bağlantı':url
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=cols)
+
+    out=pd.DataFrame(rows)
+    out['_score']=pd.to_numeric(out['İlişki Skoru'],errors='coerce').fillna(0)
+    order={f:i for i,f in enumerate(V121_AGENDA_SEQUENCE)}
+    out['_ord']=out['Kaynak Ailesi'].map(lambda x:order.get(str(x),999))
+    out=out.sort_values(['_ord','_score','Tarih'],ascending=[True,False,False])
+
+    # diversity cap
+    picked=[]
+    fam_count={}
+    src_count={}
+    for idx,r in out.iterrows():
+        fam=str(r.get('Kaynak Ailesi',''))
+        src=str(r.get('Kaynak',''))
+        fam_cap=4 if fam=='Yerli Basın' else 5
+        if fam_count.get(fam,0)>=fam_cap:
+            continue
+        if src_count.get(src,0)>=2:
+            continue
+        picked.append(idx)
+        fam_count[fam]=fam_count.get(fam,0)+1
+        src_count[src]=src_count.get(src,0)+1
+        if len(picked)>=18:
+            break
+
+    return out.loc[picked].drop(columns=['_score','_ord'],errors='ignore').reset_index(drop=True)
+
+@st.cache_data(show_spinner=False, ttl=1200)
+def _v121_build_agenda_cached(scan_token,period_hours,records,limit=20):
+    df=pd.DataFrame(records)
+    pool=_v110_prepare_pool(df,period_hours)
+    if pool.empty:
+        return [],{},{}
+
+    buckets={fam:[] for fam in V121_AGENDA_SEQUENCE}
+    for i,r in pool.iterrows():
+        if not str(r.get('Başlık','') or '').strip() or not str(r.get('URL','') or '').strip():
+            continue
+        fam=_v121_family(r)
+        if fam not in buckets:
+            fam='Diğer'
+        buckets[fam].append((i,_v121_anchor_score(r)))
+
+    rows=[]
+    dmap={}
+    amap={}
+    used=set()
+
+    # Quota-first selection, not volume-first.
+    for fam in V121_AGENDA_SEQUENCE:
+        vals=sorted(buckets.get(fam,[]),key=lambda z:z[1],reverse=True)[:80]
+        added=0
+        for idx,score in vals:
+            if added>=V121_AGENDA_QUOTA.get(fam,1):
+                break
+            anchor=pool.iloc[idx]
+            key=str(anchor.get('URL','') or anchor.get('_v110_uid',''))
+            if key in used:
+                continue
+
+            dossier=_v121_counter_dossier(anchor,pool)
+            if dossier.empty and fam=='Yerli Basın':
+                continue
+
+            # Non-local anchors are allowed with fewer matches so they are not
+            # drowned out by local press volume.
+            if dossier.empty:
+                dossier=pd.DataFrame(columns=[
+                    'Kesim','Bağ Türü','Tarih','Kaynak Ailesi','Kaynak','İçerik Türü',
+                    'Gerçek İçerik','Başlık','Olayla Bağ','İlişki Skoru','Gerçek Bağlantı'
+                ])
+
+            fam_counts=dossier['Kaynak Ailesi'].value_counts().to_dict() if not dossier.empty else {}
+            sources=dossier['Kaynak'].replace('',pd.NA).dropna().astype(str).nunique() if not dossier.empty else 0
+            sections=dossier['Kesim'].replace('',pd.NA).dropna().astype(str).nunique() if not dossier.empty else 0
+            direct=int(dossier['Bağ Türü'].astype(str).str.contains('tepki|yorum|Analiz|Karşı',case=False,regex=True,na=False).sum()) if not dossier.empty else 0
+
+            ek='V121:'+hashlib.sha1(key.encode('utf-8','ignore')).hexdigest()[:16]
+            rows.append({
+                'EventKey':ek,
+                'Sıra':0,
+                'Odak Kaynak Ailesi':fam,
+                'Odak Kaynak':str(anchor.get('Kaynak','') or ''),
+                'Odak Haber / Açıklama':str(anchor.get('Başlık','') or ''),
+                'Odak Bağlantı':str(anchor.get('URL','') or ''),
+                'Karşılık':len(dossier),
+                'Farklı Kesim':int(max(0,sections-1)),
+                'Benzersiz Kaynak':int(sources),
+                'Kaynak Ailesi':len([k for k,v in fam_counts.items() if v]),
+                'Doğrudan Tepki / Yorum':direct,
+                'Yabancı':int(fam_counts.get('Yabancı Basın',0)),
+                'Kürt Bölgesel':int(fam_counts.get('Kürt Bölgesel Medyası',0)),
+                'PKK/KCK':int(fam_counts.get('PKK/KCK Açık Kaynak',0)),
+                'Sosyal':int(fam_counts.get('Sosyal Medya',0)),
+                '_score':score + sections*12 + sources*2 + direct*4
+            })
+            dmap[ek]=dossier.to_dict('records')
+            amap[ek]=anchor.to_dict()
+            used.add(key)
+            added+=1
+
+    if not rows:
+        return [],{},{}
+
+    agenda=pd.DataFrame(rows).head(int(limit)).copy()
+    agenda['Sıra']=range(1,len(agenda)+1)
+    keep=set(agenda['EventKey'].astype(str))
+    dmap={k:v for k,v in dmap.items() if k in keep}
+    amap={k:v for k,v in amap.items() if k in keep}
+    return agenda.drop(columns=['_score'],errors='ignore').to_dict('records'),dmap,amap
+
+def _v121_get_agenda(df,period_hours=48,limit=20):
+    scan_token=str(st.session_state.get('scan_time',''))
+    a,d,m=_v121_build_agenda_cached(scan_token,int(period_hours),df.to_dict('records'),int(limit))
+    return pd.DataFrame(a),d,m
+
+# Existing UI call is redirected here.
+_v120_get_agenda = _v121_get_agenda
+_v118_get_agenda = _v121_get_agenda
+
+
+# ------------------------------------------------------------
+# 3) AYRINTILI ZAMAN ÇİZELGESİ — ÇEŞİTLİLİK
+# ------------------------------------------------------------
+
+def _v121_timeline(anchor,dossier):
+    rows=[{
+        'Aşama':'ODAK',
+        'Tarih':str(anchor.get('Tarih','') or ''),
+        'Kesim':str(anchor.get('_v110_section','') or _v110_section(anchor)),
+        'Kaynak':str(anchor.get('Kaynak','') or ''),
+        'Gerçek İçerik':str(anchor.get('Başlık','') or ''),
+        'Gerçek Link':str(anchor.get('URL','') or '')
+    }]
+
+    if dossier is None or dossier.empty:
+        return pd.DataFrame(rows)
+
+    x=dossier.copy()
+    x['_score']=pd.to_numeric(x.get('İlişki Skoru',0),errors='coerce').fillna(0)
+    try:
+        x['_dt']=pd.to_datetime(x.get('Tarih',''),utc=True,errors='coerce')
+    except Exception:
+        x['_dt']=pd.NaT
+
+    picked=[]
+    source_seen=set()
+
+    # First pass: one strong item from each family in preferred order.
+    for fam in V121_AGENDA_SEQUENCE:
+        sub=x[x.get('Kaynak Ailesi','').astype(str).eq(fam)].sort_values('_score',ascending=False)
+        for _,r in sub.iterrows():
+            src=str(r.get('Kaynak','') or '')
+            if src in source_seen:
+                continue
+            picked.append(r)
+            source_seen.add(src)
+            break
+
+    # Second pass: fill remaining slots without source repetition.
+    x=x.sort_values(['_score','_dt'],ascending=[False,True])
+    fam_count={}
+    for _,r in x.iterrows():
+        if len(picked)>=14:
+            break
+        src=str(r.get('Kaynak','') or '')
+        fam=str(r.get('Kaynak Ailesi','') or '')
+        if src in source_seen:
+            continue
+        if fam_count.get(fam,0)>=2:
+            continue
+        picked.append(r)
+        source_seen.add(src)
+        fam_count[fam]=fam_count.get(fam,0)+1
+
+    for r in picked:
+        rows.append({
+            'Aşama':str(r.get('Bağ Türü','YANKI / KARŞILIK') or 'YANKI / KARŞILIK'),
+            'Tarih':str(r.get('Tarih','') or ''),
+            'Kesim':str(r.get('Kesim','') or ''),
+            'Kaynak':str(r.get('Kaynak','') or ''),
+            'Gerçek İçerik':str(r.get('Gerçek İçerik','') or r.get('Başlık','') or ''),
+            'Gerçek Link':str(r.get('Gerçek Bağlantı','') or '')
+        })
+
+    out=pd.DataFrame(rows)
+    try:
+        out['_dt']=pd.to_datetime(out['Tarih'],utc=True,errors='coerce')
+        out=out.sort_values('_dt',ascending=True,na_position='last').drop(columns=['_dt'])
+    except Exception:
+        pass
+    return out.reset_index(drop=True)
+
+_v110_timeline = _v121_timeline
+
+
+# ------------------------------------------------------------
+# 4) ANALİZ SEPETİ RAPORU — CHICAGO BENZERİ WORD FOOTNOTE
+# ------------------------------------------------------------
+
+def _v121_add_footnote_reference(paragraph, footnote_id):
+    run=paragraph.add_run()
+    ref=OxmlElement('w:footnoteReference')
+    ref.set(qn('w:id'),str(int(footnote_id)))
+    run._r.append(ref)
+
+def _v121_escape_xml(value):
+    from xml.sax.saxutils import escape
+    return escape(str(value or ''), {'"':'&quot;'})
+
+def _v121_safe_url(url):
+    u=str(url or '').strip()
+    return u.replace('&','&amp;')
+
+def _v121_patch_docx_footnotes(docx_bytes, footnotes):
+    """
+    Adds real Word footnotes. Each footnote contains a clickable URL.
+    This avoids placing raw source links after every paragraph or only at
+    the end of the document.
+    """
+    import zipfile
+    from io import BytesIO
+
+    if not footnotes:
+        return docx_bytes
+
+    zin=zipfile.ZipFile(BytesIO(docx_bytes),'r')
+    files={name:zin.read(name) for name in zin.namelist()}
+    zin.close()
+
+    # document.xml.rels
+    rels_path='word/_rels/document.xml.rels'
+    if rels_path in files:
+        rels=files[rels_path].decode('utf-8')
+    else:
+        rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>'
+
+    if 'officeDocument/2006/relationships/footnotes' not in rels:
+        rid='rIdV121Footnotes'
+        rel=f'<Relationship Id="{rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>'
+        rels=rels.replace('</Relationships>',rel+'</Relationships>')
+        files[rels_path]=rels.encode('utf-8')
+
+    # [Content_Types].xml
+    ct=files['[Content_Types].xml'].decode('utf-8')
+    if 'word/footnotes.xml' not in ct:
+        override='<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>'
+        ct=ct.replace('</Types>',override+'</Types>')
+        files['[Content_Types].xml']=ct.encode('utf-8')
+
+    # footnotes.xml + footnote rels for links
+    fns=[
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">',
+        '<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>',
+        '<w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>'
+    ]
+    fn_rels=[
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    ]
+
+    for note in footnotes:
+        fid=int(note.get('id'))
+        url=str(note.get('url') or '').strip()
+        source=_v121_escape_xml(note.get('source') or 'Açık Kaynak')
+        title=_v121_escape_xml(note.get('title') or '')
+        rid=f'rIdFn{fid}'
+
+        text_prefix=f'{fid}. {source}'
+        if title:
+            text_prefix += f' — {title}'
+        text_prefix += '. '
+
+        fns.append(
+            f'<w:footnote w:id="{fid}"><w:p>'
+            f'<w:pPr><w:pStyle w:val="FootnoteText"/></w:pPr>'
+            f'<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/></w:r>'
+            f'<w:r><w:t xml:space="preserve">{_v121_escape_xml(text_prefix)}</w:t></w:r>'
+            f'<w:hyperlink r:id="{rid}"><w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
+            f'<w:t>{_v121_escape_xml(url)}</w:t></w:r></w:hyperlink>'
+            f'</w:p></w:footnote>'
+        )
+        fn_rels.append(
+            f'<Relationship Id="{rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="{_v121_safe_url(url)}" TargetMode="External"/>'
+        )
+
+    fns.append('</w:footnotes>')
+    fn_rels.append('</Relationships>')
+
+    files['word/footnotes.xml']=''.join(fns).encode('utf-8')
+    files['word/_rels/footnotes.xml.rels']=''.join(fn_rels).encode('utf-8')
+
+    out=BytesIO()
+    with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as zout:
+        for name,data in files.items():
+            zout.writestr(name,data)
+    return out.getvalue()
+
+def _v121_footnote_source(rec):
+    try:
+        source=_v120_source_line_name(rec)
+    except Exception:
+        try:
+            source=_v119_source_label(rec)
+        except Exception:
+            source=str(rec.get('Kaynak','') or 'Açık Kaynak')
+    return _v116_clean_original_text(source).strip() or 'Açık Kaynak'
+
+def _v121_analysis_basket_report_docx(df):
+    doc=Document()
+    sec=doc.sections[0]
+    sec.top_margin=Cm(2.0)
+    sec.bottom_margin=Cm(2.0)
+    sec.left_margin=Cm(2.3)
+    sec.right_margin=Cm(2.3)
+
+    normal=doc.styles['Normal']
+    normal.font.name='Times New Roman'
+    normal.font.size=Pt(11)
+    normal._element.rPr.rFonts.set(qn('w:eastAsia'),'Times New Roman')
+
+    title=doc.add_paragraph()
+    title.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    tr=title.add_run('TERÖRSÜZ TÜRKİYE - AÇIK KAYNAK SÖYLEM ANALİZİ')
+    tr.bold=True
+    tr.font.name='Times New Roman'
+    tr.font.size=Pt(12)
+
+    datep=doc.add_paragraph()
+    datep.alignment=WD_ALIGN_PARAGRAPH.RIGHT
+    dr=datep.add_run(datetime.now().astimezone().strftime('%d.%m.%Y'))
+    dr.font.name='Times New Roman'
+    dr.font.size=Pt(9)
+
+    rows,details=_v114_resolve_basket_rows(df)
+    records=_v116_citation_records(rows,details)
+
+    footnotes=[]
+
+    if not records:
+        p=doc.add_paragraph('Analiz sepetinde raporlanabilecek içerik bulunmamaktadır.')
+        p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+    else:
+        records=sorted(
+            records,
+            key=lambda r:(
+                _v119_line_order(_v119_line(r)) if '_v119_line_order' in globals() and '_v119_line' in globals() else 999,
+                int(r.get('No',9999))
+            )
+        )
+
+        intro=doc.add_paragraph()
+        intro.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        intro.paragraph_format.first_line_indent=Cm(1.0)
+        intro.paragraph_format.line_spacing=1.15
+        intro.paragraph_format.space_after=Pt(8)
+        intro.add_run(
+            "Aşağıdaki değerlendirme, Analiz Sepetine seçilen açık kaynak içeriklerin yalnız haber değeri bakımından değil; "
+            "hangi siyasi yaklaşımı, hangi kesimin görüşünü ve hangi karşıtlık hattını görünür kıldığı bakımından okunması "
+            "amacıyla hazırlanmıştır. Her paragrafta doğrudan analitik değerlendirmeye girilmiş, kaynak bağlantıları Chicago "
+            "atıf düzenine benzer şekilde sayfa altı notu olarak verilmiştir."
+        )
+
+        for rec in records:
+            p=doc.add_paragraph()
+            p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+            p.paragraph_format.first_line_indent=Cm(1.0)
+            p.paragraph_format.line_spacing=1.15
+            p.paragraph_format.space_after=Pt(8)
+
+            analysis=_v120_analysis_line(rec) if '_v120_analysis_line' in globals() else _v119_political_reading(rec,[])
+            p.add_run(analysis)
+
+            fact=_v120_underlying_fact(rec) if '_v120_underlying_fact' in globals() else ''
+            if fact:
+                fact=_v116_clean_original_text(fact)
+                fact=re.sub(r'^(Haberde|İçerikte|Paylaşımda)\s*','',fact,flags=re.I).strip()
+                if len(fact)>360:
+                    fact=fact[:357].rstrip()+'…'
+                p.add_run(' Bu değerlendirmeye dayanak oluşturan içerikte ')
+                p.add_run(fact[0].lower()+fact[1:] if fact and fact[0].isupper() else fact)
+                if p.text and p.text[-1] not in '.!?':
+                    p.add_run('.')
+
+            fid=len(footnotes)+1
+            p.add_run(' ')
+            _v121_add_footnote_reference(p,fid)
+            footnotes.append({
+                'id':fid,
+                'source':_v121_footnote_source(rec),
+                'title':_v116_clean_original_text(rec.get('Başlık','')).strip(),
+                'url':str(rec.get('URL','') or '').strip()
+            })
+
+        final=doc.add_paragraph()
+        final.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        final.paragraph_format.first_line_indent=Cm(1.0)
+        final.paragraph_format.line_spacing=1.15
+        final.paragraph_format.space_before=Pt(6)
+        final.paragraph_format.space_after=Pt(10)
+        fr=final.add_run('Günün genel değerlendirmesi: ')
+        fr.bold=True
+        final.add_run(_v120_day_assessment(records) if '_v120_day_assessment' in globals() else _v119_daily_synthesis(records))
+
+    bio=BytesIO()
+    doc.save(bio)
+    raw=bio.getvalue()
+    return _v121_patch_docx_footnotes(raw,footnotes)
+
+_v114_analysis_basket_report_docx = _v121_analysis_basket_report_docx
+
+# ============================================================
+# /V121
+# ============================================================
+
+
 # V33 — SADE GÜNLÜK ANA PANEL
 #
 # TARMA ÖNCESİ:
@@ -28676,8 +29374,8 @@ else:
         with c3:
             if st.button('🧠 PDF TARZI SÖYLEM ANALİZİ OLUŞTUR',type='primary',use_container_width=True,key='v3_report'):
                 with st.spinner(
-                    'Analiz sepetindeki içerikler okunuyor; doğrudan analitik paragraflar, her paragraf altında kaynak linki '
-                    've gün sonu söylem hattı değerlendirmesi hazırlanıyor...'
+                    'Analiz sepetindeki içerikler okunuyor; doğrudan analitik paragraflar, Chicago benzeri sayfa altı '
+                    'kaynak notları ve gün sonu söylem hattı değerlendirmesi hazırlanıyor...'
                 ):
                     try:
                         st.session_state['v3_report_bytes']=_v114_analysis_basket_report_docx(
@@ -28694,7 +29392,7 @@ else:
         if st.session_state.get('v3_report_bytes'):
             st.download_button('⬇️ KAYNAKLI ANALİZ RAPORUNU İNDİR',
                 st.session_state['v3_report_bytes'],
-                file_name=f'Terorsuz_Turkiye_PDF_Tarzi_Soylem_Analizi_V120_{date.today()}.docx',
+                file_name=f'Terorsuz_Turkiye_PDF_Tarzi_Soylem_Analizi_V121_{date.today()}.docx',
                 mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                 use_container_width=True,key='v3_report_download')
 
