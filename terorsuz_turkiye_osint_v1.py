@@ -13867,6 +13867,499 @@ def normalize_rows(raw,cutoff,mode,user_query):
 # /V113 KÜRT MEDYASI KAPSAM GENİŞLETME
 # ============================================================
 
+
+# ============================================================
+# V114 — ANALİZ SEPETİ KAYNAKLI RAPOR MOTORU
+#
+# Amaç:
+# Panelin otomatik odaklamadığı fakat analistin Analiz Sepetine
+# bilinçli olarak gönderdiği içerikleri tek bir kaynaklı rapora
+# dönüştürmek.
+#
+# Rapor akışı:
+#   1. Kaynak Tablosu (numaralı + gerçek link)
+#   2. Genel Analitik Değerlendirme
+#      - "Yukarıdaki kaynaklarda..." biçiminde toplu giriş
+#      - varsa farklı söylem çevrelerinin görüşleri
+#      - kaynak/kesim sınıflandırması ve gerçek içerikten görüş özeti
+#      - [1], [2]... atıfları
+#   3. Haber Bazlı İnceleme
+#      - her haber için TEK, ayrıntılı paragraf
+#      - gerçek sayfa doğrulanabiliyorsa tam metnin başlangıç/orta/son
+#        bölümlerinden seçilen gerçek bilgiler
+#      - doğrulanamıyorsa yalnız taramada yakalanan başlık/özet
+#      - her paragraf numaralı atıf + gerçek bağlantı
+#   4. Sonuç / Ortak ve Ayrışan Çerçeveler
+#
+# Kaynağa siyasi kimlik "atama" yapılmaz. Mevcut kaynak profili
+# ve içerik sınıflandırması "bu raporda ... söylem çevresinde
+# değerlendirilmiştir" şeklinde ifade edilir.
+# ============================================================
+
+V114_GROUP_ORDER = [
+    '🇹🇷 Türk Milliyetçi / Güvenlikçi',
+    '🕌 Muhafazakâr Medya / Söylem',
+    '🗳️ Muhalif / Eleştirel Çevre',
+    '✊ Türk Solu / Hak-Temelli Çevre',
+    '📰 Liberal / Çoğulcu Medya',
+    '🇹🇷 Diğer Yerli / Ana Akım',
+    '🟣 Kürt Bölgesel Medyası',
+    '🛰️ PKK/KCK Aktörleri ve Hareket Çevresi',
+    '🌍 Uluslararası Basın',
+    '🧠 Think Tank / Analiz',
+    '📱 Sosyal Medya — Diğer / Belirsiz',
+    '📎 Diğer Açık Kaynak'
+]
+
+def _v114_discourse(row):
+    try:
+        return str(_v36_discourse(row) or '').strip()
+    except Exception:
+        try:
+            return str(_v32_section_group(row) or '').strip()
+        except Exception:
+            try:
+                return str(_v26_report_group(row) or '').strip()
+            except Exception:
+                return '📎 Diğer Açık Kaynak'
+
+def _v114_stance(row):
+    try:
+        return str(_v25_stance(row) or 'Nötr / Bilgilendirici')
+    except Exception:
+        return str(row.get('Yaklaşım','') or 'Nötr / Bilgilendirici')
+
+def _v114_frames(row):
+    try:
+        vals=[str(x) for x in _v23_frame_scores(row) if str(x).strip()]
+        return vals
+    except Exception:
+        raw=str(row.get('Çerçeve','') or '').strip()
+        return [raw] if raw else []
+
+def _v114_real_sentence(row):
+    try:
+        s=_v28_real_sentence(row)
+    except Exception:
+        s=str(row.get('İçerik_Özeti','') or row.get('Başlık','') or '')
+    return _repair_mojibake_utf8(_clean_note_text(s)).strip()
+
+def _v114_source_name(row, detail=None):
+    detail=detail or {}
+    return _repair_mojibake_utf8(_clean_note_text(
+        detail.get('source')
+        or row.get('Kaynak','')
+        or row.get('Domain','')
+        or 'Açık Kaynak'
+    )).strip()
+
+def _v114_url(row, detail=None):
+    detail=detail or {}
+    u=str(detail.get('canonical') or row.get('URL','') or '').strip()
+    return u
+
+def _v114_date(row, detail=None):
+    detail=detail or {}
+    return _v16_format_date(
+        detail.get('published')
+        or row.get('Tarih','')
+        or row.get('Tarih_dt','')
+    )
+
+def _v114_clean_group_label(group):
+    return re.sub(r'^[^\wÇĞİÖŞÜçğıöşü]+','',str(group or '')).strip()
+
+def _v114_resolve_basket_rows(df):
+    """
+    Full-text resolution is attempted only when the user presses the
+    Analysis Basket report button. No automatic extra network load is added.
+    """
+    x=df.copy() if df is not None else pd.DataFrame()
+    if x.empty:
+        return [],[]
+
+    if 'Tarih_dt' in x.columns:
+        x['Tarih_dt']=pd.to_datetime(x['Tarih_dt'],utc=True,errors='coerce')
+        x=x.sort_values('Tarih_dt',ascending=True,na_position='last')
+
+    rows=x.to_dict('records')
+    details=[{} for _ in rows]
+
+    if rows:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(8,max(1,len(rows)))
+        ) as ex:
+            fmap={
+                ex.submit(_v16_resolve_article,row):i
+                for i,row in enumerate(rows)
+            }
+            for fut in concurrent.futures.as_completed(fmap):
+                i=fmap[fut]
+                try:
+                    details[i]=fut.result() or {}
+                except Exception:
+                    details[i]={}
+
+    return rows,details
+
+def _v114_article_body(row,detail):
+    """
+    One article = one paragraph.
+    Uses verified full-text sequence when available, otherwise only the
+    scan-captured snippet. Never invents missing article content.
+    """
+    detail=detail or {}
+    seq=detail.get('_sequence') or []
+
+    if len(seq)>=3:
+        chosen=_v16_pick_begin_middle_end(seq,5)
+        body=_v16_natural_join(chosen)
+        if body:
+            return body[:3500],True
+
+    snippet=_repair_mojibake_utf8(
+        _clean_note_text(row.get('İçerik_Özeti',''))
+    ).strip()
+    title=_repair_mojibake_utf8(
+        _clean_note_text(row.get('Başlık',''))
+    ).strip()
+
+    if snippet:
+        return snippet[:2200],False
+    if title:
+        return title[:1200],False
+
+    return 'Kaynak içeriğine ilişkin yeterli metin bulunmamaktadır.',False
+
+def _v114_citation_records(rows,details):
+    records=[]
+    for i,(row,detail) in enumerate(zip(rows,details),1):
+        group=_v114_discourse(row)
+        stance=_v114_stance(row)
+        frames=_v114_frames(row)
+        body,validated=_v114_article_body(row,detail)
+
+        records.append({
+            'No':i,
+            'Kaynak':_v114_source_name(row,detail),
+            'Tarih':_v114_date(row,detail),
+            'Kesim':group,
+            'Tutum':stance,
+            'Çerçeveler':frames,
+            'Başlık':_repair_mojibake_utf8(
+                _clean_note_text(row.get('Başlık',''))
+            ).strip(),
+            'URL':_v114_url(row,detail),
+            'Özet':body,
+            'TamMetinDoğrulandı':bool(validated),
+            'Satır':row
+        })
+    return records
+
+def _v114_group_records(records):
+    groups={}
+    for r in records:
+        groups.setdefault(r['Kesim'],[]).append(r)
+
+    order={g:i for i,g in enumerate(V114_GROUP_ORDER)}
+    return sorted(
+        groups.items(),
+        key=lambda kv:(order.get(kv[0],999),-len(kv[1]),kv[0])
+    )
+
+def _v114_add_citation(paragraph, rec, label=None):
+    """
+    Adds a clickable [n] citation when a real URL exists.
+    """
+    txt=label or f"[{int(rec['No'])}]"
+    url=str(rec.get('URL','') or '').strip()
+    if url.startswith('http'):
+        try:
+            _word_hyperlink(paragraph,url,txt)
+            return
+        except Exception:
+            pass
+    paragraph.add_run(txt)
+
+def _v114_general_analysis(doc,records):
+    p=doc.add_paragraph()
+    p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+    p.paragraph_format.first_line_indent=Cm(1.25)
+    p.paragraph_format.line_spacing=1.15
+
+    if not records:
+        p.add_run('Analiz sepetinde raporlanabilecek içerik bulunmamaktadır.')
+        return
+
+    unique_sources=len({
+        str(r.get('Kaynak','')).strip()
+        for r in records if str(r.get('Kaynak','')).strip()
+    })
+    groups=_v114_group_records(records)
+
+    p.add_run(
+        f"Yukarıdaki kaynaklarda Terörsüz Türkiye sürecine ilişkin "
+        f"{len(records)} ayrı içerikte, {unique_sources} benzersiz kaynağın "
+        f"haber, yorum, açıklama veya analizleri yer almaktadır. "
+    )
+
+    if len(groups)>=2:
+        p.add_run(
+            f"Sepetteki içerikler sistem sınıflandırmasına göre {len(groups)} farklı "
+            "söylem çevresine dağılmakta; bu nedenle aynı gündemin farklı kesimlerce "
+            "hangi vurgu ve tutumlarla ele alındığını karşılaştırmak mümkündür. "
+        )
+    else:
+        only=_v114_clean_group_label(groups[0][0]) if groups else 'tek bir söylem çevresi'
+        p.add_run(
+            f"İçeriklerin büyük bölümü {only} kapsamında toplanmaktadır; "
+            "bu nedenle kesimler arası karşılaştırma sınırlıdır. "
+        )
+
+    # One compact evidence-based statement per discourse group.
+    for gi,(group,items) in enumerate(groups[:8]):
+        rep=items[0]
+        group_clean=_v114_clean_group_label(group)
+        source=rep['Kaynak'] or 'Açık Kaynak'
+        stance=rep['Tutum']
+        frames=rep['Çerçeveler']
+        frame_txt=', '.join(frames[:2]) if frames else 'genel süreç'
+        real=_v114_real_sentence(rep['Satır'])
+
+        if gi>0:
+            p.add_run(' ')
+        p.add_run(
+            f"{source}, bu raporda {group_clean} görünümünü yansıtan bir kaynak/içerik "
+            f"olarak değerlendirilmiş; ilgili haberde {frame_txt} çerçevesi öne çıkmış "
+            f"ve tutum {stance} olarak sınıflandırılmıştır "
+        )
+        _v114_add_citation(p,rep)
+        if real:
+            short=real
+            if len(short)>260:
+                short=short[:257].rstrip()+'…'
+            p.add_run(f". Kaynakta öne çıkan ifade/özet, “{short}” şeklindedir.")
+        else:
+            p.add_run('.')
+
+def _v114_source_table(doc,records):
+    _v25_add_doc_heading(doc,'1. Kaynak Tablosu')
+
+    if not records:
+        p=doc.add_paragraph('Analiz sepetinde kaynak bulunmamaktadır.')
+        p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        return
+
+    p=doc.add_paragraph(
+        'Aşağıdaki numaralar rapor içindeki [1], [2] biçimindeki atıflarla eşleşmektedir. '
+        '“Bağlantı” alanı gerçek haber/kaynak sayfasını açar.'
+    )
+    p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+
+    cols=['No','Kaynak','Kesim / Söylem Çevresi','Tarih','Başlık','Bağlantı']
+    table=doc.add_table(rows=1,cols=len(cols))
+    table.style='Table Grid'
+
+    for j,c in enumerate(cols):
+        cell=table.rows[0].cells[j]
+        cell.text=c
+
+    for rec in records:
+        cells=table.add_row().cells
+        cells[0].text=f"[{rec['No']}]"
+        cells[1].text=str(rec['Kaynak'])[:100]
+        cells[2].text=_v114_clean_group_label(rec['Kesim'])[:130]
+        cells[3].text=str(rec['Tarih'])[:20]
+        cells[4].text=str(rec['Başlık'])[:260]
+
+        lp=cells[5].paragraphs[0]
+        url=str(rec.get('URL','') or '').strip()
+        if url.startswith('http'):
+            try:
+                _word_hyperlink(lp,url,'Haberi Aç')
+            except Exception:
+                lp.add_run(url)
+        else:
+            lp.add_run('—')
+
+    for row in table.rows:
+        for cell in row.cells:
+            for pp in cell.paragraphs:
+                for run in pp.runs:
+                    run.font.name='Times New Roman'
+                    run.font.size=Pt(8.5)
+
+def _v114_article_sections(doc,records):
+    _v25_add_doc_heading(doc,'3. Haber Bazlı İçerik İncelemesi')
+
+    if not records:
+        p=doc.add_paragraph('İncelenecek haber bulunmamaktadır.')
+        p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        return
+
+    for rec in records:
+        p=doc.add_paragraph()
+        p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        p.paragraph_format.first_line_indent=Cm(1.25)
+        p.paragraph_format.line_spacing=1.15
+        p.paragraph_format.space_after=Pt(9)
+
+        _v114_add_citation(p,rec)
+        p.add_run(' ')
+
+        source=rec['Kaynak'] or 'Açık Kaynak'
+        date_txt=rec['Tarih']
+        group=_v114_clean_group_label(rec['Kesim'])
+        stance=rec['Tutum']
+        frames=', '.join(rec['Çerçeveler'][:3]) if rec['Çerçeveler'] else 'genel süreç'
+
+        if date_txt:
+            p.add_run(
+                f"{source} tarafından {date_txt} tarihinde yayımlanan "
+                f"“{rec['Başlık']}” başlıklı içerikte, "
+            )
+        else:
+            p.add_run(
+                f"{source} tarafından yayımlanan “{rec['Başlık']}” başlıklı içerikte, "
+            )
+
+        body=str(rec['Özet'] or '').strip()
+        if body:
+            p.add_run('kaynakta şu hususlar aktarılmaktadır: ')
+            p.add_run(body)
+            if p.text and p.text[-1] not in '.!?':
+                p.add_run('.')
+
+        p.add_run(
+            f" Bu içerik, sistemin kaynak profili ve metin sınıflandırmasına göre "
+            f"{group} kapsamında değerlendirilmiş; baskın tutum {stance}, "
+            f"öne çıkan çerçeve(ler) ise {frames} olarak belirlenmiştir."
+        )
+
+        if not rec['TamMetinDoğrulandı']:
+            p.add_run(
+                " Haberin tam metni güvenilir biçimde doğrulanamadığından bu paragrafta "
+                "yalnız tarama sırasında yakalanan gerçek başlık ve içerik/özet kullanılmıştır."
+            )
+
+        url=str(rec.get('URL','') or '').strip()
+        if url.startswith('http'):
+            p.add_run(' ')
+            try:
+                _word_hyperlink(p,url,'[Kaynak bağlantısı]')
+            except Exception:
+                p.add_run(url)
+
+def _v114_conclusion(doc,records):
+    _v25_add_doc_heading(doc,'4. Toplu Değerlendirme')
+
+    if not records:
+        p=doc.add_paragraph('Karşılaştırmalı değerlendirme için yeterli içerik bulunmamaktadır.')
+        p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        return
+
+    frame_counts={}
+    stance_counts={}
+    group_counts={}
+
+    for rec in records:
+        group_counts[rec['Kesim']]=group_counts.get(rec['Kesim'],0)+1
+        stance_counts[rec['Tutum']]=stance_counts.get(rec['Tutum'],0)+1
+        for f in rec['Çerçeveler']:
+            frame_counts[f]=frame_counts.get(f,0)+1
+
+    top_frames=sorted(frame_counts.items(),key=lambda x:x[1],reverse=True)[:4]
+    top_stances=sorted(stance_counts.items(),key=lambda x:x[1],reverse=True)[:3]
+    top_groups=sorted(group_counts.items(),key=lambda x:x[1],reverse=True)[:4]
+
+    p=doc.add_paragraph()
+    p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+    p.paragraph_format.first_line_indent=Cm(1.25)
+    p.paragraph_format.line_spacing=1.15
+
+    p.add_run(
+        "Analiz sepetindeki içerikler birlikte değerlendirildiğinde, "
+    )
+
+    if top_frames:
+        p.add_run(
+            "en sık görülen çerçevelerin "
+            + ', '.join(f"{k} ({v} içerik)" for k,v in top_frames)
+            + " olduğu; "
+        )
+
+    if top_stances:
+        p.add_run(
+            "tutum dağılımında "
+            + ', '.join(f"{k} ({v})" for k,v in top_stances)
+            + " kategorilerinin öne çıktığı görülmektedir. "
+        )
+
+    if len(top_groups)>=2:
+        p.add_run(
+            "Farklı söylem çevrelerinin aynı süreci farklı vurgu ve önceliklerle ele aldığı "
+            "görülmekle birlikte, bu rapordaki sınıflandırmalar açık kaynak içeriklerin "
+            "metinsel çerçevesini göstermekte; kaynakların veya kişilerin siyasi kimliğine "
+            "ilişkin kesin bir niteleme oluşturmamaktadır."
+        )
+    else:
+        p.add_run(
+            "Kaynak çeşitliliği sınırlı olduğundan kesimler arası karşılaştırma ihtiyatla "
+            "değerlendirilmelidir."
+        )
+
+def _v114_analysis_basket_report_docx(df):
+    """
+    Main V114 Analysis Basket report generator.
+    """
+    doc=Document()
+    sec=doc.sections[0]
+    sec.top_margin=Cm(2)
+    sec.bottom_margin=Cm(2)
+    sec.left_margin=Cm(2.5)
+    sec.right_margin=Cm(2.5)
+
+    doc.styles['Normal'].font.name='Times New Roman'
+    doc.styles['Normal'].font.size=Pt(11)
+    doc.styles['Normal']._element.rPr.rFonts.set(
+        qn('w:eastAsia'),'Times New Roman'
+    )
+
+    p=doc.add_paragraph()
+    p.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    r=p.add_run('TERÖRSÜZ TÜRKİYE ANALİZ SEPETİ AÇIK KAYNAK ANALİZ RAPORU')
+    r.bold=True
+    r.font.name='Times New Roman'
+    r.font.size=Pt(13)
+
+    p=doc.add_paragraph()
+    p.alignment=WD_ALIGN_PARAGRAPH.RIGHT
+    p.add_run(datetime.now().astimezone().strftime('%d.%m.%Y'))
+
+    rows,details=_v114_resolve_basket_rows(df)
+    records=_v114_citation_records(rows,details)
+
+    _v114_source_table(doc,records)
+
+    _v25_add_doc_heading(doc,'2. Genel Analitik Değerlendirme')
+    _v114_general_analysis(doc,records)
+
+    _v114_article_sections(doc,records)
+    _v114_conclusion(doc,records)
+
+    end=doc.add_paragraph()
+    end.paragraph_format.space_before=Pt(10)
+    end.add_run('Arz olunur.')
+
+    bio=BytesIO()
+    doc.save(bio)
+    bio.seek(0)
+    return bio.getvalue()
+
+# ============================================================
+# /V114 ANALİZ SEPETİ KAYNAKLI RAPOR MOTORU
+# ============================================================
+
 # ============================================================
 # /V35 KAPSAM KURTARMA
 # ============================================================
@@ -24714,9 +25207,10 @@ else:
     # ---------------- ANALİZ SEPETİ ----------------
     st.markdown('---')
     st.subheader('🧺 Analiz Sepeti')
-    st.caption('Yerli basın, sosyal medya, yabancı basın ve think tank sekmelerinden seçilen içerikleri tek yerde biriktirir. '
-               'Sepete eklenen içerikler kalıcı olarak diskteki veritabanına kaydedilir; siz silmediğiniz sürece '
-               'uygulamayı kapatıp tekrar açtığınızda (ertesi gün dahil) aynen burada durur.')
+    st.caption('Panelin otomatik odaklamadığı veya analistin ayrıca incelemek istediği içerikleri tek yerde biriktirir. '
+               'Sepetteki içerikler kalıcı olarak diskteki veritabanına kaydedilir. V114 ile “Analiz Et ve Rapor Oluştur” '
+               'işlemi; numaralı kaynak tablosu, gerçek linkler, farklı söylem çevrelerinin görüşlerini karşılaştıran genel '
+               'giriş ve her haber için ayrı bir kaynaklı analiz paragrafı üretir.')
     basket=_v3_analysis_basket()
     if not basket:
         st.info('Analiz Sepeti henüz boş.')
@@ -24741,12 +25235,14 @@ else:
             if st.button('📝 Detaylı Bilgi Notu Oluştur',use_container_width=True,key='v3_basket_note'):
                 _v3_make_note(pd.DataFrame(_v3_analysis_basket()),'analysis_basket')
         with c3:
-            if st.button('📄 RAPORLA',type='primary',use_container_width=True,key='v3_report'):
-                with st.spinner('Analiz sepetindeki içeriklerden rapor hazırlanıyor...'):
+            if st.button('🧠 ANALİZ ET VE RAPOR OLUŞTUR',type='primary',use_container_width=True,key='v3_report'):
+                with st.spinner(
+                    'Analiz sepetindeki haberlerin gerçek sayfaları doğrulanıyor; kaynak tablosu, '
+                    'kesimler arası genel değerlendirme ve haber bazlı analiz paragrafları hazırlanıyor...'
+                ):
                     try:
-                        st.session_state['v3_report_bytes']=make_analyst_docx(
-                            pd.DataFrame(_v3_analysis_basket()),
-                            title='TERÖRSÜZ TÜRKİYE AÇIK KAYNAK ANALİZ RAPORU'
+                        st.session_state['v3_report_bytes']=_v114_analysis_basket_report_docx(
+                            pd.DataFrame(_v3_analysis_basket())
                         )
                     except Exception as e:
                         st.error(f'Rapor hazırlanamadı: {e}')
@@ -24757,9 +25253,9 @@ else:
                 mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                 use_container_width=True,key='v3_basket_note_download')
         if st.session_state.get('v3_report_bytes'):
-            st.download_button('⬇️ ANALİZ RAPORUNU İNDİR',
+            st.download_button('⬇️ KAYNAKLI ANALİZ RAPORUNU İNDİR',
                 st.session_state['v3_report_bytes'],
-                file_name=f'Terorsuz_Turkiye_Analiz_Raporu_{date.today()}.docx',
+                file_name=f'Terorsuz_Turkiye_Analiz_Sepeti_Kaynakli_Rapor_V114_{date.today()}.docx',
                 mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                 use_container_width=True,key='v3_report_download')
 
