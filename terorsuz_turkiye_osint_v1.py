@@ -28287,6 +28287,258 @@ _v114_analysis_basket_report_docx = _v121_analysis_basket_report_docx
 # ============================================================
 
 
+
+
+# ============================================================
+# V122 — CHICAGO BENZERİ DİPNOT ATIF DÜZELTMESİ
+#
+# V121 rapor metni korunur.
+# Değişiklik:
+# - Gövde içinde yalnız üstsimge 1, 2, 3... atıf numarası görünür.
+# - Word sayfa altı dipnotunda çizgi/separatör altında yalnız kaynak
+#   bağlantısı görünür.
+# - Dipnot içinde ayrıca "1. / 2." yazdırılmaz; böylece "11., 22."
+#   gibi çift numara oluşmaz.
+# - Dipnotlar analiz cümlesi içermez; yorum ile atıf karışmaz.
+# ============================================================
+
+def _v122_escape_xml(value):
+    from xml.sax.saxutils import escape
+    return escape(str(value or ''), {'"':'&quot;'})
+
+def _v122_safe_url(url):
+    return str(url or '').strip().replace('&','&amp;')
+
+def _v122_add_footnote_reference(paragraph, footnote_id):
+    """
+    Body citation: only the automatic Word footnote number appears.
+    """
+    run=paragraph.add_run()
+    ref=OxmlElement('w:footnoteReference')
+    ref.set(qn('w:id'),str(int(footnote_id)))
+    run._r.append(ref)
+
+def _v122_patch_docx_footnotes(docx_bytes, footnotes):
+    """
+    True Word footnotes:
+      Body text:     ... değerlendirilmiştir.¹
+      Page bottom:   __________________
+                     ¹ Kaynak: clickable-url
+
+    The footnote text does NOT repeat "1." because Word already renders
+    the footnote number through <w:footnoteRef/>.
+    """
+    import zipfile
+    from io import BytesIO
+
+    clean_notes=[]
+    for note in footnotes or []:
+        url=str(note.get('url') or '').strip()
+        if not url.startswith('http'):
+            continue
+        clean_notes.append({
+            'id':int(note.get('id') or len(clean_notes)+1),
+            'url':url
+        })
+
+    if not clean_notes:
+        return docx_bytes
+
+    zin=zipfile.ZipFile(BytesIO(docx_bytes),'r')
+    files={name:zin.read(name) for name in zin.namelist()}
+    zin.close()
+
+    # Main document relationship to footnotes.xml
+    rels_path='word/_rels/document.xml.rels'
+    if rels_path in files:
+        rels=files[rels_path].decode('utf-8')
+    else:
+        rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>'
+
+    if 'officeDocument/2006/relationships/footnotes' not in rels:
+        rels=rels.replace(
+            '</Relationships>',
+            '<Relationship Id="rIdV122Footnotes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/></Relationships>'
+        )
+        files[rels_path]=rels.encode('utf-8')
+
+    # Content type for footnotes part
+    ct=files['[Content_Types].xml'].decode('utf-8')
+    if 'word/footnotes.xml' not in ct:
+        ct=ct.replace(
+            '</Types>',
+            '<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/></Types>'
+        )
+        files['[Content_Types].xml']=ct.encode('utf-8')
+
+    # Build clean footnotes part.
+    fns=[
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">',
+        # Word renders this separator as the horizontal line above page footnotes.
+        '<w:footnote w:type="separator" w:id="-1">'
+        '<w:p><w:pPr><w:spacing w:after="80"/></w:pPr><w:r><w:separator/></w:r></w:p>'
+        '</w:footnote>',
+        '<w:footnote w:type="continuationSeparator" w:id="0">'
+        '<w:p><w:r><w:continuationSeparator/></w:r></w:p>'
+        '</w:footnote>'
+    ]
+
+    fn_rels=[
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    ]
+
+    for note in clean_notes:
+        fid=int(note['id'])
+        url=note['url']
+        rid=f'rIdV122Fn{fid}'
+        xml_url=_v122_escape_xml(url)
+
+        fns.append(
+            f'<w:footnote w:id="{fid}">'
+            f'<w:p>'
+            f'<w:pPr><w:pStyle w:val="FootnoteText"/></w:pPr>'
+            # automatic footnote number only
+            f'<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/></w:r>'
+            f'<w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t xml:space="preserve"> Kaynak: </w:t></w:r>'
+            # clickable URL only; no analysis/commentary mixed into footnote
+            f'<w:hyperlink r:id="{rid}">'
+            f'<w:r><w:rPr><w:rStyle w:val="Hyperlink"/><w:sz w:val="18"/></w:rPr>'
+            f'<w:t>{xml_url}</w:t></w:r>'
+            f'</w:hyperlink>'
+            f'</w:p>'
+            f'</w:footnote>'
+        )
+
+        fn_rels.append(
+            f'<Relationship Id="{rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" '
+            f'Target="{_v122_safe_url(url)}" TargetMode="External"/>'
+        )
+
+    fns.append('</w:footnotes>')
+    fn_rels.append('</Relationships>')
+
+    files['word/footnotes.xml']=''.join(fns).encode('utf-8')
+    files['word/_rels/footnotes.xml.rels']=''.join(fn_rels).encode('utf-8')
+
+    out=BytesIO()
+    with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as zout:
+        for name,data in files.items():
+            zout.writestr(name,data)
+    return out.getvalue()
+
+def _v122_analysis_basket_report_docx(df):
+    """
+    Same V121 analytical report, but with corrected Chicago-like footnotes.
+    """
+    doc=Document()
+    sec=doc.sections[0]
+    sec.top_margin=Cm(2.0)
+    sec.bottom_margin=Cm(2.0)
+    sec.left_margin=Cm(2.3)
+    sec.right_margin=Cm(2.3)
+
+    normal=doc.styles['Normal']
+    normal.font.name='Times New Roman'
+    normal.font.size=Pt(11)
+    normal._element.rPr.rFonts.set(qn('w:eastAsia'),'Times New Roman')
+
+    title=doc.add_paragraph()
+    title.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    tr=title.add_run('TERÖRSÜZ TÜRKİYE - AÇIK KAYNAK SÖYLEM ANALİZİ')
+    tr.bold=True
+    tr.font.name='Times New Roman'
+    tr.font.size=Pt(12)
+
+    datep=doc.add_paragraph()
+    datep.alignment=WD_ALIGN_PARAGRAPH.RIGHT
+    dr=datep.add_run(datetime.now().astimezone().strftime('%d.%m.%Y'))
+    dr.font.name='Times New Roman'
+    dr.font.size=Pt(9)
+
+    rows,details=_v114_resolve_basket_rows(df)
+    records=_v116_citation_records(rows,details)
+
+    footnotes=[]
+
+    if not records:
+        p=doc.add_paragraph('Analiz sepetinde raporlanabilecek içerik bulunmamaktadır.')
+        p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+    else:
+        records=sorted(
+            records,
+            key=lambda r:(
+                _v119_line_order(_v119_line(r)) if '_v119_line_order' in globals() and '_v119_line' in globals() else 999,
+                int(r.get('No',9999))
+            )
+        )
+
+        intro=doc.add_paragraph()
+        intro.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        intro.paragraph_format.first_line_indent=Cm(1.0)
+        intro.paragraph_format.line_spacing=1.15
+        intro.paragraph_format.space_after=Pt(8)
+        intro.add_run(
+            "Aşağıdaki değerlendirme, Analiz Sepetine seçilen açık kaynak içeriklerin yalnız haber değeri bakımından değil; "
+            "hangi siyasi yaklaşımı, hangi kesimin görüşünü ve hangi karşıtlık hattını görünür kıldığı bakımından okunması "
+            "amacıyla hazırlanmıştır. Her paragrafta doğrudan analitik değerlendirmeye girilmiş, kaynak bağlantıları Chicago "
+            "atıf düzenine benzer şekilde sayfa altı dipnotu olarak verilmiştir."
+        )
+
+        for rec in records:
+            p=doc.add_paragraph()
+            p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+            p.paragraph_format.first_line_indent=Cm(1.0)
+            p.paragraph_format.line_spacing=1.15
+            p.paragraph_format.space_after=Pt(8)
+
+            analysis=_v120_analysis_line(rec) if '_v120_analysis_line' in globals() else _v119_political_reading(rec,[])
+            p.add_run(analysis)
+
+            fact=_v120_underlying_fact(rec) if '_v120_underlying_fact' in globals() else ''
+            if fact:
+                fact=_v116_clean_original_text(fact)
+                fact=re.sub(r'^(Haberde|İçerikte|Paylaşımda)\s*','',fact,flags=re.I).strip()
+                if len(fact)>360:
+                    fact=fact[:357].rstrip()+'…'
+                p.add_run(' Bu değerlendirmeye dayanak oluşturan içerikte ')
+                p.add_run(fact[0].lower()+fact[1:] if fact and fact[0].isupper() else fact)
+                if p.text and p.text[-1] not in '.!?':
+                    p.add_run('.')
+
+            fid=len(footnotes)+1
+            p.add_run(' ')
+            _v122_add_footnote_reference(p,fid)
+            footnotes.append({
+                'id':fid,
+                'url':str(rec.get('URL','') or '').strip()
+            })
+
+        final=doc.add_paragraph()
+        final.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        final.paragraph_format.first_line_indent=Cm(1.0)
+        final.paragraph_format.line_spacing=1.15
+        final.paragraph_format.space_before=Pt(6)
+        final.paragraph_format.space_after=Pt(10)
+        fr=final.add_run('Günün genel değerlendirmesi: ')
+        fr.bold=True
+        final.add_run(_v120_day_assessment(records) if '_v120_day_assessment' in globals() else _v119_daily_synthesis(records))
+
+    bio=BytesIO()
+    doc.save(bio)
+    raw=bio.getvalue()
+    return _v122_patch_docx_footnotes(raw,footnotes)
+
+# Active report generator
+_v114_analysis_basket_report_docx = _v122_analysis_basket_report_docx
+
+# ============================================================
+# /V122
+# ============================================================
+
+
 # V33 — SADE GÜNLÜK ANA PANEL
 #
 # TARMA ÖNCESİ:
@@ -29374,8 +29626,8 @@ else:
         with c3:
             if st.button('🧠 PDF TARZI SÖYLEM ANALİZİ OLUŞTUR',type='primary',use_container_width=True,key='v3_report'):
                 with st.spinner(
-                    'Analiz sepetindeki içerikler okunuyor; doğrudan analitik paragraflar, Chicago benzeri sayfa altı '
-                    'kaynak notları ve gün sonu söylem hattı değerlendirmesi hazırlanıyor...'
+                    'Analiz sepetindeki içerikler okunuyor; doğrudan analitik paragraflar ve Chicago benzeri '
+                    'tıklanabilir sayfa altı kaynak dipnotları hazırlanıyor...'
                 ):
                     try:
                         st.session_state['v3_report_bytes']=_v114_analysis_basket_report_docx(
@@ -29392,7 +29644,7 @@ else:
         if st.session_state.get('v3_report_bytes'):
             st.download_button('⬇️ KAYNAKLI ANALİZ RAPORUNU İNDİR',
                 st.session_state['v3_report_bytes'],
-                file_name=f'Terorsuz_Turkiye_PDF_Tarzi_Soylem_Analizi_V121_{date.today()}.docx',
+                file_name=f'Terorsuz_Turkiye_PDF_Tarzi_Soylem_Analizi_V122_{date.today()}.docx',
                 mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                 use_container_width=True,key='v3_report_download')
 
