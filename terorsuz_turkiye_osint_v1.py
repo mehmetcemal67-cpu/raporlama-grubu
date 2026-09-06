@@ -14360,6 +14360,310 @@ def _v114_analysis_basket_report_docx(df):
 # /V114 ANALİZ SEPETİ KAYNAKLI RAPOR MOTORU
 # ============================================================
 
+
+# ============================================================
+# V115 — ANALİZ SEPETİ RAPOR SUNUM DÜZELTMESİ
+#
+# - "Tam metin doğrulanamadı..." teknik uyarısı her haber paragrafından kaldırılır.
+# - Sosyal medya içerikleri "haber tam metni" gibi ele alınmaz; eldeki gerçek
+#   paylaşım metni/indeks özeti doğrudan analiz edilir.
+# - "Tarih/saat tarihinde" gibi yapay ifade kaldırılır.
+# - facebook.com / x.com yerine mümkün olduğunda hesap/sayfa adı gösterilir.
+# - Paragraf sonundaki "[Kaynak bağlantısı]" yerine doğal "Kaynak: Haberi Aç /
+#   Paylaşımı Aç" bağlantısı kullanılır.
+# - Genel değerlendirmede farklı kesimlerin görüşleri daha açık biçimde,
+#   gerçek kaynak ve [n] atıflarıyla karşılaştırılır.
+# ============================================================
+
+V115_SOCIAL_DOMAINS = {
+    'facebook.com','www.facebook.com',
+    'x.com','twitter.com','www.x.com','www.twitter.com',
+    'instagram.com','www.instagram.com',
+    'tiktok.com','www.tiktok.com',
+    'youtube.com','www.youtube.com','youtu.be',
+    'threads.net','www.threads.net',
+    'bsky.app','www.bsky.app',
+    't.me','telegram.me'
+}
+
+V115_ACCOUNT_ALIASES = {
+    'devapartisi':'DEVA Partisi',
+    'independentturkish':'Independent Turkish',
+    'demparti':'DEM Parti',
+    'mhphabergundem':'MHP Haber Gündem',
+}
+
+def _v115_domain_from_url(url):
+    try:
+        return urlparse(str(url or '')).netloc.lower()
+    except Exception:
+        return ''
+
+def _v115_social_platform(url):
+    d=_v115_domain_from_url(url)
+    if 'facebook' in d:
+        return 'Facebook'
+    if d in {'x.com','www.x.com','twitter.com','www.twitter.com'}:
+        return 'X'
+    if 'instagram' in d:
+        return 'Instagram'
+    if 'tiktok' in d:
+        return 'TikTok'
+    if 'youtube' in d or d=='youtu.be':
+        return 'YouTube'
+    if 'threads' in d:
+        return 'Threads'
+    if 'bsky' in d:
+        return 'Bluesky'
+    if d in {'t.me','telegram.me'}:
+        return 'Telegram'
+    return ''
+
+def _v115_url_account(url):
+    try:
+        u=urlparse(str(url or ''))
+        parts=[p for p in u.path.split('/') if p]
+        if not parts:
+            return ''
+        first=parts[0].strip('@')
+        if first.lower() in {'watch','reel','reels','videos','video','shorts','status'}:
+            return ''
+        return V115_ACCOUNT_ALIASES.get(first.lower(), first)
+    except Exception:
+        return ''
+
+def _v115_title_account(title,platform=''):
+    t=_repair_mojibake_utf8(_clean_note_text(title)).strip()
+    if not t:
+        return ''
+
+    # "Independent Turkish on X: ..."
+    m=re.match(r'^(.{2,80}?)\s+on\s+X\s*:',t,re.I)
+    if m:
+        return m.group(1).strip()
+
+    # "Elif Esen: ..."
+    m=re.match(r'^([A-ZÇĞİÖŞÜ][^:|]{2,55})\s*:',t)
+    if m:
+        candidate=m.group(1).strip()
+        if len(candidate.split())<=8:
+            return candidate
+
+    # "... | MC Haber - Facebook"
+    if '|' in t:
+        tail=t.split('|')[-1]
+        tail=re.sub(r'\s*-\s*(Facebook|Instagram|TikTok|YouTube|X)\s*$','',tail,flags=re.I).strip()
+        if tail and len(tail)<=70:
+            return tail
+
+    return ''
+
+def _v115_display_source(rec):
+    source=str(rec.get('Kaynak','') or '').strip()
+    url=str(rec.get('URL','') or '').strip()
+    platform=_v115_social_platform(url)
+
+    if not platform:
+        return source or 'Açık Kaynak'
+
+    account=(
+        _v115_title_account(rec.get('Başlık',''),platform)
+        or _v115_url_account(url)
+    )
+    if account:
+        return f'{platform} – {account}'
+    return f'{platform} paylaşımı'
+
+def _v115_valid_date_text(value):
+    s=str(value or '').strip()
+    if not s:
+        return ''
+    bad={'tarih/saat','tarih/saat bilinmiyor','nan','nat','none','—','-'}
+    if s.lower() in bad:
+        return ''
+    return s
+
+def _v115_is_social_record(rec):
+    if _v115_social_platform(rec.get('URL','')):
+        return True
+    return 'Sosyal Medya' in str(rec.get('Kesim','') or '')
+
+def _v115_actionable_summary(rec):
+    """
+    Uses only source-derived text already stored in the record.
+    Removes search-engine time prefixes / "Missing:" debris where possible.
+    """
+    body=_repair_mojibake_utf8(_clean_note_text(rec.get('Özet',''))).strip()
+    if not body:
+        return ''
+
+    # Typical indexed-social prefixes: "20 hours ago ·", "5 days ago ·"
+    body=re.sub(
+        r'^\s*(?:\d+\s+(?:minute|minutes|hour|hours|day|days|week|weeks|'
+        r'dakika|saat|gün|hafta)\s+ago\s*[·\-:]?\s*)',
+        '',
+        body,
+        flags=re.I
+    )
+    body=re.sub(r'\s*Missing:\s*.*$','',body,flags=re.I)
+    body=re.sub(r'\s*\|\s*Show results with:.*$','',body,flags=re.I)
+    return re.sub(r'\s+',' ',body).strip()
+
+def _v115_record_view_sentence(rec):
+    """
+    Short source-grounded statement for the general comparative paragraph.
+    """
+    summary=_v115_actionable_summary(rec)
+    if not summary:
+        summary=_repair_mojibake_utf8(_clean_note_text(rec.get('Başlık',''))).strip()
+
+    if len(summary)>340:
+        summary=summary[:337].rstrip()+'…'
+    return summary
+
+def _v115_general_analysis(doc,records):
+    p=doc.add_paragraph()
+    p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+    p.paragraph_format.first_line_indent=Cm(1.25)
+    p.paragraph_format.line_spacing=1.15
+
+    if not records:
+        p.add_run('Analiz sepetinde raporlanabilecek içerik bulunmamaktadır.')
+        return
+
+    # Use human-readable social source names for counting.
+    display_sources={_v115_display_source(r) for r in records if _v115_display_source(r)}
+    groups=_v114_group_records(records)
+
+    p.add_run(
+        f"Yukarıdaki kaynaklarda Terörsüz Türkiye sürecine ilişkin "
+        f"{len(records)} ayrı içerik ve {len(display_sources)} benzersiz kaynak/hesap yer almaktadır. "
+    )
+
+    if len(groups)>=2:
+        p.add_run(
+            f"İçerikler {len(groups)} farklı söylem çevresine dağılmakta olup, "
+            "aynı sürecin farklı aktörler ve medya ekosistemleri tarafından farklı vurgu, "
+            "öncelik ve değerlendirmelerle ele alındığı görülmektedir. "
+        )
+    else:
+        only=_v114_clean_group_label(groups[0][0]) if groups else 'tek bir söylem çevresi'
+        p.add_run(
+            f"İçerikler ağırlıklı olarak {only} kapsamındadır; bu nedenle "
+            "kesimler arası karşılaştırma sınırlıdır. "
+        )
+
+    # Explicitly compare discourse groups, using up to two real items per group.
+    for gi,(group,items) in enumerate(groups[:8]):
+        group_clean=_v114_clean_group_label(group)
+        if gi>0:
+            p.add_run(' ')
+
+        chosen=items[:2]
+        p.add_run(f"{group_clean} bakımından ")
+
+        for ii,rec in enumerate(chosen):
+            source=_v115_display_source(rec)
+            view=_v115_record_view_sentence(rec)
+            if ii>0:
+                p.add_run('; buna karşılık ')
+
+            p.add_run(f"{source} ")
+            _v114_add_citation(p,rec)
+            if view:
+                p.add_run(f" kaynağında “{view}” görüşü/aktarımı öne çıkmaktadır")
+            else:
+                frames=', '.join(rec.get('Çerçeveler',[])[:2]) or 'genel süreç'
+                p.add_run(f" içeriğinde {frames} çerçevesi öne çıkmaktadır")
+
+        p.add_run('.')
+
+def _v115_article_sections(doc,records):
+    _v25_add_doc_heading(doc,'3. Haber Bazlı İçerik İncelemesi')
+
+    if not records:
+        p=doc.add_paragraph('İncelenecek içerik bulunmamaktadır.')
+        p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        return
+
+    for rec in records:
+        p=doc.add_paragraph()
+        p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        p.paragraph_format.first_line_indent=Cm(1.25)
+        p.paragraph_format.line_spacing=1.15
+        p.paragraph_format.space_after=Pt(9)
+
+        _v114_add_citation(p,rec)
+        p.add_run(' ')
+
+        source=_v115_display_source(rec)
+        date_txt=_v115_valid_date_text(rec.get('Tarih',''))
+        group=_v114_clean_group_label(rec.get('Kesim',''))
+        stance=str(rec.get('Tutum','') or 'Nötr / Bilgilendirici')
+        frames=', '.join(rec.get('Çerçeveler',[])[:3]) if rec.get('Çerçeveler') else 'genel süreç'
+        title=_repair_mojibake_utf8(_clean_note_text(rec.get('Başlık',''))).strip()
+        body=_v115_actionable_summary(rec)
+        social=_v115_is_social_record(rec)
+
+        if social:
+            if date_txt:
+                p.add_run(
+                    f"{source} tarafından {date_txt} tarihinde yayımlanan "
+                    f"“{title}” başlıklı/paylaşımlı içerikte "
+                )
+            else:
+                p.add_run(
+                    f"{source} üzerinde yayımlanan “{title}” başlıklı/paylaşımlı içerikte "
+                )
+
+            if body:
+                p.add_run(body)
+                if p.text and p.text[-1] not in '.!?':
+                    p.add_run('.')
+        else:
+            if date_txt:
+                p.add_run(
+                    f"{source} tarafından {date_txt} tarihinde yayımlanan "
+                    f"“{title}” başlıklı içerikte "
+                )
+            else:
+                p.add_run(
+                    f"{source} tarafından yayımlanan “{title}” başlıklı içerikte "
+                )
+
+            if body:
+                p.add_run(body)
+                if p.text and p.text[-1] not in '.!?':
+                    p.add_run('.')
+
+        p.add_run(
+            f" İçerik, rapor kapsamında {group} söylem çevresi içinde değerlendirilmiş; "
+            f"baskın tutum {stance}, öne çıkan çerçeve(ler) ise {frames} olarak tespit edilmiştir."
+        )
+
+        # NO repetitive technical "full text could not be verified" sentence.
+        # The paragraph stays analyst-facing and source-grounded.
+
+        url=str(rec.get('URL','') or '').strip()
+        if url.startswith('http'):
+            p.add_run(' Kaynak: ')
+            try:
+                _word_hyperlink(
+                    p,
+                    url,
+                    'Paylaşımı Aç' if social else 'Haberi Aç'
+                )
+            except Exception:
+                p.add_run(url)
+
+# Override V114 presentation functions only.
+_v114_general_analysis = _v115_general_analysis
+_v114_article_sections = _v115_article_sections
+
+# ============================================================
+# /V115 ANALİZ SEPETİ RAPOR SUNUM DÜZELTMESİ
+# ============================================================
+
 # ============================================================
 # /V35 KAPSAM KURTARMA
 # ============================================================
@@ -25255,7 +25559,7 @@ else:
         if st.session_state.get('v3_report_bytes'):
             st.download_button('⬇️ KAYNAKLI ANALİZ RAPORUNU İNDİR',
                 st.session_state['v3_report_bytes'],
-                file_name=f'Terorsuz_Turkiye_Analiz_Sepeti_Kaynakli_Rapor_V114_{date.today()}.docx',
+                file_name=f'Terorsuz_Turkiye_Analiz_Sepeti_Kaynakli_Rapor_V115_{date.today()}.docx',
                 mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                 use_container_width=True,key='v3_report_download')
 
