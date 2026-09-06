@@ -14327,7 +14327,7 @@ def _v114_analysis_basket_report_docx(df):
 
     p=doc.add_paragraph()
     p.alignment=WD_ALIGN_PARAGRAPH.CENTER
-    r=p.add_run('TERÖRSÜZ TÜRKİYE ANALİZ SEPETİ AÇIK KAYNAK ANALİZ RAPORU')
+    r=p.add_run('TERÖRSÜZ TÜRKİYE ANALİZ SEPETİ - AÇIK KAYNAK DEĞERLENDİRME RAPORU')
     r.bold=True
     r.font.name='Times New Roman'
     r.font.size=Pt(13)
@@ -14662,6 +14662,608 @@ _v114_article_sections = _v115_article_sections
 
 # ============================================================
 # /V115 ANALİZ SEPETİ RAPOR SUNUM DÜZELTMESİ
+# ============================================================
+
+
+# ============================================================
+# V116 — DERLİ TOPLU TÜRKÇE ANALİST RAPORU
+#
+# Kullanıcı talebi:
+# - Raporun açıklama ve analiz kısmı Türkçe olacak.
+# - İngilizce bir haberin BAŞLIĞI ve KAYNAK İÇERİĞİ İngilizce kalabilir.
+# - Arap/Fars alfabesi rapora basılmayacak.
+# - Haber mümkünse gerçek sayfasından baştan sona okunacak ve giriş-orta-son
+#   bölümlerini temsil eden, konu dışı/boilerplate cümlelerden arındırılmış
+#   bir özet çıkarılacak.
+# - Her içerik için ayrıca TÜRKÇE analitik değerlendirme yapılacak:
+#       "Bu içerikte ... kesim görüşü / çerçevesi öne çıkmaktadır."
+#   Bu değerlendirme yalnız haberin gerçek içeriğine ve mevcut sınıflandırma
+#   verilerine dayanacak; olmayan görüş üretilmeyecek.
+# - Başlık ile yakalanan sosyal medya özeti uyuşmuyorsa analiz sınırlandırılacak.
+# ============================================================
+
+_V116_ARABIC_RX = re.compile(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+')
+
+V116_DOMAIN_LABELS = {
+    'kurdpress.com':'KurdPress',
+    'www.kurdpress.com':'KurdPress',
+    'shafaq.com':'Shafaq News',
+    'www.shafaq.com':'Shafaq News',
+    'thenewregion.com':'The New Region',
+    'www.thenewregion.com':'The New Region',
+    'kurdistan24.net':'Kurdistan24',
+    'www.kurdistan24.net':'Kurdistan24',
+    'rudaw.net':'Rudaw',
+    'www.rudaw.net':'Rudaw',
+    'hawarnews.com':'ANHA / Hawar News',
+    'www.hawarnews.com':'ANHA / Hawar News',
+    'ozgurpolitika.com':'Yeni Özgür Politika',
+    'www.ozgurpolitika.com':'Yeni Özgür Politika',
+}
+
+V116_BOILERPLATE = [
+    'read more','related article','related story','subscribe','subscription',
+    'advertisement','advertising','newsletter','sign up','follow us',
+    'share this','all rights reserved','cookie','privacy policy',
+    'terms of use','contact us','about us','download our app',
+    '©','copyright'
+]
+
+def _v116_strip_arabic_script(value):
+    s=_repair_mojibake_utf8(_clean_note_text(value)).strip()
+    if not s:
+        return ''
+    s=_V116_ARABIC_RX.sub(' ',s)
+    s=re.sub(r'\s+',' ',s).strip()
+    s=re.sub(r'^[\s\-–—|:;,]+|[\s\-–—|:;,]+$','',s).strip()
+    return s
+
+def _v116_has_arabic_script(value):
+    return bool(_V116_ARABIC_RX.search(str(value or '')))
+
+def _v116_clean_original_text(value):
+    """
+    Original English/Turkish/Latin-script text is preserved.
+    Arabic/Persian-script fragments are removed from the rendered report.
+    """
+    s=_v116_strip_arabic_script(value)
+    s=re.sub(r'\s+',' ',s).strip()
+    return s
+
+def _v116_domain_label(url, fallback=''):
+    d=_v115_domain_from_url(url)
+    if d in V116_DOMAIN_LABELS:
+        return V116_DOMAIN_LABELS[d]
+    fb=_v116_clean_original_text(fallback)
+    if fb and not re.fullmatch(r'(facebook|instagram|tiktok|x|twitter)\.com',fb,re.I):
+        return fb
+    if d:
+        clean=d.lower()
+        clean=clean[4:] if clean.startswith('www.') else clean
+        return clean
+    return fb or 'Açık Kaynak'
+
+def _v116_display_source_from_row(row, detail=None):
+    detail=detail or {}
+    url=str(detail.get('canonical') or row.get('URL','') or '').strip()
+    platform=_v115_social_platform(url)
+
+    raw_source=detail.get('source') or row.get('Kaynak','') or row.get('Domain','')
+    raw_source=_v116_clean_original_text(raw_source)
+
+    if platform:
+        temp={
+            'Kaynak':raw_source,
+            'URL':url,
+            'Başlık':_v116_clean_original_text(row.get('Başlık',''))
+        }
+        disp=_v115_display_source(temp)
+        return _v116_clean_original_text(disp)
+
+    return _v116_domain_label(url,raw_source)
+
+def _v116_clean_title(value, url=''):
+    title=_v116_clean_original_text(value)
+
+    # Remove trailing publication fragments after Arabic-script cleanup.
+    title=re.sub(r'\s*[-|]\s*(Facebook|Instagram|TikTok|YouTube)\s*$','',title,flags=re.I).strip()
+
+    if title:
+        return title
+
+    label=_v116_domain_label(url,'')
+    return f'{label} kaynağındaki seçili içerik'
+
+def _v116_clean_sentence(s):
+    s=_v116_clean_original_text(s)
+    low=norm(s)
+    if not s or len(s)<35:
+        return ''
+    if any(x in low for x in V116_BOILERPLATE):
+        return ''
+    if re.match(r'^(home|menu|search|latest|breaking|news|video)\b',low):
+        return ''
+    return s
+
+def _v116_title_tokens(title):
+    return {
+        t for t in _v16_tokens(_v116_clean_original_text(title))
+        if len(t)>=4
+    }
+
+def _v116_title_body_overlap(title, body):
+    a=_v116_title_tokens(title)
+    b=_v16_tokens(_v116_clean_original_text(body))
+    if not a or not b:
+        return 0.0
+    return len(a & b)/max(1,min(len(a),8))
+
+def _v116_pick_summary_sentences(row,detail,max_sentences=7):
+    """
+    Full article summarization:
+      - preserves chronological article order,
+      - includes the beginning and end,
+      - selects central sentences by title/topic relevance,
+      - removes boilerplate,
+      - never creates facts that are not in the source.
+    """
+    seq=detail.get('_sequence') or []
+    cleaned=[]
+    for s in seq:
+        cs=_v116_clean_sentence(s)
+        if cs and cs not in cleaned:
+            cleaned.append(cs)
+
+    if len(cleaned)<3:
+        return []
+
+    n=len(cleaned)
+    title_tokens=_v116_title_tokens(row.get('Başlık',''))
+    topic_tokens=set(V16_TOPIC_TERMS)
+
+    # Always represent lead and conclusion if usable.
+    selected={0}
+    if n>1:
+        selected.add(1)
+    selected.add(n-1)
+
+    # Score middle sentences for relevance and concrete information.
+    scored=[]
+    for i,s in enumerate(cleaned[2:max(2,n-1)],start=2):
+        toks=_v16_tokens(s)
+        overlap=len(toks & title_tokens)
+        topical=len(toks & topic_tokens)
+        nums=len(re.findall(r'\b\d+(?:[.,]\d+)?\b',s))
+        quote=1 if ('"' in s or '“' in s or '”' in s) else 0
+        actor=1 if _v18_people({'Başlık':'','İçerik_Özeti':s}) else 0
+        score=overlap*4 + topical*2 + min(nums,2) + quote + actor*2
+        scored.append((score,i))
+
+    for _,i in sorted(scored,reverse=True)[:max(0,max_sentences-len(selected))]:
+        selected.add(i)
+
+    # If score selection does not cover the middle, explicitly add a middle sentence.
+    if n>=6 and not any(n//3 <= i <= (2*n)//3 for i in selected):
+        selected.add(n//2)
+
+    idx=sorted(selected)[:max_sentences]
+    return [cleaned[i] for i in idx]
+
+def _v116_article_summary(row,detail):
+    """
+    Returns: summary, fulltext_used, title_body_consistent
+    """
+    chosen=_v116_pick_summary_sentences(row,detail,7)
+    if chosen:
+        body=_v16_natural_join(chosen)
+        body=_v116_clean_original_text(body)
+        consistent=_v116_title_body_overlap(row.get('Başlık',''),body)>=0.18
+        return body[:4200],True,consistent
+
+    snippet=_v116_clean_original_text(row.get('İçerik_Özeti',''))
+    if snippet:
+        consistent=_v116_title_body_overlap(row.get('Başlık',''),snippet)>=0.12
+        return snippet[:2500],False,consistent
+
+    title=_v116_clean_title(row.get('Başlık',''),row.get('URL',''))
+    return title[:1200],False,True
+
+def _v116_turkish_view_analysis(rec):
+    """
+    Turkish analyst commentary grounded in title+summary+frames.
+    No raw English commentary is generated; English source text may remain
+    in the source-summary block.
+    """
+    title=_v116_clean_original_text(rec.get('Başlık',''))
+    body=_v116_clean_original_text(rec.get('Özet',''))
+    text=norm(f'{title} {body}')
+
+    group=_v114_clean_group_label(rec.get('Kesim','')) or 'Açık kaynak'
+    frames=[str(x) for x in rec.get('Çerçeveler',[]) if str(x).strip()]
+    frame_txt=', '.join(frames[:2]) if frames else 'siyasi süreç / güvenlik'
+
+    # If indexed social snippet does not actually match its own title,
+    # do not invent a substantive interpretation.
+    if rec.get('BaşlıkÖzetUyumu') is False and _v115_is_social_record(rec):
+        return (
+            f"Bu paylaşım {group} görünümünde değerlendirilmekle birlikte, "
+            "yakalanan indeks özeti ile paylaşım başlığı arasında yeterli içerik örtüşmesi bulunmadığından "
+            "kesin bir söylem sonucu çıkarılmamıştır. Analitik olarak yalnız başlığın işaret ettiği "
+            f"{frame_txt} çerçevesi izlenmeye değer görülmektedir."
+        )
+
+    # Specific content-grounded rules.
+    if (
+        ('warn' in text or 'uyar' in text)
+        and ('conspir' in text or 'komplo' in text or 'sabotaj' in text)
+        and ('öcalan' in text or 'ocalan' in text)
+    ):
+        view=(
+            "sürecin ilerlemesini bozabilecek girişimlere karşı dikkatli olunması gerektiği ve "
+            "sürecin kırılganlığının korunması gerektiği yönündeki görüş"
+        )
+    elif (
+        ('surrender' in text or 'teslim' in text)
+        and ('sdf' in text or 'sdg' in text)
+        and ('reject' in text or 'redd' in text)
+    ):
+        view=(
+            "SDF'nin feshi/entegrasyonu sonrasında Kürt aktörlerin bütün kazanımlarını kaybettiği veya "
+            "teslim olduğu anlatısının reddedilmesi; siyasi, idari ve kültürel kazanımların sürdüğü yönündeki görüş"
+        )
+    elif (
+        ('collaborator of the government' in text or 'government collaborator' in text)
+        and ('ocalan' in text or 'öcalan' in text)
+    ):
+        view=(
+            "Abdullah Öcalan'ın yeni dönemdeki rolünün hükümetle ilişki ve Kürt siyasi mücadelesinin yönü "
+            "üzerinden tartışıldığı eleştirel/sorgulayıcı yaklaşım"
+        )
+    elif (
+        ('gizli görüş' in text or 'secret meeting' in text)
+        and ('öcalan' in text or 'ocalan' in text)
+    ):
+        view=(
+            "Öcalan ile örgüt yöneticileri arasında gerçekleştiği ileri sürülen temasların "
+            "sürecin yönü ve örgüt içi koordinasyon bakımından belirleyici olabileceği yönündeki iddia"
+        )
+    elif (
+        ('temkinli' in text and 'destek' in text)
+        or ('cautious' in text and 'support' in text)
+    ):
+        view=(
+            "sürece koşulsuz değil, huzur, güvenlik ve bölgesel kalkınma hedefleriyle bağlantılı "
+            "temkinli bir destek verilmesi gerektiği yönündeki yaklaşım"
+        )
+    elif (
+        ('propaganda' in text or 'propoganda' in text or 'propagandasını' in text or 'propogandasını' in text)
+        and ('pkk' in text)
+    ):
+        view=(
+            "PKK'ya yönelik olumlayıcı/normalleştirici söylemlerin eleştirildiği ve konunun "
+            "hukuk ile güvenlik ekseninde ele alınması gerektiği yönündeki yaklaşım"
+        )
+    elif (
+        ('demokratik entegrasyon' in text or 'democratic integration' in text)
+        and ('kimlik' in text or 'identity' in text)
+    ):
+        view=(
+            "demokratik entegrasyonun kimlikten vazgeçme anlamına gelmediği; siyasal ve toplumsal "
+            "entegrasyonun kimliğin korunmasıyla birlikte yürütülebileceği yönündeki görüş"
+        )
+    elif (
+        ('öcalan' in text or 'ocalan' in text)
+        and any(x in text for x in ['özgür','freedom','umut hakk','hope right','statü','status'])
+    ):
+        view=(
+            "sürecin ilerleyişinde Abdullah Öcalan'ın hukuki/statüsel konumunun belirleyici bir başlık "
+            "olarak ele alınması gerektiği yönündeki görüş"
+        )
+    elif any(x in text for x in ['silahsızlan','silah bırak','disarmament','dissolution','fesih']):
+        view=(
+            "silahsızlanma, fesih ve silahlı yapıların siyasal/kurumsal düzene entegrasyonunun "
+            "sürecin temel uygulama eşiği olduğu yönündeki yaklaşım"
+        )
+    elif any(x in text for x in ['sdf','sdg','ypg','suriye','syria']):
+        view=(
+            "Türkiye'deki sürecin Suriye'deki SDG/YPG yapılanması ve Kürt siyasi-idari kazanımlarıyla "
+            "birlikte değerlendirilmesi gerektiği yönündeki bölgesel yaklaşım"
+        )
+    elif any(x in text for x in ['eleşt','critic','tepki','redd','reject','itiraz','karşı çıktı']):
+        view=(
+            "sürecin mevcut yürütülüşüne veya ilgili aktörlerin tutumuna eleştirel ve sorgulayıcı yaklaşılması gerektiği yönündeki görüş"
+        )
+    elif any(x in text for x in ['destek','support','olumlu','barış','peace','diyalog','dialogue']):
+        view=(
+            "sürecin diyalog ve siyasi çözüm kanalları üzerinden ilerletilmesine olumlu yaklaşan görüş"
+        )
+    else:
+        view=(
+            f"haber içeriğinde {frame_txt} başlıklarının öne çıkarıldığı ve gelişmenin bu çerçevede izlenmesi gerektiği yönündeki yaklaşım"
+        )
+
+    # State discourse group carefully as an analytical classification, not identity.
+    return (
+        f"Bu içerikte, raporun sınıflandırmasına göre {group} söylem çevresinde "
+        f"{view} öne çıkmaktadır. Bu değerlendirme, yalnızca seçili içeriğin başlık, haber metni/özet ve "
+        "tespit edilen çerçevelerine dayanmaktadır."
+    )
+
+def _v116_citation_records(rows,details):
+    records=[]
+    for i,(row,detail) in enumerate(zip(rows,details),1):
+        detail=detail or {}
+        summary,validated,consistent=_v116_article_summary(row,detail)
+        url=_v114_url(row,detail)
+
+        source=_v116_display_source_from_row(row,detail)
+        title=_v116_clean_title(row.get('Başlık',''),url)
+
+        # Ensure no Arabic/Persian characters survive in rendered fields.
+        source=_v116_clean_original_text(source)
+        title=_v116_clean_original_text(title)
+        summary=_v116_clean_original_text(summary)
+
+        records.append({
+            'No':i,
+            'Kaynak':source or _v116_domain_label(url,'Açık Kaynak'),
+            'Tarih':_v114_date(row,detail),
+            'Kesim':_v114_discourse(row),
+            'Tutum':_v114_stance(row),
+            'Çerçeveler':_v114_frames(row),
+            'Başlık':title,
+            'URL':url,
+            'Özet':summary,
+            'TamMetinDoğrulandı':bool(validated),
+            'BaşlıkÖzetUyumu':bool(consistent),
+            'Satır':row
+        })
+
+    return records
+
+def _v116_source_table(doc,records):
+    _v25_add_doc_heading(doc,'1. Kaynak Tablosu')
+
+    p=doc.add_paragraph(
+        'Kaynaklar rapor içinde [1], [2] biçiminde numaralandırılmıştır. '
+        'Başlıklar özgün dilinde korunur; Arap/Fars alfabesiyle yazılmış parçalar rapor görünümünden çıkarılır. '
+        'Bağlantılar doğrudan ilgili haber veya paylaşıma yönlendirir.'
+    )
+    p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+
+    cols=['No','Kaynak','Söylem Çevresi','Tarih','Başlık','Bağlantı']
+    table=doc.add_table(rows=1,cols=len(cols))
+    table.style='Table Grid'
+
+    for j,c in enumerate(cols):
+        table.rows[0].cells[j].text=c
+
+    for rec in records:
+        cells=table.add_row().cells
+        cells[0].text=f"[{rec['No']}]"
+        cells[1].text=_v116_clean_original_text(rec.get('Kaynak',''))[:90]
+        cells[2].text=_v114_clean_group_label(rec.get('Kesim',''))[:120]
+        cells[3].text=_v115_valid_date_text(rec.get('Tarih','')) or '—'
+        cells[4].text=_v116_clean_original_text(rec.get('Başlık',''))[:260]
+
+        lp=cells[5].paragraphs[0]
+        url=str(rec.get('URL','') or '').strip()
+        if url.startswith('http'):
+            try:
+                _word_hyperlink(
+                    lp,url,
+                    'Paylaşımı Aç' if _v115_is_social_record(rec) else 'Haberi Aç'
+                )
+            except Exception:
+                lp.add_run(url)
+        else:
+            lp.add_run('—')
+
+    for row in table.rows:
+        for cell in row.cells:
+            for pp in cell.paragraphs:
+                for run in pp.runs:
+                    run.font.name='Times New Roman'
+                    run.font.size=Pt(8.5)
+
+def _v116_general_analysis(doc,records):
+    _v25_add_doc_heading(doc,'2. Genel Analitik Değerlendirme')
+
+    p=doc.add_paragraph()
+    p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+    p.paragraph_format.first_line_indent=Cm(1.25)
+    p.paragraph_format.line_spacing=1.15
+
+    if not records:
+        p.add_run('Analiz sepetinde değerlendirilebilecek içerik bulunmamaktadır.')
+        return
+
+    groups=_v114_group_records(records)
+    sources={r.get('Kaynak','') for r in records if str(r.get('Kaynak','')).strip()}
+
+    p.add_run(
+        f"Analiz sepetinde {len(records)} içerik ve {len(sources)} benzersiz kaynak/hesap bulunmaktadır. "
+    )
+
+    if len(groups)>1:
+        p.add_run(
+            f"İçerikler {len(groups)} farklı söylem çevresine dağılmaktadır. "
+            "Kaynaklar birlikte okunduğunda, aynı süreç hakkında ortak bir gündem bulunmasına rağmen "
+            "aktörlerin hangi unsuru merkeze aldığı, hangi riski vurguladığı ve sürecin hangi şartlarla "
+            "ilerlemesi gerektiğini düşündüğü bakımından belirgin farklılıklar görülmektedir. "
+        )
+
+    # One Turkish, source-grounded comparative sentence per group.
+    for gi,(group,items) in enumerate(groups[:8]):
+        clean_group=_v114_clean_group_label(group)
+        chosen=items[:2]
+        if gi>0:
+            p.add_run(' ')
+
+        p.add_run(f"{clean_group} açısından ")
+
+        for ii,rec in enumerate(chosen):
+            if ii>0:
+                p.add_run('; diğer taraftan ')
+
+            source=_v116_clean_original_text(rec.get('Kaynak','')) or 'Açık Kaynak'
+            p.add_run(f"{source} ")
+            _v114_add_citation(p,rec)
+            p.add_run(' için ')
+            analysis=_v116_turkish_view_analysis(rec)
+            # Avoid repeating methodological tail in the synthesis.
+            analysis=re.sub(
+                r'\s*Bu değerlendirme, yalnızca seçili içeriğin.*$',
+                '',
+                analysis
+            ).strip()
+            analysis=re.sub(
+                r'^Bu içerikte,\s*raporun sınıflandırmasına göre\s*',
+                '',
+                analysis
+            ).strip()
+            p.add_run(analysis[0].lower()+analysis[1:] if analysis else 'ilgili görüş öne çıkmaktadır')
+
+        p.add_run('.')
+
+def _v116_article_sections(doc,records):
+    _v25_add_doc_heading(doc,'3. İçerik Bazlı Analiz')
+
+    if not records:
+        p=doc.add_paragraph('İncelenecek içerik bulunmamaktadır.')
+        p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        return
+
+    for idx,rec in enumerate(records,1):
+        source=_v116_clean_original_text(rec.get('Kaynak','')) or 'Açık Kaynak'
+        title=_v116_clean_original_text(rec.get('Başlık',''))
+        date_txt=_v115_valid_date_text(rec.get('Tarih',''))
+        body=_v116_clean_original_text(rec.get('Özet',''))
+        social=_v115_is_social_record(rec)
+
+        # Compact item heading.
+        hp=doc.add_paragraph()
+        hp.paragraph_format.space_before=Pt(8)
+        hp.paragraph_format.space_after=Pt(3)
+        hr=hp.add_run(f"3.{idx}. [{rec['No']}] {source}")
+        hr.bold=True
+        hr.font.name='Times New Roman'
+        hr.font.size=Pt(11)
+
+        # Title line - original English/Turkish title preserved.
+        tp=doc.add_paragraph()
+        tp.paragraph_format.space_after=Pt(3)
+        tr=tp.add_run('Başlık: ')
+        tr.bold=True
+        tp.add_run(title or 'Başlık bilgisi bulunmamaktadır.')
+
+        if date_txt:
+            tp.add_run(f"  |  Tarih: {date_txt}")
+
+        # Source-content summary.
+        sp=doc.add_paragraph()
+        sp.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        sp.paragraph_format.first_line_indent=Cm(1.25)
+        sp.paragraph_format.line_spacing=1.15
+        sp.paragraph_format.space_after=Pt(5)
+
+        sr=sp.add_run('İçerik Özeti: ')
+        sr.bold=True
+        if body:
+            sp.add_run(body)
+            if sp.text and sp.text[-1] not in '.!?':
+                sp.add_run('.')
+        else:
+            sp.add_run('Kaynak içeriğine ilişkin yeterli metin bulunmamaktadır.')
+
+        # Turkish analyst commentary.
+        ap=doc.add_paragraph()
+        ap.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        ap.paragraph_format.first_line_indent=Cm(1.25)
+        ap.paragraph_format.line_spacing=1.15
+        ap.paragraph_format.space_after=Pt(4)
+
+        ar=ap.add_run('Analitik Değerlendirme: ')
+        ar.bold=True
+        ap.add_run(_v116_turkish_view_analysis(rec))
+
+        # Source link.
+        lp=doc.add_paragraph()
+        lp.paragraph_format.space_after=Pt(8)
+        lr=lp.add_run('Kaynak: ')
+        lr.bold=True
+        url=str(rec.get('URL','') or '').strip()
+        if url.startswith('http'):
+            try:
+                _word_hyperlink(
+                    lp,url,
+                    'Paylaşımı Aç' if social else 'Haberi Aç'
+                )
+            except Exception:
+                lp.add_run(url)
+        else:
+            lp.add_run('Bağlantı bulunmamaktadır.')
+
+def _v116_conclusion(doc,records):
+    _v25_add_doc_heading(doc,'4. Sonuç')
+
+    p=doc.add_paragraph()
+    p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+    p.paragraph_format.first_line_indent=Cm(1.25)
+    p.paragraph_format.line_spacing=1.15
+
+    if not records:
+        p.add_run('Sonuç oluşturmak için yeterli içerik bulunmamaktadır.')
+        return
+
+    frame_counts={}
+    group_counts={}
+    for rec in records:
+        g=_v114_clean_group_label(rec.get('Kesim',''))
+        group_counts[g]=group_counts.get(g,0)+1
+        for f in rec.get('Çerçeveler',[]):
+            frame_counts[str(f)]=frame_counts.get(str(f),0)+1
+
+    top_frames=sorted(frame_counts.items(),key=lambda x:x[1],reverse=True)[:4]
+    top_groups=sorted(group_counts.items(),key=lambda x:x[1],reverse=True)[:4]
+
+    p.add_run(
+        "Sepetteki içerikler birlikte değerlendirildiğinde, "
+    )
+    if top_frames:
+        p.add_run(
+            "gündemin en yoğun olarak "
+            + ', '.join(f"{k} ({v})" for k,v in top_frames)
+            + " çerçevelerinde toplandığı görülmektedir. "
+        )
+
+    if len(top_groups)>=2:
+        p.add_run(
+            "Farklı söylem çevreleri aynı sürece ilişkin ortak aktör ve gelişmeleri izlemekle birlikte, "
+            "içeriklerin bir bölümünde diyalog ve siyasi süreç, bir bölümünde güvenlik ve silahsızlanma, "
+            "bir bölümünde ise Kürt aktörlerin hukuki/siyasi statüsü ve bölgesel gelişmeler öne çıkmaktadır. "
+            "Bu farklılaşma, seçilen kaynakların olayı hangi unsur üzerinden anlamlandırdığını göstermektedir. "
+        )
+    else:
+        p.add_run(
+            "Kaynakların büyük bölümü aynı söylem çevresinde toplandığından, kesimler arası karşılaştırma "
+            "sınırlı tutulmalıdır. "
+        )
+
+    p.add_run(
+        "Rapordaki analitik değerlendirmeler yalnızca seçili kaynaklarda açıkça görülen içerik, vurgu ve "
+        "çerçevelere dayanmaktadır; kaynak veya kişiler hakkında içerik dışı siyasi nitelendirme yapılmamıştır."
+    )
+
+# Override V114/V115 report components.
+_v114_citation_records = _v116_citation_records
+_v114_source_table = _v116_source_table
+_v114_general_analysis = _v116_general_analysis
+_v114_article_sections = _v116_article_sections
+_v114_conclusion = _v116_conclusion
+
+# ============================================================
+# /V116 DERLİ TOPLU TÜRKÇE ANALİST RAPORU
 # ============================================================
 
 # ============================================================
@@ -25559,7 +26161,7 @@ else:
         if st.session_state.get('v3_report_bytes'):
             st.download_button('⬇️ KAYNAKLI ANALİZ RAPORUNU İNDİR',
                 st.session_state['v3_report_bytes'],
-                file_name=f'Terorsuz_Turkiye_Analiz_Sepeti_Kaynakli_Rapor_V115_{date.today()}.docx',
+                file_name=f'Terorsuz_Turkiye_Analiz_Sepeti_Degerlendirme_Raporu_V116_{date.today()}.docx',
                 mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                 use_container_width=True,key='v3_report_download')
 
