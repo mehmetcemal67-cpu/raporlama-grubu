@@ -13675,6 +13675,198 @@ def _v35_rescue_mode(mode,hours,cutoff,cache_snapshot,user_query):
     except Exception:
         return [],diags,cache_updates
 
+
+# ============================================================
+# V113 — KÜRT MEDYASI KAPSAM GENİŞLETME
+#
+# KARARLI TABAN: kullanıcının bu turda yüklediği dosya.
+# Yalnız kaynak evreni / Kürt medyası görünürlüğü genişletilir.
+# Tarama motorunun diğer aileleri, Gündem ve Söylem Haritası,
+# Gephi, sepetler ve raporlama mantığı değiştirilmez.
+#
+# Yaklaşım:
+# - "Kürt Medyası" görünümü bir şemsiye izleme görünümüdür.
+# - Kaynağın gerçek aile etiketi korunur (örn. Bianet yerli;
+#   ANHA / Özgür Politika hareket-çevresi açık kaynak).
+# - Böylece metodolojik ayrım bozulmadan aynı kaynak Kürt medyası
+#   şemsiye görünümünde de izlenebilir.
+# ============================================================
+
+# Kürt bölgesel / diaspora / Kürt meselesi odaklı ek tarama kaynakları.
+# Bianet genel bir yerli yayın olduğundan ana kaynak ailesi "Yerli Basın"
+# olarak kalır; yalnız Kürt medyası şemsiye görünümüne ve hedefli taramaya
+# ayrıca dahil edilir.
+V113_KURDISH_EXTRA_SCAN = [
+    'darkamazi.site',          # Darka Mazi
+    'eukurd.com',              # Kürt diasporası / çok dilli
+    'bianet.org',              # Türkiye merkezli hak-temelli / Kürt meselesi takibi
+]
+
+# Kürt hareketi / PKK-KCK söylemi / Rojava-Kürt siyasal alanını düzenli
+# izleyen ek açık kaynaklar. ANHA (hawarnews.com), Yeni Özgür Politika
+# (ozgurpolitika.com), Medya News, JINNEWS, Mezopotamya Ajansı vb.
+# zaten kararlı tabanda mevcuttur; aşağıdakiler yeni eklerdir.
+V113_MOVEMENT_EXTRA = [
+    'medyahabertv.digital',
+    'medyahabertv.com',
+    'rojnews.news',
+    'rojnews.video',
+    'nuceciwan101.com',
+    'ajansawelat1.com',
+]
+
+# Mevcut movement havuzunu genişlet; mevcut girişleri ve sıralamayı koru.
+TT_MOVEMENT_V9 = list(dict.fromkeys(TT_MOVEMENT_V9 + V113_MOVEMENT_EXTRA))
+TT_MOVEMENT_OSINT = list(dict.fromkeys(TT_MOVEMENT_OSINT + V113_MOVEMENT_EXTRA))
+TT_KURDISH_MEDIA = list(dict.fromkeys(
+    TT_KURDISH_MEDIA
+    + V113_KURDISH_EXTRA_SCAN
+    + V113_MOVEMENT_EXTRA
+))
+
+# Şemsiye Kürt medyası görünümünde gösterilecek alanlar.
+# ANHA ve Özgür Politika kararlı tabanda zaten movement havuzunda yer alır.
+V113_KURDISH_UMBRELLA = list(dict.fromkeys(
+    list(TT_KURDISH_REGIONAL_V9)
+    + list(TT_MOVEMENT_V9)
+    + V113_KURDISH_EXTRA_SCAN
+))
+
+V113_KURDISH_SOURCE_LABELS = {
+    'darkamazi.site':'Darka Mazi — Kürdistan / Kürt ulusal gündemi',
+    'hawarnews.com':'ANHA / Hawar News — Rojava / Suriye Kürt alanı',
+    'bianet.org':'Bianet — Türkiye merkezli hak-temelli / Kürt meselesi takibi',
+    'ozgurpolitika.com':'Yeni Özgür Politika — Kürt diasporası / hareket çevresi',
+    'medyahabertv.digital':'Medya Haber TV — Kürtçe/Türkçe açık kaynak yayın',
+    'medyahabertv.com':'Medya Haber TV — Kürtçe/Türkçe açık kaynak yayın',
+    'rojnews.news':'RojNews — Kürt gündemi / bölgesel açık kaynak',
+    'rojnews.video':'RojNews Video — Kürt gündemi / video açık kaynak',
+    'nuceciwan101.com':'Nûçe Ciwan — Kürtçe/Türkçe gençlik haber ajansı',
+    'ajansawelat1.com':'Ajansa Welat — Kürtçe açık kaynak haber',
+    'eukurd.com':'EUKURD — Kürt diasporası / Avrupa açık kaynak'
+}
+
+def _v113_kurdish_umbrella_domain(value):
+    d=_tt_norm_domain(value)
+    return _tt_domain_match(d,V113_KURDISH_UMBRELLA)
+
+def _v113_row_domain(row):
+    try:
+        d=_tt_norm_domain(
+            row.get('Domain','')
+            or row.get('URL','')
+            or row.get('Yayıncı_URL','')
+        )
+        if d:
+            return d
+        return _tt_norm_domain(
+            infer_source(
+                row.get('Kaynak','') or row.get('Yayıncı',''),
+                row.get('Yayıncı_URL',''),
+                row.get('URL','')
+            )
+        )
+    except Exception:
+        return ''
+
+def _v113_kurdish_perspective(domain_value,current=''):
+    d=_tt_norm_domain(domain_value)
+    return V113_KURDISH_SOURCE_LABELS.get(d,str(current or 'Kürt medyası / Kürt meselesi açık kaynak'))
+
+# ------------------------------------------------------------
+# V113 TARGETED QUERIES
+# ------------------------------------------------------------
+
+_V113_BASE_V22_KURDISH_QUERIES = _v22_kurdish_queries
+def _v22_kurdish_queries():
+    q=list(_V113_BASE_V22_KURDISH_QUERIES())
+
+    # Ek kaynakları site gruplarıyla hedefle; sorgu sayısını düşük tut.
+    for sites in _v22_group_sites(V113_KURDISH_EXTRA_SCAN,6):
+        q.append(
+            f'(PKK OR KCK OR Ocalan OR Öcalan OR "Terörsüz Türkiye" '
+            f'OR "barış süreci" OR "çözüm süreci" OR SDF OR YPG) {sites}'
+        )
+
+    # Yayın adı üzerinden indeks kurtarma. Özellikle site alan adı değişimi,
+    # dil varyantı veya arama motoru indeksinin URL'yi göstermediği durumlar için.
+    q.extend([
+        '("Darka Mazi" OR Bianet OR EUKURD) (PKK OR Öcalan OR Ocalan OR Kürt OR "barış süreci")',
+        '("Darka Mazi" OR Bianet) ("Terörsüz Türkiye" OR KCK OR SDF OR YPG)',
+    ])
+    return list(dict.fromkeys(q))
+
+_V113_BASE_V22_MOVEMENT_QUERIES = _v22_movement_queries
+def _v22_movement_queries():
+    q=list(_V113_BASE_V22_MOVEMENT_QUERIES())
+
+    for sites in _v22_group_sites(V113_MOVEMENT_EXTRA,6):
+        q.append(
+            f'(PKK OR KCK OR Ocalan OR Öcalan OR "peace process" '
+            f'OR "Barış ve Demokratik Toplum" OR SDF OR YPG) {sites}'
+        )
+
+    # ANHA ve Yeni Özgür Politika zaten mevcut domain havuzunda; marka
+    # sorguları indeks kaçaklarını azaltır. "Med Nûçe" tarihsel bir yayın
+    # adı olduğundan aktif kaynakmış gibi sınıflandırılmaz; ilgili güncel
+    # sonuçları Medya Haber / diğer aktif açık kaynaklarda aramak için
+    # marka terimi yardımcı anahtar olarak tutulur.
+    q.extend([
+        '("ANHA" OR "Hawar News") (Ocalan OR Öcalan OR PKK OR KCK OR SDF)',
+        '("Yeni Özgür Politika" OR "Özgür Politika") (Öcalan OR PKK OR KCK OR süreç)',
+        '("Medya Haber" OR "Med Nûçe" OR "Med Nuçe") (Öcalan OR PKK OR KCK OR Kürt)',
+        '("RojNews" OR "Nûçe Ciwan" OR "Ajansa Welat") (Öcalan OR PKK OR KCK OR Kürt)'
+    ])
+    return list(dict.fromkeys(q))
+
+# ------------------------------------------------------------
+# V113 KURDISH-MODE NORMALIZATION
+#
+# Extra scan sources are accepted in the kurdish scan only.
+# Their ordinary family classification outside this mode remains unchanged.
+# ------------------------------------------------------------
+
+_V113_BASE_NORMALIZE_ROWS = normalize_rows
+
+def normalize_rows(raw,cutoff,mode,user_query):
+    if mode!='kurdish':
+        return _V113_BASE_NORMALIZE_ROWS(raw,cutoff,mode,user_query)
+
+    # The base Kurdish normalizer only admits TT_KURDISH_REGIONAL_V9.
+    # Temporarily extend that acceptance set for this one normalization call,
+    # then restore it immediately so Bianet remains "Yerli Basın" elsewhere.
+    original=list(TT_KURDISH_REGIONAL_V9)
+    try:
+        TT_KURDISH_REGIONAL_V9[:] = list(dict.fromkeys(
+            original + V113_KURDISH_EXTRA_SCAN
+        ))
+        rows,reasons=_V113_BASE_NORMALIZE_ROWS(
+            raw,cutoff,mode,user_query
+        )
+    finally:
+        TT_KURDISH_REGIONAL_V9[:] = original
+
+    for r in rows:
+        d=_v113_row_domain(r)
+        if d in V113_KURDISH_SOURCE_LABELS:
+            r['Kaynak Perspektifi']=_v113_kurdish_perspective(
+                d,
+                r.get('Kaynak Perspektifi','')
+            )
+        # UI'da kaynak adının mümkün olduğunca okunur görünmesi.
+        if d=='darkamazi.site' and not str(r.get('Kaynak','')).strip():
+            r['Kaynak']='Darka Mazi'
+        elif d=='eukurd.com' and not str(r.get('Kaynak','')).strip():
+            r['Kaynak']='EUKURD'
+        elif d=='bianet.org' and not str(r.get('Kaynak','')).strip():
+            r['Kaynak']='Bianet'
+
+    return rows,reasons
+
+# ============================================================
+# /V113 KÜRT MEDYASI KAPSAM GENİŞLETME
+# ============================================================
+
 # ============================================================
 # /V35 KAPSAM KURTARMA
 # ============================================================
@@ -19777,249 +19969,6 @@ def _v3_remove_analysis(indices):
         except Exception:
             pass
 
-def _v3_resolve_kesim(rec):
-    """
-    Önce mevcut kaynak/alan tabanlı sınıflandırmayı (_v110_section) dener.
-    Sonuç belirsiz/genel bir kovaya düşerse (kaynak bazlı listelemenin
-    yakalayamadığı, manuel eklenmiş ya da tanınmayan alan adlı içerikler),
-    YALNIZ o durumda başlık+özet metnine dayalı içerik-bazlı ideolojik
-    sınıflandırmaya (_v25_social_discourse — sistemde zaten sosyal medya
-    için kullanılan aynı anahtar kelime seti) düşer. Böylece "kaynak bazlı
-    listelemede yakalanamayan" haberler de en azından metin içeriğine göre
-    bir kesime yerleştirilebilir.
-    """
-    try:
-        k=str(_v110_section(rec) or '').strip()
-    except Exception:
-        k=''
-    if not k:
-        k='📎 Diğer Açık Kaynak'
-
-    unresolved={
-        '📎 Diğer Açık Kaynak',
-        '📱 Sosyal Medya — Diğer / Belirsiz',
-        '🇹🇷 Diğer Yerli / Ana Akım'
-    }
-    fallback_used=False
-    if k in unresolved:
-        try:
-            old=_v25_social_discourse(rec)
-        except Exception:
-            old=''
-        alt={
-            'Sosyal Medya — Milliyetçi / Güvenlikçi Söylem':'🇹🇷 Türk Milliyetçi / Güvenlikçi',
-            'Sosyal Medya — Hükümet / Süreç Destekleyici Söylem':'🕌 Muhafazakâr Medya / Söylem',
-            'Sosyal Medya — Muhalif / Eleştirel Söylem':'🗳️ Muhalif / Eleştirel Çevre',
-            'Sosyal Medya — Sol / Hak-Temelli Söylem':'✊ Türk Solu / Hak-Temelli Çevre',
-            'Sosyal Medya — PKK/KCK Çizgisiyle Uyumlu Söylem':'🛰️ PKK/KCK Aktörleri ve Hareket Çevresi'
-        }.get(old)
-        if alt:
-            k=alt
-            fallback_used=True
-    return k,fallback_used
-
-def _v3_basket_political_analysis(basket):
-    """
-    Sepetteki içerikleri, uygulamanın zaten kullandığı ideolojik/kaynak çevresi
-    sınıflandırmasına (Kesim) göre gruplar; her kesim için baskın tutum
-    (Karşıt/Güvenlikçi, Destekleyici/İlerleme Odaklı, Şartlı/Temkinli, Eleştirel/
-    Şüpheci, Nötr/Bilgilendirici), öne çıkan çerçeveler/kavramlar ve GERÇEK
-    metinden alınmış örnek ifadelerle bir "genel değerlendirme" sentezi üretir.
-    Kaynak bazlı listelemenin yakalayamadığı / etiketleyemediği içerikler için
-    başlık+özet metnine dayalı içerik-bazlı ideolojik sınıflandırmaya (bkz.
-    _v3_resolve_kesim) düşülür ve bu durum kullanıcıya açıkça belirtilir.
-    Görüş uydurulmaz — yalnız gerçek başlık/özet metninden anahtar kelime
-    düzeyinde çıkarılan tutum/çerçeve bilgisi ve gerçek cümle alıntıları kullanılır.
-    """
-    from collections import Counter
-    rows=[]
-    for rec in basket:
-        title=str(rec.get('Başlık','') or '')
-        ozet=str(rec.get('İçerik_Özeti','') or '')
-        kesim,fallback_used=_v3_resolve_kesim(rec)
-        try:
-            stance=_v25_stance(rec)
-        except Exception:
-            stance='Nötr / Bilgilendirici'
-        try:
-            frame=_tt_frame(f'{title} {ozet}')
-        except Exception:
-            frame='Genel Süreç'
-        try:
-            concepts=_v110_concepts(rec)
-        except Exception:
-            concepts=set()
-        try:
-            real_sentence=_v28_real_sentence(rec)
-        except Exception:
-            real_sentence=title
-        rows.append({
-            'kesim':kesim,'fallback':fallback_used,'stance':stance,'frame':frame,
-            'title':title,'source':str(rec.get('Kaynak','') or ''),
-            'url':str(rec.get('URL','') or ''),'concepts':concepts,
-            'real_sentence':real_sentence
-        })
-
-    groups={}
-    for r in rows:
-        groups.setdefault(r['kesim'],[]).append(r)
-
-    try:
-        order=[g for g in V32_SECTION_ORDER if g in groups]+[g for g in groups if g not in V32_SECTION_ORDER]
-    except Exception:
-        order=list(groups.keys())
-
-    out=[]
-    for g in order:
-        items=groups[g]
-        n_fallback=sum(1 for x in items if x['fallback'])
-
-        stance_counter=Counter(x['stance'] for x in items)
-        dom_stance=stance_counter.most_common(1)[0][0]
-
-        frame_counter=Counter()
-        for x in items:
-            for f in str(x['frame']).split(' / '):
-                f=f.strip()
-                if f:
-                    frame_counter[f]+=1
-        dom_frames=[f for f,_ in frame_counter.most_common(3)]
-
-        concept_counter=Counter()
-        for x in items:
-            for c in x['concepts']:
-                concept_counter[c]+=1
-        top_concepts=[c for c,_ in concept_counter.most_common(6)]
-
-        # Genel değerlendirme cümlesi: sayı + baskın tutum + çerçeve/kavram +
-        # gerçek metinden 1-2 örnek ifade (uydurma yok, kaynak metninden alınır).
-        _frames_txt=', '.join(dom_frames) if dom_frames else 'belirgin bir ortak çerçeve yok'
-        _concepts_txt=', '.join(top_concepts) if top_concepts else 'belirgin bir ortak kavram yok'
-        summary=(
-            f"Bu kesimden yakalanan {len(items)} içerikte baskın tutum **{dom_stance}** yönünde; "
-            f"öne çıkan çerçeveler: {_frames_txt}; öne çıkan kavramlar: {_concepts_txt}."
-        )
-        if n_fallback:
-            summary += (
-                f" ({n_fallback} içerik, kaynak bazlı listelemede net etiketlenemediği için "
-                f"başlık/özet metnine dayalı otomatik sınıflandırmayla bu kesime yerleştirildi.)"
-            )
-
-        quotes=[]
-        seen_src=set()
-        for x in items:
-            if x['source'] in seen_src:
-                continue
-            quotes.append({
-                'Gerçek İfade':x['real_sentence'][:220],
-                'Kaynak':x['source'],
-                'URL':x['url']
-            })
-            seen_src.add(x['source'])
-            if len(quotes)>=3:
-                break
-        if not quotes:
-            quotes=[{
-                'Gerçek İfade':x['real_sentence'][:220],
-                'Kaynak':x['source'],'URL':x['url']
-            } for x in items[:3]]
-
-        evidence=[{
-            'Başlık':x['title'][:140],'Kaynak':x['source'],'URL':x['url']
-        } for x in items[:6]]
-
-        out.append({
-            'Kesim':g,
-            'İçerik Sayısı':len(items),
-            'Baskın Yaklaşım':dom_stance,
-            'Yaklaşım Dağılımı':', '.join(f'{k} ({v})' for k,v in stance_counter.most_common()),
-            'Öne Çıkan Çerçeveler':', '.join(dom_frames) if dom_frames else '—',
-            'Öne Çıkan Kavramlar':', '.join(top_concepts) if top_concepts else '—',
-            'Genel Değerlendirme':summary,
-            'Gerçek Örnek İfadeler':quotes,
-            'Örnek İçerikler':evidence,
-            'Otomatik Sınıflandırılan':n_fallback
-        })
-    return out
-
-def _v3_basket_compare(basket):
-    """
-    Analiz Sepetindeki içerikleri gerçek metinden çıkarılan kişi/kurum/kavram
-    imzalarıyla karşılaştırır: ortak unsurlar, her içeriğe özgü unsurlar ve
-    ikili (Jaccard) benzerlik skorları. Uydurma benzerlik üretmez; yalnız
-    mevcut V110 çıkarım fonksiyonlarını (kişi/varlık/kavram/token) kullanır.
-    """
-    from collections import Counter
-    feats=[]
-    for rec in basket:
-        f=_v110_feature_row(rec)
-        f['signature']=(
-            set(f.get('people') or set())
-            | set(f.get('entities') or set())
-            | set(f.get('concepts') or set())
-        )
-        feats.append(f)
-
-    sig_counter=Counter()
-    for f in feats:
-        for s in f['signature']:
-            sig_counter[s]+=1
-
-    common=sorted(
-        [(s,c) for s,c in sig_counter.items() if c>=2],
-        key=lambda x:-x[1]
-    )
-    common_df=pd.DataFrame(common[:25],columns=['Ortak Aktör / Kurum / Kavram','Kaç İçerikte Geçiyor'])
-
-    per_item=[]
-    for f in feats:
-        unique=sorted([s for s in f['signature'] if sig_counter.get(s,0)==1])[:8]
-        shared_n=sum(1 for s in f['signature'] if sig_counter.get(s,0)>=2)
-        per_item.append({
-            'Başlık':(f.get('title') or '')[:120],
-            'Kaynak':f.get('source') or '',
-            'Kesim / Kaynak Ailesi':f.get('family') or '',
-            'İçerik Türü':f.get('kind') or '',
-            'Ortak Unsur Sayısı':shared_n,
-            'Bu İçeriğe Özgü Unsurlar':', '.join(unique) if unique else '—',
-            'URL':f.get('url') or ''
-        })
-    per_item_df=pd.DataFrame(per_item)
-
-    n=len(feats)
-    sim_rows=[]
-    best_pair=None; best_score=-1.0
-    worst_pair=None; worst_score=2.0
-    for i in range(n):
-        for j in range(i+1,n):
-            a=feats[i].get('full_tokens') or set()
-            b=feats[j].get('full_tokens') or set()
-            union=len(a|b)
-            score=(len(a & b)/union) if union else 0.0
-            sim_rows.append({
-                'İçerik A':(feats[i].get('title') or '')[:80],
-                'İçerik B':(feats[j].get('title') or '')[:80],
-                'Benzerlik (Jaccard)':round(score,3),
-                'Ortak Kelime Sayısı':len(a & b)
-            })
-            if score>best_score:
-                best_score=score; best_pair=(feats[i],feats[j])
-            if score<worst_score:
-                worst_score=score; worst_pair=(feats[i],feats[j])
-
-    sim_df=pd.DataFrame(sim_rows)
-    if not sim_df.empty:
-        sim_df=sim_df.sort_values('Benzerlik (Jaccard)',ascending=False).reset_index(drop=True)
-
-    return {
-        'per_item':per_item_df,
-        'common':common_df,
-        'similarity':sim_df,
-        'best_pair':best_pair,'best_score':max(best_score,0.0),
-        'worst_pair':worst_pair,'worst_score':(worst_score if worst_score<=1.0 else 0.0),
-        'n':n
-    }
-
 def _v3_make_note(selected,key_prefix):
     if selected is None or selected.empty:
         st.warning('Önce en az bir haber seçin.')
@@ -23851,6 +23800,17 @@ else:
         foreign_mask=_fam_series.eq('Yabancı Basın')
         kurdish_mask=_fam_series.eq('Kürt Bölgesel Medyası')
         movement_mask=_fam_series.eq('PKK/KCK Açık Kaynak')
+
+        # V113 — Kürt Medyası sekmesi bir şemsiye görünümüdür:
+        # bölgesel kaynaklar + ANHA/Özgür Politika vb. hareket çevresi açık
+        # kaynakları + Bianet/Darka Mazi/EUKURD gibi ek izleme kaynakları.
+        # Ana aile etiketleri değiştirilmez; diğer paneller aynı kalır.
+        _v113_kurdish_domain_mask=df.apply(
+            lambda _r:_v113_kurdish_umbrella_domain(_v113_row_domain(_r)),
+            axis=1
+        )
+        kurdish_media_display_mask=(kurdish_mask | _v113_kurdish_domain_mask)
+
         commentary_mask=df.get(
             'İçerik Türü',
             pd.Series('',index=df.index)
@@ -23871,7 +23831,7 @@ else:
         sc1.metric('Yerli',int(local_mask.sum()))
         sc2.metric('Yabancı',int(foreign_mask.sum()))
         sc3.metric('Sosyal',int(social_mask.sum()))
-        sc4.metric('Kürt Bölgesel',int(kurdish_mask.sum()))
+        sc4.metric('Kürt Medyası',int(kurdish_media_display_mask.sum()))
         sc5.metric('PKK/KCK',int(movement_mask.sum()))
         sc6.metric('Think Tank',int(think_mask.sum()))
 
@@ -23893,7 +23853,7 @@ else:
             '📱 Sosyal Medya',
             '🌍 Yabancı Basın',
             '🧠 Think Tank',
-            '🟣 Kürt Bölgesel',
+            '🟣 Kürt Medyası',
             '🛰️ PKK/KCK Açık Kaynak',
             '✍️ Yazar / Yorum'
         ])
@@ -23918,9 +23878,15 @@ else:
                  'İçerik Türü','Başlık','İçerik_Özeti','URL']
             )
         with tab_kurdish:
+            st.caption(
+                'V113: Kürt bölgesel medya ile Kürt meselesini düzenli izleyen seçili '
+                'Türkiye/diaspora kaynakları ve ANHA, Yeni Özgür Politika, Medya Haber, '
+                'RojNews, Nûçe Ciwan gibi açık kaynaklar bu şemsiye görünümde birlikte gösterilir. '
+                'Kaynakların asıl aile/perspektif etiketleri korunur.'
+            )
             _v3_source_table(
                 'v33_kurdish_media',
-                df[kurdish_mask],
+                df[kurdish_media_display_mask],
                 ['Seç','Tarih','Kaynak','Kaynak Perspektifi','Kategori','Yaklaşım',
                  'Çerçeve','İçerik Türü','Başlık','İçerik_Özeti','Risk_Skoru','URL']
             )
@@ -24796,110 +24762,6 @@ else:
                 file_name=f'Terorsuz_Turkiye_Analiz_Raporu_{date.today()}.docx',
                 mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                 use_container_width=True,key='v3_report_download')
-
-        st.markdown('---')
-        st.markdown('##### 🗣️ Kesim Bazlı Siyasi Analiz — "Kim Ne Dedi?"')
-        st.caption(
-            'Sepetteki içerikler, sistemin zaten kullandığı ideolojik/kaynak çevresi sınıflandırmasına göre '
-            '(Türk Milliyetçi/Güvenlikçi, Muhafazakâr, Muhalif/Eleştirel, Türk Solu, PKK/KCK Aktörleri, Kürt '
-            'Bölgesel Medyası, Uluslararası Basın, Think Tank vb.) gruplanır. Kaynak bazlı listelemenin '
-            'alan adından net şekilde etiketleyemediği içerikler (ör. manuel eklenen veya tanınmayan '
-            'kaynaklardan gelen haberler) için başlık/özet metnine bakılarak aynı sistemde sosyal medya '
-            'için de kullanılan içerik-bazlı ideolojik sınıflandırmaya otomatik olarak düşülür; bu durum '
-            'her kesim kartında ayrıca belirtilir. Her kesim için baskın tutum (Karşıt/Güvenlikçi, '
-            'Destekleyici/İlerleme Odaklı, Şartlı/Temkinli, Eleştirel/Şüpheci, Nötr/Bilgilendirici), öne çıkan '
-            'çerçeveler/kavramlar ve GERÇEK kaynak metninden alınmış örnek ifadelerle bir genel değerlendirme '
-            'sentezi üretilir. Görüş uydurulmaz; sonuçlar kesin siyasi yargı değil, açık kaynak eğilim okumasıdır.'
-        )
-        _pol=_v3_basket_political_analysis(basket)
-        if not _pol:
-            st.info('Kesim bazlı analiz için sepette içerik bulunamadı.')
-        else:
-            _pcols=st.columns(min(4,len(_pol)) or 1)
-            for _i,_p in enumerate(_pol):
-                _pcols[_i % len(_pcols)].metric(_p['Kesim'],_p['İçerik Sayısı'])
-            for _p in _pol:
-                _badge=f" · 🔎 {_p['Otomatik Sınıflandırılan']} içerik metin-bazlı otomatik sınıflandırıldı" if _p['Otomatik Sınıflandırılan'] else ''
-                with st.expander(
-                    f"{_p['Kesim']} — {_p['İçerik Sayısı']} içerik — Baskın yaklaşım: {_p['Baskın Yaklaşım']}{_badge}",
-                    False
-                ):
-                    st.markdown(f"**Genel Değerlendirme:** {_p['Genel Değerlendirme']}")
-                    st.markdown(f"**Yaklaşım Dağılımı:** {_p['Yaklaşım Dağılımı']}")
-                    st.markdown(f"**Öne Çıkan Çerçeveler:** {_p['Öne Çıkan Çerçeveler']}")
-                    st.markdown(f"**Öne Çıkan Kavramlar:** {_p['Öne Çıkan Kavramlar']}")
-                    st.markdown('**Gerçek Örnek İfadeler** (kaynak metninden, uydurulmamış):')
-                    st.dataframe(
-                        pd.DataFrame(_p['Gerçek Örnek İfadeler']),
-                        hide_index=True,use_container_width=True,
-                        column_config={
-                            'Gerçek İfade':st.column_config.TextColumn(width='large'),
-                            'URL':st.column_config.LinkColumn('Bağlantı',display_text='Aç')
-                        },
-                        height=min(220,80+35*len(_p['Gerçek Örnek İfadeler']))
-                    )
-                    st.markdown('**Bu Kesimdeki Tüm İçerikler:**')
-                    st.dataframe(
-                        pd.DataFrame(_p['Örnek İçerikler']),
-                        hide_index=True,use_container_width=True,
-                        column_config={'URL':st.column_config.LinkColumn('Bağlantı',display_text='Aç')},
-                        height=min(300,80+35*len(_p['Örnek İçerikler']))
-                    )
-
-        st.markdown('---')
-        st.markdown('##### 🔍 Sepet İçi Karşılaştırmalı Analiz — Benzer / Farklı Yönler')
-        st.caption(
-            'Sepetteki tüm içerikler kişi/kurum, kavram ve çerçeve düzeyinde karşılaştırılır: hangi unsurlar '
-            'birden fazla haberde ortak geçiyor, hangileri yalnızca tek bir habere özgü, hangi ikili en çok / '
-            'en az örtüşüyor. Uydurma benzerlik üretilmez — yalnız gerçek başlık/özet metninden çıkarılan '
-            'kişi, kurum ve kavramlar karşılaştırılır.'
-        )
-        if len(basket)<2:
-            st.info('Karşılaştırmalı analiz için sepette en az 2 içerik olmalı.')
-        else:
-            _cmp=_v3_basket_compare(basket)
-
-            st.markdown('**Ortak Aktör / Kurum / Kavramlar** (en az 2 içerikte geçenler)')
-            if _cmp['common'].empty:
-                st.caption('Belirgin bir ortak unsur bulunamadı; sepetteki içerikler birbirinden büyük ölçüde bağımsız görünüyor.')
-            else:
-                st.dataframe(
-                    _cmp['common'],hide_index=True,use_container_width=True,
-                    height=min(420,80+32*len(_cmp['common']))
-                )
-
-            st.markdown('**İçeriğe Göre Ortaklık / Özgünlük Tablosu**')
-            st.dataframe(
-                _cmp['per_item'],hide_index=True,use_container_width=True,
-                column_config={
-                    'URL':st.column_config.LinkColumn('Bağlantı',display_text='Aç'),
-                    'Bu İçeriğe Özgü Unsurlar':st.column_config.TextColumn(width='large')
-                },
-                height=min(620,110+38*len(_cmp['per_item']))
-            )
-
-            if _cmp['n']>=2 and _cmp['best_pair']:
-                _a,_b=_cmp['best_pair']
-                st.success(
-                    f"🔗 En çok örtüşen ikili (benzerlik skoru {_cmp['best_score']:.2f}/1.00): "
-                    f"**{_a['title'][:90]}** ↔ **{_b['title'][:90]}**"
-                )
-            if _cmp['n']>=2 and _cmp['worst_pair']:
-                _a,_b=_cmp['worst_pair']
-                st.warning(
-                    f"↔️ En çok ayrışan ikili (benzerlik skoru {_cmp['worst_score']:.2f}/1.00): "
-                    f"**{_a['title'][:90]}** ↔ **{_b['title'][:90]}**"
-                )
-
-            with st.expander('Tüm ikili benzerlik skorları (Jaccard)',False):
-                if _cmp['similarity'].empty:
-                    st.caption('Karşılaştırılacak ikili bulunamadı.')
-                else:
-                    st.dataframe(
-                        _cmp['similarity'],hide_index=True,use_container_width=True,
-                        height=min(520,100+30*len(_cmp['similarity']))
-                    )
-
 
     st.markdown('---')
 
