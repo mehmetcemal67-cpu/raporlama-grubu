@@ -32888,6 +32888,953 @@ def _v133_general_gephi_build(df, scope_label='Son 24 saat — tüm içerikler',
 # /V133
 # ============================================================
 
+
+
+# ============================================================
+# V134 — GENEL GEPHI'Yİ ANALİZ SEPETİ GEPHI İLE AYNI MOTORDA ÜRETME
+#
+# Sorun:
+# - Genel Gephi sekmesi bazı durumlarda hâlâ aile toplamı/özet ağ mantığına
+#   düşüyor veya Kaynak Ağı 0/0 oluşuyordu.
+# - Analiz Sepeti Gephi daha az kayıtla daha çok düğüm/kenar üretiyordu;
+#   çünkü tekil kaynak ↔ özgül çerçeve mantığıyla çalışıyordu.
+#
+# Çözüm:
+# - Genel Gephi için ayrı ve doğrudan bir ağ motoru yazıldı.
+# - Son 24 saat / mevcut tarama verisi de Analiz Sepeti gibi işlenir:
+#     1) Tekil kaynak ↔ özgül çerçeve ağı
+#     2) Söylem çevresi ↔ özgül çerçeve ağı
+# - SourceFamily düğümü yerine gerçek kaynak düğümleri üretilir:
+#   Hürriyet, Medyascope, Yetkin Report, Rudaw, Darka Mazi, X — @..., Reddit — r/...
+# - GEXF dinamik attribute yazar; Gephi Data Laboratory'de tüm açıklama kolonları görünür.
+# ============================================================
+
+def _v134_clean_cell(value):
+    try:
+        if pd.isna(value):
+            return ''
+    except Exception:
+        pass
+    s=str(value or '').strip()
+    if s.lower() in {'nan','none','nat','null'}:
+        return ''
+    return _v116_clean_original_text(s) if '_v116_clean_original_text' in globals() else s
+
+def _v134_get(row, *cols):
+    for c in cols:
+        try:
+            v=row.get(c,'')
+        except Exception:
+            v=''
+        s=_v134_clean_cell(v)
+        if s:
+            return s
+    return ''
+
+def _v134_url(row):
+    u=_v134_get(row,'URL','Gerçek Bağlantı','Odak Bağlantı','SampleURLs','url')
+    if ' || ' in u:
+        u=u.split(' || ')[0].strip()
+    if '|' in u:
+        u=u.split('|')[0].strip()
+    return u
+
+def _v134_domain(row):
+    u=_v134_url(row) or _v134_get(row,'Domain','SourceLabel','Kaynak','Label')
+    try:
+        d=_tt_norm_domain(u)
+    except Exception:
+        try:
+            d=domain(u)
+        except Exception:
+            d=''
+    d=str(d or '').lower().replace('www.','').strip()
+    if not d and '.' in str(u):
+        d=re.sub(r'[^a-z0-9.\-].*','',str(u).lower().replace('www.',''))
+    return d
+
+def _v134_text(row):
+    return _v134_clean_cell(' '.join([
+        _v134_get(row,'Kaynak','SourceLabel','Label'),
+        _v134_get(row,'Yayıncı','Publisher'),
+        _v134_get(row,'Başlık','SampleTitles','SampleTitle','Gerçek İçerik'),
+        _v134_get(row,'İçerik_Özeti','Özet','Summary'),
+        _v134_get(row,'Kategori','Çerçeve','Frame'),
+        _v134_url(row)
+    ]))
+
+def _v134_textn(row):
+    try:
+        return norm(_v134_text(row))
+    except Exception:
+        return _v134_text(row).lower()
+
+V134_KURDISH_DOMAINS = {
+    'darkamazi.site','rudaw.net','kurdistan24.net','shafaq.com','basnews.com',
+    'thenewregion.com','kurdpress.com','kurdpress.net','kurdistanchronicle.com',
+    'kurdistanpress.net','guneydoguekspres.com','ilketv.com.tr','hengaw.net',
+    'aranews.net','npasyria.com','rojavainformationcenter.org','khrn.org',
+    'kurdistanhumanrights.org'
+}
+V134_MOVEMENT_DOMAINS = {
+    'medyahabertv.digital','medyahabertv.com','politikahaber.com',
+    'anfenglish.com','anfenglishmobile.com','anf-news.com','anfturkce.com',
+    'hawarnews.com','hawarnews.net','ozgurpolitika.com','medyanews.net',
+    'yeniyasamgazetesi9.com','mezopotamyaajansi35.com','jinnews.net','jinnews.org'
+}
+V134_FOREIGN_DOMAINS = {
+    'reuters.com','apnews.com','bbc.com','bbc.co.uk','dw.com','france24.com',
+    'euronews.com','bosphorusnews.com','themedialine.org','alestiklal.net',
+    'middleeasteye.net','al-monitor.com','thenationalnews.com','arabnews.com',
+    'aawsat.com','jpost.com','haaretz.com','timesofisrael.com','newlinesmag.com',
+    'amwaj.media','newsaboutturkey.com'
+}
+V134_SOCIAL_DOMAINS = {
+    'x.com','twitter.com','facebook.com','instagram.com','tiktok.com','youtube.com',
+    'youtu.be','reddit.com','threads.net','bsky.app','t.me'
+}
+V134_LOCAL_DOMAINS = {
+    'medyascope.tv','yetkinreport.com','t24.com.tr','solhaber.org','sol.org.tr',
+    'hurriyet.com.tr','yenicaggazetesi.com','gazetepano.com','canakkalehaber.com',
+    'etikhaber.com','yenisafak.com','halktv.com.tr','cumhuriyet.com.tr','odatv.com',
+    'karar.com','sozcu.com.tr','habersunum.com','benguturk.com','ahaber.com.tr',
+    'takvim.com.tr','ngazete.com','muyesseryildiz.com'
+}
+
+def _v134_domain_in(d, domains):
+    d=str(d or '').lower().replace('www.','')
+    return d in domains or any(d.endswith('.'+x) for x in domains)
+
+def _v134_family(row):
+    d=_v134_domain(row)
+    if _v134_domain_in(d,V134_SOCIAL_DOMAINS):
+        return 'Sosyal Medya'
+    if _v134_domain_in(d,V134_MOVEMENT_DOMAINS):
+        return 'PKK/KCK Açık Kaynak'
+    if _v134_domain_in(d,V134_KURDISH_DOMAINS):
+        return 'Kürt Bölgesel Medyası'
+    if _v134_domain_in(d,V134_FOREIGN_DOMAINS):
+        return 'Yabancı Basın'
+    if _v134_domain_in(d,V134_LOCAL_DOMAINS):
+        return 'Yerli Basın'
+
+    # Previous refined classifiers if available.
+    for fn in ['_v132_source_family','_v127_source_family','_v121_family','_v23_source_family']:
+        try:
+            f=globals().get(fn)
+            if f:
+                val=_v134_clean_cell(f(row))
+                if val and val.lower() not in {'nan','none','diğer açık kaynak değerlendirmesi'}:
+                    return val
+        except Exception:
+            pass
+
+    raw=_v134_get(row,'SourceFamily','Kaynak Ailesi','ColorGroup','Kaynak_Grubu')
+    if raw:
+        if raw in {'ÇERÇEVE','Frame'}:
+            return 'ÇERÇEVE'
+        return raw
+    return 'Diğer'
+
+def _v134_platform(row):
+    d=_v134_domain(row)
+    if d in {'x.com','twitter.com'}: return 'X'
+    if d=='facebook.com': return 'Facebook'
+    if d=='instagram.com': return 'Instagram'
+    if d=='tiktok.com': return 'TikTok'
+    if d in {'youtube.com','youtu.be'}: return 'YouTube'
+    if d=='reddit.com': return 'Reddit'
+    if d=='threads.net': return 'Threads'
+    if d=='bsky.app': return 'Bluesky'
+    if d=='t.me': return 'Telegram'
+    return ''
+
+def _v134_social_actor(row):
+    url=_v134_url(row)
+    d=_v134_domain(row)
+    try:
+        parsed=urlparse(url)
+        parts=[p for p in parsed.path.split('/') if p]
+    except Exception:
+        parts=[]
+
+    if d=='reddit.com':
+        for i,p in enumerate(parts):
+            if p.lower()=='r' and i+1<len(parts):
+                return 'r/'+parts[i+1]
+        return 'Reddit topluluğu/kullanıcısı'
+
+    if d in {'x.com','twitter.com'}:
+        if parts:
+            h=parts[0].strip('@')
+            if h.lower() not in {'i','intent','search','hashtag','share'}:
+                return '@'+h
+
+    if d=='facebook.com' and parts:
+        first=parts[0].strip('@')
+        if first.lower() in {'watch','videos','video','posts','reel','share'} and len(parts)>1:
+            return parts[1].strip('@')
+        return first
+
+    if d=='instagram.com' and parts:
+        if parts[0].lower() not in {'p','reel','reels','tv'}:
+            return '@'+parts[0].strip('@')
+
+    if d=='tiktok.com' and parts:
+        first=parts[0].strip('@')
+        if first.lower() not in {'video','tag'}:
+            return '@'+first
+
+    # Title/source fallback.
+    title=_v134_get(row,'Başlık','SampleTitles','SampleTitle')
+    m=re.match(r'^(.{2,80}?)\s+on\s+(X|Twitter|Facebook|Instagram|TikTok|YouTube)\b',title,re.I)
+    if m:
+        return m.group(1).strip()
+    m=re.match(r'^([A-ZÇĞİÖŞÜ][^:|]{2,80})\s*:',title)
+    if m:
+        return m.group(1).strip()
+    return ''
+
+def _v134_source_label(row):
+    fam=_v134_family(row)
+    platform=_v134_platform(row)
+    if fam=='Sosyal Medya' or platform:
+        actor=_v134_social_actor(row)
+        return (platform or 'Sosyal Medya') + (f' — {actor}' if actor else '')
+
+    source=_v134_get(row,'Kaynak','SourceLabel','Yayıncı','Publisher','Label')
+    d=_v134_domain(row)
+    if source and norm(source) not in {'news.google.com','google news','bing.com','nan'}:
+        return source
+    if d:
+        return d
+    title=_v134_get(row,'Başlık','SampleTitles','SampleTitle')
+    return title[:60] if title else 'Açık Kaynak'
+
+def _v134_source_key(row):
+    fam=_v134_family(row)
+    d=_v134_domain(row)
+    if fam=='Sosyal Medya':
+        actor=_v134_social_actor(row)
+        return f'social::{d}::{actor or _v134_source_label(row)}'
+    return f'source::{d or norm(_v134_source_label(row))}'
+
+def _v134_source_role(row):
+    d=_v134_domain(row)
+    mapping={
+        'darkamazi.site':'Kürt milliyetçi / Barzani-KDP perspektifli eleştirel yayın',
+        'rudaw.net':'Kürt bölgesel / Barzani-KDP eksenli yayın',
+        'shafaq.com':'Kürt bölgesel / Suriye-Irak saha haberi',
+        'thenewregion.com':'Kürt bölgesel / süreç hassasiyeti',
+        'kurdpress.com':'Kürt bölgesel / İran merkezli Kürt haber perspektifi',
+        'kurdpress.net':'Kürt bölgesel / İran merkezli Kürt haber perspektifi',
+        'medyahabertv.digital':'PKK/KCK açık kaynak / hareket medyası',
+        'politikahaber.com':'PKK/KCK açık kaynak / hareket çevresi yorumu',
+        'medyascope.tv':'Muhalif-analitik medya / siyasal yorum',
+        'yetkinreport.com':'Liberal/çoğulcu medya / uzman siyasal analiz',
+        't24.com.tr':'Muhalif-liberal medya / iç siyaset yorumu',
+        'solhaber.org':'Türk solu / sol muhalif medya',
+        'sol.org.tr':'Türk solu / sol muhalif medya',
+        'yenicaggazetesi.com':'Muhalif-milliyetçi medya',
+        'etikhaber.com':'MHP çizgisine yakın güvenlikçi medya',
+        'canakkalehaber.com':'Yerel medya / gaziler-güvenlik hassasiyeti aktarımı',
+        'gazetepano.com':'Yerli medya / Cumhur İttifakı içi temkinli güvenlik çizgisi',
+        'bosphorusnews.com':'Uluslararası basın / hukuki-siyasi süreç okuması',
+        'themedialine.org':'Uluslararası basın / dış güvenlik okuması',
+        'alestiklal.net':'Uluslararası basın / bölgesel güvenlik okuması',
+        'ngazete.com':'Yerli basın / iç siyaset ve güvenlik gündemi',
+        'muyesseryildiz.com':'Yerli güvenlik/siyaset yorum hattı',
+    }
+    if d in mapping:
+        return mapping[d]
+
+    fam=_v134_family(row)
+    if fam=='Sosyal Medya':
+        return 'Sosyal medya — '+_v134_social_subdiscourse(row)
+    if fam=='Kürt Bölgesel Medyası':
+        return 'Kürt bölgesel medya / bölgesel güç dengesi okuması'
+    if fam=='PKK/KCK Açık Kaynak':
+        return 'PKK/KCK açık kaynak / hareket çevresi söylemi'
+    if fam=='Yabancı Basın':
+        return 'Yabancı basın / dış gözlem ve bölgesel güvenlik okuması'
+    if fam=='Think Tank / Analiz':
+        return 'Think tank / politika analizi'
+    if fam=='Yerli Basın':
+        return 'Yerli basın / iç siyaset ve kamuoyu gündemi'
+    return 'Diğer açık kaynak değerlendirmesi'
+
+def _v134_content_type(row):
+    d=_v134_domain(row)
+    t=_v134_textn(row)
+    url=_v134_url(row).lower()
+    if d in V134_SOCIAL_DOMAINS:
+        if d in {'tiktok.com','youtube.com','youtu.be'} or any(x in url for x in ['/video','/watch','/reel','/shorts']):
+            return 'sosyal medya/video paylaşımı'
+        return 'sosyal medya paylaşımı'
+    if any(x in url for x in ['/opinion/','/yorum/','/yazar/','/column','/columns/']) or any(x in t for x in ['yorumladı','yorumladi','kaleme aldı','kaleme aldi','köşe','kose','opinion']):
+        return 'köşe yazısı/yorum'
+    if any(x in t for x in ['röportaj','roportaj','interview','konuştu','konustu','açıklamalarda bulundu','aciklamalarda bulundu']):
+        return 'röportaj/açıklama haberi'
+    if any(x in t for x in ['analiz','analysis','değerlendirme','degerlendirme']):
+        return 'analiz/değerlendirme yazısı'
+    return 'haber içeriği'
+
+def _v134_social_subdiscourse(row):
+    t=_v134_textn(row)
+    if any(x in t for x in ['af','affı','affi','taziye','ceza hukuku','kamu vicdan','mağdur','magdur','şehit','sehit','gazi']):
+        return 'Af / Kamu Vicdanı Tepkisi'
+    if any(x in t for x in ['dış destek','dis destek','dış destekli','dis destekli','bölücü','bolucu','bölücülük','boluculuk','organize hareket']):
+        return 'Dış Destek / Bölücülük Algısı'
+    if any(x in t for x in ['propaganda','propoganda','normalleştirme','normalleştir','normallestirme','meşrulaştır','mesrulastir']):
+        return 'PKK Normalleşmesi Eleştirisi'
+    if any(x in t for x in ['gizli görüşme','gizli gorusme','imralı','imrali','öcalan','ocalan','cemil bayık','cemil bayik','kandil']):
+        return 'Öcalan-İmralı / Örgüt İçi İddialar'
+    if any(x in t for x in ['dem parti','demirtaş','demirtas','hatimoğulları','hatimogullari','barış','baris','demokratik siyaset']):
+        return 'DEM / Demokratik Siyaset Aktarımı'
+    if any(x in t for x in ['sdf','sdg','ypg','pyd','mazlum abdi','mazloum abdi','suriye','syria']):
+        return 'Suriye-SDG/YPG Tepkisi'
+    if any(x in t for x in ['barzani','kdp','rudaw','darka mazi','ikby','erbil']):
+        return 'Kürt Bölgesel Güç Dengesi Yorumu'
+    return 'Genel Kamuoyu Tepkisi'
+
+def _v134_frames(row):
+    frames=[]
+    for fn in ['_v132_frame_scores','_v127_frame_scores','_v23_frame_scores']:
+        try:
+            f=globals().get(fn)
+            if f:
+                frames=list(f(row) or [])
+                if frames:
+                    break
+        except Exception:
+            frames=[]
+    if not frames:
+        fam=_v134_family(row)
+        if fam=='Sosyal Medya':
+            frames=[_v134_social_subdiscourse(row)]
+        elif fam=='Kürt Bölgesel Medyası':
+            frames=['Kürt Bölgesel Güç Dengesi']
+        elif fam=='PKK/KCK Açık Kaynak':
+            frames=['Silahsızlanma / Fesih / Uygulama']
+        elif fam=='Yabancı Basın':
+            frames=['Yabancı Basın / Dış Güvenlik']
+        else:
+            frames=['Demokratik Çözüm / Barış']
+
+    # Normalize old labels to V132-style specific labels.
+    remap={
+        'DEM / Parti Dönüşümü / Demokratik Siyaset':'DEM Parti Kongresi / Parti Dönüşümü',
+        'Silahsızlanma / Fesih':'Silahsızlanma / Fesih / Uygulama',
+        'Af / Kamu Vicdanı / Mağduriyet':'Af / Kamu Vicdanı Tepkisi',
+        'Kürt Bölgesel / Barzani-KDP / Güç Dengesi':'Kürt Bölgesel Güç Dengesi',
+        'Uluslararası / Bölgesel Güvenlik':'Yabancı Basın / Dış Güvenlik',
+        'Toplumsal Tepki / Kamuoyu':'Genel Kamuoyu Tepkisi',
+    }
+    out=[]
+    for fr in frames:
+        fr=remap.get(str(fr),str(fr))
+        if fr=='Siyasi Süreç / Diyalog':
+            # Keep only when there are no better frames.
+            continue
+        if fr and fr not in out:
+            out.append(fr)
+    if not out:
+        out=['Demokratik Çözüm / Barış']
+    return out[:3]
+
+def _v134_frame_explanation(frame):
+    try:
+        if frame in V132_FRAME_EXPLANATIONS:
+            return V132_FRAME_EXPLANATIONS.get(frame,'')
+    except Exception:
+        pass
+    try:
+        if frame in V127_FRAME_EXPLANATIONS:
+            return V127_FRAME_EXPLANATIONS.get(frame,'')
+    except Exception:
+        pass
+    return 'Bu çerçeve, seçili haber/paylaşımlarda tekrar eden özgül siyasi anlam ve söylem başlığını gösterir.'
+
+def _v134_evidence_terms(row, frames=None):
+    try:
+        return _v132_evidence_terms(row, frames)
+    except Exception:
+        try:
+            return _v127_evidence_terms(row, frames)
+        except Exception:
+            t=_v134_textn(row)
+            ev=[]
+            for fr in frames or []:
+                try:
+                    terms=list(V132_SPECIFIC_FRAME_TERMS.get(fr,[])) + list(V127_FRAME_TERMS.get(fr,[]))
+                except Exception:
+                    terms=[]
+                for term in terms:
+                    if norm(term) in t and term not in ev:
+                        ev.append(term)
+                    if len(ev)>=8:
+                        break
+            return ', '.join(ev[:8])
+
+def _v134_tone(row):
+    try:
+        return _v18_tone(row)
+    except Exception:
+        return _v134_get(row,'Yaklaşım','Tutum','DominantTone') or 'Nötr / bilgi odaklı'
+
+def _v134_article_id(row):
+    u=_v134_url(row)
+    if u:
+        return u
+    title=_v134_get(row,'Başlık','SampleTitles','SampleTitle','Gerçek İçerik')
+    try:
+        return title_key(title)
+    except Exception:
+        return hashlib.sha1(title.encode('utf-8','ignore')).hexdigest()[:16]
+
+def _v134_event_id(row):
+    return _v134_get(row,'Olay_ID','EventID') or _v134_article_id(row)
+
+def _v134_node_explanation(label,node_type='',family='',frame='',role='',sub=''):
+    if node_type=='Frame':
+        return _v134_frame_explanation(frame or label)
+    if family=='Sosyal Medya':
+        return f"{label} düğümü, sosyal medya kaynaklarında '{sub or 'Genel Kamuoyu Tepkisi'}' alt-söyleminin hangi çerçevelere bağlandığını gösterir."
+    if role:
+        return f"{label} düğümü, {role} olarak son 24 saatte hangi çerçevelere bağlandığını gösterir."
+    return f"{label} düğümü, {family or 'açık kaynak'} ailesi içinde son 24 saatteki çerçeve bağlantılarını gösterir."
+
+def _v134_safe_hash(prefix,value,n=14):
+    return prefix+hashlib.sha1(str(value).encode('utf-8','ignore')).hexdigest()[:n]
+
+def _v134_source_network(df, min_weight=1):
+    x=pd.DataFrame(df).copy() if df is not None else pd.DataFrame()
+    if x.empty:
+        return pd.DataFrame(),pd.DataFrame(),pd.DataFrame()
+
+    raw=[]
+    for _,r in x.iterrows():
+        rec=r.to_dict()
+        source_key=_v134_source_key(rec)
+        source_label=_v134_source_label(rec)
+        family=_v134_family(rec)
+        role=_v134_source_role(rec)
+        sub=_v134_social_subdiscourse(rec) if family=='Sosyal Medya' else ''
+        actor=_v134_social_actor(rec) if family=='Sosyal Medya' else _v134_get(rec,'ActorOrAccount')
+        ctype=_v134_content_type(rec)
+        frames=_v134_frames(rec)
+        ev=_v134_evidence_terms(rec, frames)
+        for frame in frames:
+            raw.append({
+                'SourceKey':source_key,
+                'SourceLabel':source_label,
+                'SourceFamily':family,
+                'NodeType':'Source',
+                'SourceRole':role,
+                'SocialSubDiscourse':sub,
+                'ActorOrAccount':actor,
+                'ContentType':ctype,
+                'Frame':frame,
+                'FrameExplanation':_v134_frame_explanation(frame),
+                'EvidenceTerms':ev,
+                'ArticleID':_v134_article_id(rec),
+                'EventID':_v134_event_id(rec),
+                'Tone':_v134_tone(rec),
+                'Title':_v134_get(rec,'Başlık','SampleTitles','SampleTitle','Gerçek İçerik'),
+                'URL':_v134_url(rec)
+            })
+
+    work=pd.DataFrame(raw)
+    if work.empty:
+        return pd.DataFrame(),pd.DataFrame(),pd.DataFrame()
+
+    group_cols=['SourceKey','SourceLabel','SourceFamily','NodeType','SourceRole','SocialSubDiscourse','ActorOrAccount','ContentType','Frame']
+    edges=[]
+    for keys,g in work.groupby(group_cols,dropna=False):
+        d=dict(zip(group_cols,keys))
+        article_count=max(1,g['ArticleID'].replace('',pd.NA).dropna().nunique())
+        event_count=max(1,g['EventID'].replace('',pd.NA).dropna().nunique())
+        titles=list(dict.fromkeys([_v134_clean_cell(v) for v in g['Title'].tolist() if _v134_clean_cell(v)]))[:3]
+        urls=list(dict.fromkeys([_v134_clean_cell(v) for v in g['URL'].tolist() if _v134_clean_cell(v)]))[:3]
+        evid=[]
+        for e in g['EvidenceTerms'].tolist():
+            for item in str(e or '').split(','):
+                item=item.strip()
+                if item and item not in evid:
+                    evid.append(item)
+        edges.append({
+            **d,
+            'Weight':int(article_count),
+            'ArticleCount':int(article_count),
+            'EventCount':int(event_count),
+            'DominantTone':pd.Series([_v134_clean_cell(v) for v in g['Tone'].tolist()]).replace('',pd.NA).dropna().mode().iloc[0] if not pd.Series([_v134_clean_cell(v) for v in g['Tone'].tolist()]).replace('',pd.NA).dropna().empty else 'Nötr / bilgi odaklı',
+            'EvidenceTerms':', '.join(evid[:8]),
+            'SampleTitles':' || '.join(titles),
+            'SampleURLs':' || '.join(urls),
+            'FrameExplanation':_v134_frame_explanation(d['Frame']),
+            'AnalystEdgeNote':f"{d['SourceLabel']} kaynağı {d['Frame']} çerçevesine {int(article_count)} içerikle bağlanmaktadır."
+        })
+
+    edge_df=pd.DataFrame(edges)
+    try:
+        edge_df=edge_df[pd.to_numeric(edge_df['Weight'],errors='coerce').fillna(0)>=max(1,int(min_weight))].reset_index(drop=True)
+    except Exception:
+        pass
+    if edge_df.empty:
+        return pd.DataFrame(),pd.DataFrame(),pd.DataFrame()
+
+    src_total=edge_df.groupby('SourceKey')['Weight'].sum().to_dict()
+    edge_df['ShareOfSourceFrameLinksPct']=edge_df.apply(lambda r:round(100*float(r.get('Weight',1))/max(1,float(src_total.get(r['SourceKey'],1))),1),axis=1)
+
+    sid={k:_v134_safe_hash('S_',k) for k in edge_df['SourceKey'].drop_duplicates()}
+    fid={f:_v134_safe_hash('F_',f) for f in edge_df['Frame'].drop_duplicates()}
+
+    nodes=[]
+    for source_key,g in edge_df.groupby('SourceKey'):
+        label=str(g['SourceLabel'].iloc[0])
+        fam=str(g['SourceFamily'].iloc[0])
+        sub=str(g['SocialSubDiscourse'].replace('',pd.NA).dropna().iloc[0]) if not g['SocialSubDiscourse'].replace('',pd.NA).dropna().empty else ''
+        role=str(g['SourceRole'].replace('',pd.NA).dropna().iloc[0]) if not g['SourceRole'].replace('',pd.NA).dropna().empty else _v134_source_role(g.iloc[0].to_dict())
+        actor=str(g['ActorOrAccount'].replace('',pd.NA).dropna().iloc[0]) if not g['ActorOrAccount'].replace('',pd.NA).dropna().empty else ''
+        ctype=str(g['ContentType'].replace('',pd.NA).dropna().iloc[0]) if not g['ContentType'].replace('',pd.NA).dropna().empty else 'haber içeriği'
+        nodes.append({
+            'Id':sid[source_key],
+            'Label':label,
+            'NodeType':'Source',
+            'ColorGroup':sub if fam=='Sosyal Medya' and sub else fam,
+            'SourceFamily':fam,
+            'SourceRole':role,
+            'SocialSubDiscourse':sub,
+            'ActorOrAccount':actor,
+            'ContentType':ctype,
+            'ArticleCount':int(g['ArticleCount'].sum()),
+            'EventCount':int(g['EventCount'].sum()),
+            'DominantTone':str(g['DominantTone'].replace('',pd.NA).dropna().iloc[0]) if not g['DominantTone'].replace('',pd.NA).dropna().empty else 'Nötr / bilgi odaklı',
+            'Frame':'',
+            'FrameExplanation':'',
+            'EvidenceTerms':'',
+            'SampleTitles':'',
+            'SampleURLs':'',
+            'NodeExplanation':_v134_node_explanation(label,'Source',fam,'',role,sub)
+        })
+
+    for frame,g in edge_df.groupby('Frame'):
+        nodes.append({
+            'Id':fid[frame],
+            'Label':frame,
+            'NodeType':'Frame',
+            'ColorGroup':'ÇERÇEVE',
+            'SourceFamily':'',
+            'SourceRole':'',
+            'SocialSubDiscourse':'',
+            'ActorOrAccount':'',
+            'ContentType':'',
+            'ArticleCount':int(g['ArticleCount'].sum()),
+            'EventCount':int(g['EventCount'].sum()),
+            'DominantTone':str(g['DominantTone'].replace('',pd.NA).dropna().iloc[0]) if not g['DominantTone'].replace('',pd.NA).dropna().empty else '',
+            'Frame':frame,
+            'FrameExplanation':_v134_frame_explanation(frame),
+            'EvidenceTerms':'',
+            'SampleTitles':'',
+            'SampleURLs':'',
+            'NodeExplanation':_v134_node_explanation(frame,'Frame','',frame,'','')
+        })
+
+    node_df=pd.DataFrame(nodes)
+    out_edges=[]
+    for i,r in edge_df.reset_index(drop=True).iterrows():
+        out_edges.append({
+            'Id':f'E_{i+1}',
+            'Source':sid[r['SourceKey']],
+            'Target':fid[r['Frame']],
+            'Type':'Undirected',
+            'Weight':int(r['Weight']),
+            'ArticleCount':int(r['ArticleCount']),
+            'EventCount':int(r['EventCount']),
+            'ShareOfSourceFrameLinksPct':float(r['ShareOfSourceFrameLinksPct']),
+            'DominantTone':str(r['DominantTone']),
+            'SourceLabel':str(r['SourceLabel']),
+            'SourceFamily':str(r['SourceFamily']),
+            'SourceRole':str(r['SourceRole']),
+            'SocialSubDiscourse':str(r['SocialSubDiscourse']),
+            'ActorOrAccount':str(r['ActorOrAccount']),
+            'ContentType':str(r['ContentType']),
+            'Frame':str(r['Frame']),
+            'FrameExplanation':str(r['FrameExplanation']),
+            'EvidenceTerms':str(r['EvidenceTerms']),
+            'SampleTitles':str(r['SampleTitles']),
+            'SampleURLs':str(r['SampleURLs']),
+            'AnalystEdgeNote':str(r['AnalystEdgeNote']),
+        })
+    edge_out=pd.DataFrame(out_edges)
+
+    summary=[]
+    for label,g in edge_out.groupby('SourceLabel'):
+        total=float(g['Weight'].sum())
+        top=g.sort_values('Weight',ascending=False).head(3)
+        row={
+            'Kaynak':label,
+            'Toplam Bağ':int(total),
+            'Kaynak Ailesi':str(g['SourceFamily'].iloc[0]),
+            'Kaynak Rolü':str(g['SourceRole'].iloc[0]),
+            'Sosyal Alt-Söylem':str(g['SocialSubDiscourse'].iloc[0]),
+            'İçerik Türü':str(g['ContentType'].iloc[0]),
+            'Aktör/Hesap':str(g['ActorOrAccount'].iloc[0]),
+        }
+        for j,(_,rr) in enumerate(top.iterrows(),1):
+            row[f'{j}. Çerçeve']=str(rr['Frame'])
+            row[f'{j}. Pay %']=float(rr['ShareOfSourceFrameLinksPct'])
+        summary.append(row)
+    summary_df=pd.DataFrame(summary).sort_values('Toplam Bağ',ascending=False).reset_index(drop=True)
+
+    return node_df, edge_out, summary_df
+
+def _v134_discourse_group(row):
+    fam=_v134_family(row)
+    d=_v134_domain(row)
+    if fam=='Sosyal Medya':
+        return 'Sosyal Medya — '+_v134_social_subdiscourse(row)
+    if d=='darkamazi.site': return 'Kürt Bölgesel — Barzani-KDP Eleştirel'
+    if d=='rudaw.net': return 'Kürt Bölgesel — Barzani-KDP'
+    if d=='shafaq.com': return 'Kürt Bölgesel — Suriye/Irak Sahası'
+    if d=='thenewregion.com': return 'Kürt Bölgesel Medyası'
+    if d in {'kurdpress.com','kurdpress.net'}: return 'Kürt Bölgesel — İran Merkezli Kürt Basını'
+    if fam=='PKK/KCK Açık Kaynak': return 'PKK/KCK Açık Kaynak — Hareket Medyası'
+    if d=='medyascope.tv': return 'Yerli Muhalif/Analitik Medya'
+    if d=='yetkinreport.com': return 'Liberal/Çoğulcu Analiz Medyası'
+    if d in {'t24.com.tr','solhaber.org','sol.org.tr'}: return 'Yerli Muhalif/Sol-Liberal Medya'
+    if d in {'etikhaber.com','canakkalehaber.com','yenicaggazetesi.com','gazetepano.com','ngazete.com','muyesseryildiz.com'}: return 'Yerli Güvenlikçi/Milliyetçi Hat'
+    if fam=='Yabancı Basın': return 'Uluslararası Basın / Dış Gözlem'
+    if fam=='Think Tank / Analiz': return 'Think Tank / Politika Analizi'
+    if fam=='Yerli Basın': return 'Yerli Basın'
+    return 'Diğer Açık Kaynak'
+
+def _v134_discourse_network(df, min_weight=1):
+    x=pd.DataFrame(df).copy() if df is not None else pd.DataFrame()
+    if x.empty:
+        return pd.DataFrame(),pd.DataFrame(),pd.DataFrame()
+
+    raw=[]
+    for _,r in x.iterrows():
+        rec=r.to_dict()
+        group=_v134_discourse_group(rec)
+        family=_v134_family(rec)
+        sub=_v134_social_subdiscourse(rec) if family=='Sosyal Medya' else ''
+        role=_v134_source_role(rec)
+        actor=_v134_social_actor(rec) if family=='Sosyal Medya' else _v134_get(rec,'ActorOrAccount')
+        ctype=_v134_content_type(rec)
+        source_id=_v134_source_key(rec)
+        article=_v134_article_id(rec)
+        title=_v134_get(rec,'Başlık','SampleTitles','SampleTitle','Gerçek İçerik')
+        url=_v134_url(rec)
+        frames=_v134_frames(rec)
+        ev=_v134_evidence_terms(rec,frames)
+        stance=_v134_get(rec,'Tutum','Yaklaşım') or 'Nötr / Bilgilendirici'
+        for frame in frames:
+            raw.append({
+                'Group':group,'Frame':frame,'SourceId':source_id,'Article':article,
+                'Stance':stance,'Title':title,'URL':url,'SourceFamily':family,
+                'SocialSubDiscourse':sub,'SourceRole':role,'ActorOrAccount':actor,
+                'ContentType':ctype,'EvidenceTerms':ev,'FrameExplanation':_v134_frame_explanation(frame)
+            })
+    w=pd.DataFrame(raw)
+    if w.empty:
+        return pd.DataFrame(),pd.DataFrame(),pd.DataFrame()
+
+    edge_rows=[]
+    for (group,frame),g in w.groupby(['Group','Frame'],dropna=False):
+        sc=max(1,g['SourceId'].replace('',pd.NA).dropna().nunique())
+        ac=max(1,g['Article'].replace('',pd.NA).dropna().nunique())
+        weight=int(sc)
+        if weight<max(1,int(min_weight)):
+            continue
+        titles=list(dict.fromkeys([_v134_clean_cell(v) for v in g['Title'].tolist() if _v134_clean_cell(v)]))[:3]
+        urls=list(dict.fromkeys([_v134_clean_cell(v) for v in g['URL'].tolist() if _v134_clean_cell(v)]))[:3]
+        ev=[]
+        for e in g['EvidenceTerms'].tolist():
+            for item in str(e or '').split(','):
+                item=item.strip()
+                if item and item not in ev:
+                    ev.append(item)
+        edge_rows.append({
+            'Group':group,'Frame':frame,'Weight':weight,'SourceCount':int(sc),'ArticleCount':int(ac),
+            'DominantStance':pd.Series([_v134_clean_cell(v) for v in g['Stance'].tolist()]).replace('',pd.NA).dropna().mode().iloc[0] if not pd.Series([_v134_clean_cell(v) for v in g['Stance'].tolist()]).replace('',pd.NA).dropna().empty else 'Nötr / Bilgilendirici',
+            'SourceFamily':pd.Series([_v134_clean_cell(v) for v in g['SourceFamily'].tolist()]).replace('',pd.NA).dropna().mode().iloc[0] if not pd.Series([_v134_clean_cell(v) for v in g['SourceFamily'].tolist()]).replace('',pd.NA).dropna().empty else '',
+            'SocialSubDiscourse':pd.Series([_v134_clean_cell(v) for v in g['SocialSubDiscourse'].tolist()]).replace('',pd.NA).dropna().mode().iloc[0] if not pd.Series([_v134_clean_cell(v) for v in g['SocialSubDiscourse'].tolist()]).replace('',pd.NA).dropna().empty else '',
+            'SourceRole':pd.Series([_v134_clean_cell(v) for v in g['SourceRole'].tolist()]).replace('',pd.NA).dropna().mode().iloc[0] if not pd.Series([_v134_clean_cell(v) for v in g['SourceRole'].tolist()]).replace('',pd.NA).dropna().empty else '',
+            'ActorOrAccount':pd.Series([_v134_clean_cell(v) for v in g['ActorOrAccount'].tolist()]).replace('',pd.NA).dropna().mode().iloc[0] if not pd.Series([_v134_clean_cell(v) for v in g['ActorOrAccount'].tolist()]).replace('',pd.NA).dropna().empty else '',
+            'ContentType':pd.Series([_v134_clean_cell(v) for v in g['ContentType'].tolist()]).replace('',pd.NA).dropna().mode().iloc[0] if not pd.Series([_v134_clean_cell(v) for v in g['ContentType'].tolist()]).replace('',pd.NA).dropna().empty else '',
+            'EvidenceTerms':', '.join(ev[:8]),
+            'FrameExplanation':_v134_frame_explanation(frame),
+            'SampleTitles':' || '.join(titles),
+            'SampleURLs':' || '.join(urls),
+            'AnalystEdgeNote':f"{group} söylem çevresi {frame} çerçevesine {int(ac)} içerik/{int(sc)} kaynak üzerinden bağlanmaktadır."
+        })
+
+    ebase=pd.DataFrame(edge_rows)
+    if ebase.empty:
+        return pd.DataFrame(),pd.DataFrame(),pd.DataFrame()
+
+    totals=ebase.groupby('Group')['Weight'].sum().to_dict()
+    ebase['ShareOfGroupPct']=ebase.apply(lambda r:round(100*float(r['Weight'])/max(1,float(totals.get(r['Group'],1))),1),axis=1)
+
+    gid={g:_v134_safe_hash('G_',g,12) for g in ebase['Group'].drop_duplicates()}
+    fid={f:_v134_safe_hash('F_',f,12) for f in ebase['Frame'].drop_duplicates()}
+
+    nodes=[]
+    for group,g in ebase.groupby('Group'):
+        fam=str(g['SourceFamily'].replace('',pd.NA).dropna().iloc[0]) if not g['SourceFamily'].replace('',pd.NA).dropna().empty else ''
+        sub=str(g['SocialSubDiscourse'].replace('',pd.NA).dropna().iloc[0]) if not g['SocialSubDiscourse'].replace('',pd.NA).dropna().empty else ''
+        role=str(g['SourceRole'].replace('',pd.NA).dropna().iloc[0]) if not g['SourceRole'].replace('',pd.NA).dropna().empty else ''
+        nodes.append({
+            'Id':gid[group],'Label':group,'NodeType':'DiscourseGroup',
+            'ColorGroup':sub if fam=='Sosyal Medya' and sub else group,
+            'SourceFamily':fam,'SourceRole':role,'SocialSubDiscourse':sub,
+            'ActorOrAccount':str(g['ActorOrAccount'].replace('',pd.NA).dropna().iloc[0]) if not g['ActorOrAccount'].replace('',pd.NA).dropna().empty else '',
+            'ContentType':str(g['ContentType'].replace('',pd.NA).dropna().iloc[0]) if not g['ContentType'].replace('',pd.NA).dropna().empty else '',
+            'ArticleCount':int(g['ArticleCount'].sum()),'SourceCount':int(g['SourceCount'].sum()),
+            'EventCount':int(g['ArticleCount'].sum()),'DominantTone':str(g['DominantStance'].iloc[0]),
+            'Frame':'','FrameExplanation':'','EvidenceTerms':'','SampleTitles':'','SampleURLs':'',
+            'NodeExplanation':_v134_node_explanation(group,'DiscourseGroup',fam,'',role,sub)
+        })
+    for frame,g in ebase.groupby('Frame'):
+        nodes.append({
+            'Id':fid[frame],'Label':frame,'NodeType':'Frame','ColorGroup':'ÇERÇEVE',
+            'SourceFamily':'','SourceRole':'','SocialSubDiscourse':'','ActorOrAccount':'','ContentType':'',
+            'ArticleCount':int(g['ArticleCount'].sum()),'SourceCount':int(g['SourceCount'].sum()),
+            'EventCount':int(g['ArticleCount'].sum()),'DominantTone':'','Frame':frame,
+            'FrameExplanation':_v134_frame_explanation(frame),'EvidenceTerms':'','SampleTitles':'','SampleURLs':'',
+            'NodeExplanation':_v134_node_explanation(frame,'Frame','',frame,'','')
+        })
+
+    edges=[]
+    for i,r in ebase.reset_index(drop=True).iterrows():
+        edges.append({
+            'Id':f'EE_{i+1}','Source':gid[r['Group']],'Target':fid[r['Frame']],'Type':'Undirected',
+            'Weight':int(r['Weight']),'Group':str(r['Group']),'Frame':str(r['Frame']),
+            'ShareOfGroupPct':float(r['ShareOfGroupPct']),'DominantStance':str(r['DominantStance']),
+            'SourceFamily':str(r['SourceFamily']),'SourceRole':str(r['SourceRole']),
+            'SocialSubDiscourse':str(r['SocialSubDiscourse']),'ActorOrAccount':str(r['ActorOrAccount']),
+            'ContentType':str(r['ContentType']),'EvidenceTerms':str(r['EvidenceTerms']),
+            'FrameExplanation':str(r['FrameExplanation']),'SampleTitles':str(r['SampleTitles']),
+            'SampleURLs':str(r['SampleURLs']),'SourceCount':int(r['SourceCount']),
+            'ArticleCount':int(r['ArticleCount']),'AnalystEdgeNote':str(r['AnalystEdgeNote'])
+        })
+    edge_df=pd.DataFrame(edges)
+
+    summary=[]
+    for group,g in ebase.groupby('Group'):
+        total=float(g['Weight'].sum())
+        top=g.sort_values('Weight',ascending=False).head(3)
+        row={
+            'Söylem Çevresi':group,'Toplam Bağ':int(total),
+            'Kaynak Rolü':str(g['SourceRole'].replace('',pd.NA).dropna().iloc[0]) if not g['SourceRole'].replace('',pd.NA).dropna().empty else '',
+            'Sosyal Alt-Söylem':str(g['SocialSubDiscourse'].replace('',pd.NA).dropna().iloc[0]) if not g['SocialSubDiscourse'].replace('',pd.NA).dropna().empty else '',
+        }
+        for j,(_,rr) in enumerate(top.iterrows(),1):
+            row[f'{j}. Çerçeve']=str(rr['Frame'])
+            row[f'{j}. Pay %']=float(rr['ShareOfGroupPct'])
+        summary.append(row)
+    summary_df=pd.DataFrame(summary).sort_values('Toplam Bağ',ascending=False).reset_index(drop=True)
+
+    return pd.DataFrame(nodes), edge_df, summary_df
+
+def _v134_node_commentary_table(sn,se,dn,de):
+    parts=[]
+    for nodes,edges,scope in [(sn,se,'Kaynak-Çerçeve'),(dn,de,'Söylem-Çerçeve')]:
+        ndf=pd.DataFrame(nodes) if nodes is not None else pd.DataFrame()
+        edf=pd.DataFrame(edges) if edges is not None else pd.DataFrame()
+        if ndf.empty:
+            continue
+        for _,n in ndf.iterrows():
+            nid=str(n.get('Id',''))
+            label=str(n.get('Label',''))
+            linked=edf[(edf.get('Source',pd.Series(dtype=str)).astype(str)==nid) | (edf.get('Target',pd.Series(dtype=str)).astype(str)==nid)] if not edf.empty else pd.DataFrame()
+            frames=[]
+            if not linked.empty and 'Frame' in linked.columns:
+                frames=list(dict.fromkeys(linked['Frame'].astype(str).tolist()))[:5]
+            weight=int(pd.to_numeric(linked.get('Weight',pd.Series(dtype=float)),errors='coerce').fillna(0).sum()) if not linked.empty else 0
+            parts.append({
+                'Ağ':scope,
+                'Düğüm':label,
+                'Düğüm Türü':str(n.get('NodeType','')),
+                'Kaynak Ailesi':str(n.get('SourceFamily','')),
+                'Kaynak Rolü':str(n.get('SourceRole','')),
+                'Sosyal Alt-Söylem':str(n.get('SocialSubDiscourse','')),
+                'Aktör/Hesap':str(n.get('ActorOrAccount','')),
+                'İçerik Türü':str(n.get('ContentType','')),
+                'Bağ Sayısı/Ağırlık':weight,
+                'Başlıca Çerçeveler':', '.join(frames),
+                'Analitik Açıklama':str(n.get('NodeExplanation',''))
+            })
+    return pd.DataFrame(parts)
+
+def _v134_dynamic_gexf(nodes, edges, description='Terörsüz Türkiye Gephi Ağı'):
+    import xml.etree.ElementTree as ET
+    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'})
+    meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')})
+    ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT V134'
+    ET.SubElement(meta,'description').text=str(description)
+    graph=ET.SubElement(root,'graph',{'mode':'static','defaultedgetype':'undirected'})
+
+    nodes=pd.DataFrame(nodes).copy() if nodes is not None else pd.DataFrame()
+    edges=pd.DataFrame(edges).copy() if edges is not None else pd.DataFrame()
+
+    base_node={'Id','Label'}
+    base_edge={'Id','Source','Target','Type','Weight'}
+    node_cols=[c for c in nodes.columns if c not in base_node]
+    edge_cols=[c for c in edges.columns if c not in base_edge]
+
+    def atype(series):
+        s=pd.to_numeric(series,errors='coerce')
+        if len(series)>0 and s.notna().mean()>0.8:
+            # integer if all clean numeric values are whole
+            vals=s.dropna()
+            if not vals.empty and (vals.round()==vals).all():
+                return 'integer'
+            return 'double'
+        return 'string'
+
+    na=ET.SubElement(graph,'attributes',{'class':'node'})
+    node_attr={}
+    for i,c in enumerate(node_cols):
+        node_attr[c]=str(i)
+        ET.SubElement(na,'attribute',{'id':str(i),'title':str(c),'type':atype(nodes[c])})
+
+    ea=ET.SubElement(graph,'attributes',{'class':'edge'})
+    edge_attr={}
+    for i,c in enumerate(edge_cols):
+        edge_attr[c]=str(i)
+        ET.SubElement(ea,'attribute',{'id':str(i),'title':str(c),'type':atype(edges[c])})
+
+    ns=ET.SubElement(graph,'nodes')
+    for _,r in nodes.iterrows():
+        n=ET.SubElement(ns,'node',{'id':str(r.get('Id','')),'label':str(r.get('Label',''))})
+        av=ET.SubElement(n,'attvalues')
+        for c in node_cols:
+            v=r.get(c,'')
+            if pd.isna(v): v=''
+            ET.SubElement(av,'attvalue',{'for':node_attr[c],'value':str(v)})
+
+    es=ET.SubElement(graph,'edges')
+    for _,r in edges.iterrows():
+        e=ET.SubElement(es,'edge',{
+            'id':str(r.get('Id','')),
+            'source':str(r.get('Source','')),
+            'target':str(r.get('Target','')),
+            'type':str(r.get('Type','Undirected')).lower(),
+            'weight':str(float(r.get('Weight',1) or 1))
+        })
+        av=ET.SubElement(e,'attvalues')
+        for c in edge_cols:
+            v=r.get(c,'')
+            if pd.isna(v): v=''
+            ET.SubElement(av,'attvalue',{'for':edge_attr[c],'value':str(v)})
+
+    return ET.tostring(root,encoding='utf-8',xml_declaration=True)
+
+def _v134_general_analysis_docx(sn,se,dn,de,used):
+    doc=Document()
+    sec=doc.sections[0]
+    sec.top_margin=Cm(2); sec.bottom_margin=Cm(2); sec.left_margin=Cm(2.3); sec.right_margin=Cm(2.3)
+    doc.styles['Normal'].font.name='Times New Roman'
+    doc.styles['Normal'].font.size=Pt(11)
+    doc.styles['Normal']._element.rPr.rFonts.set(qn('w:eastAsia'),'Times New Roman')
+
+    p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    r=p.add_run('TERÖRSÜZ TÜRKİYE — GENEL GEPHI AĞ ANALİZ NOTU')
+    r.bold=True; r.font.name='Times New Roman'; r.font.size=Pt(13)
+
+    def para(txt,bold=None):
+        pp=doc.add_paragraph(); pp.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        pp.paragraph_format.first_line_indent=Cm(1.0); pp.paragraph_format.line_spacing=1.15
+        if bold and txt.startswith(bold):
+            rr=pp.add_run(bold); rr.bold=True
+            pp.add_run(txt[len(bold):])
+        else:
+            pp.add_run(txt)
+
+    sn=pd.DataFrame(sn) if sn is not None else pd.DataFrame()
+    se=pd.DataFrame(se) if se is not None else pd.DataFrame()
+    dn=pd.DataFrame(dn) if dn is not None else pd.DataFrame()
+    de=pd.DataFrame(de) if de is not None else pd.DataFrame()
+
+    para(
+        f"Bu not, son tarama/genel veri havuzundan Analiz Sepeti mantığıyla üretilen Gephi ağına ilişkindir. "
+        f"Kaynak-çerçeve ağında {len(sn)} düğüm ve {len(se)} kenar; söylem çevresi ağında {len(dn)} düğüm ve {len(de)} kenar bulunmaktadır. "
+        "Bu yapı, aile toplamı yerine tekil kaynakların ve sosyal medya alt-söylemlerinin hangi özgül çerçevelere bağlandığını gösterir."
+    )
+
+    if not se.empty and 'Frame' in se.columns:
+        tmp=se.copy(); tmp['_w']=pd.to_numeric(tmp['Weight'],errors='coerce').fillna(1)
+        frames=tmp.groupby('Frame')['_w'].sum().sort_values(ascending=False).head(8)
+        para('Baskın çerçeveler: '+', '.join(f'{k} ({int(v)})' for k,v in frames.items())+'.','Baskın çerçeveler:')
+
+    if not se.empty and 'SourceFamily' in se.columns:
+        tmp=se.copy(); tmp['_w']=pd.to_numeric(tmp['Weight'],errors='coerce').fillna(1)
+        fams=tmp.groupby('SourceFamily')['_w'].sum().sort_values(ascending=False).head(8)
+        para('Kaynak ailesi dağılımı: '+', '.join(f'{k} ({int(v)})' for k,v in fams.items())+'.','Kaynak ailesi dağılımı:')
+
+    if not de.empty and 'SocialSubDiscourse' in de.columns:
+        s=de[de['SocialSubDiscourse'].astype(str).str.len()>0]
+        if not s.empty:
+            tmp=s.copy(); tmp['_w']=pd.to_numeric(tmp['Weight'],errors='coerce').fillna(1)
+            subs=tmp.groupby('SocialSubDiscourse')['_w'].sum().sort_values(ascending=False).head(8)
+            para('Sosyal medya alt-söylemleri: '+', '.join(f'{k} ({int(v)})' for k,v in subs.items())+'.','Sosyal medya alt-söylemleri:')
+
+    para(
+        "Analitik sonuç: Genel Gephi ağı artık yalnızca 'Yerli Basın' gibi toplu aile düğümlerini göstermemekte; "
+        "tekil haber kaynaklarını, sosyal medya hesap/topluluklarını, Kürt bölgesel kaynaklarını, PKK/KCK açık kaynaklarını "
+        "ve yabancı basını ayrı ayrı çerçevelere bağlamaktadır. Bu nedenle son 24 saatin tüm haberleriyle üretildiğinde de "
+        "Analiz Sepeti Gephi'sine benzer şekilde daha zengin düğüm ve kenar yapısı üretmesi beklenir.",
+        "Analitik sonuç:"
+    )
+
+    bio=BytesIO()
+    doc.save(bio)
+    return bio.getvalue()
+
+def _v134_general_gephi_build(df, scope_label='Son 24 saat — tüm içerikler', min_weight=1, balanced=False):
+    raw=_v133_filter_scope(df, scope_label) if '_v133_filter_scope' in globals() else pd.DataFrame(df)
+    used=_v133_balance_df(raw) if balanced and '_v133_balance_df' in globals() else raw
+
+    sn,se,ss=_v134_source_network(used, min_weight=min_weight)
+    dn,de,ds=_v134_discourse_network(used, min_weight=min_weight)
+
+    comments=_v134_node_commentary_table(sn,se,dn,de)
+
+    source_gexf=b''
+    discourse_gexf=b''
+    if sn is not None and se is not None and not sn.empty and not se.empty:
+        source_gexf=_v134_dynamic_gexf(sn,se,'Terörsüz Türkiye — Genel Kaynak-Çerçeve Ağı / V134')
+    if dn is not None and de is not None and not dn.empty and not de.empty:
+        discourse_gexf=_v134_dynamic_gexf(dn,de,'Terörsüz Türkiye — Genel Söylem Çevresi-Çerçeve Ağı / V134')
+
+    return {
+        'scope':scope_label,
+        'balanced':bool(balanced),
+        'raw_count':int(len(raw)),
+        'used_count':int(len(used)),
+        'source_nodes':pd.DataFrame(sn),
+        'source_edges':pd.DataFrame(se),
+        'source_summary':pd.DataFrame(ss),
+        'source_gexf':source_gexf,
+        'discourse_nodes':pd.DataFrame(dn),
+        'discourse_edges':pd.DataFrame(de),
+        'discourse_summary':pd.DataFrame(ds),
+        'discourse_gexf':discourse_gexf,
+        'node_comments':pd.DataFrame(comments),
+        'analysis_docx':_v134_general_analysis_docx(sn,se,dn,de,used),
+    }
+
+# The existing V133 UI calls this name. Redirect it to the corrected direct engine.
+_v133_general_gephi_build = _v134_general_gephi_build
+
+# ============================================================
+# /V134
+# ============================================================
+
+
 # V33 — SADE GÜNLÜK ANA PANEL
 #
 # TARMA ÖNCESİ:
@@ -33754,7 +34701,7 @@ else:
         # ====================================================
     # ---------------- GEPHI AĞ ANALİZİ ----------------
 
-    st.subheader('🕸️ Genel Gephi Ağ Analizi — Analiz Sepeti Mantığıyla')
+    st.subheader('🕸️ Genel Gephi Ağ Analizi — Analiz Sepeti Motoruyla')
     st.caption(
         'Bu bölüm artık Analiz Sepeti Gephi ile aynı mantıkta çalışır. '
         'Son 24 saatteki veya mevcut taramadaki içeriklerden iki ayrı ağ üretir: '
@@ -33794,14 +34741,14 @@ else:
     )
 
     if st.button(
-        '🧬 Genel Gephi ağını Analiz Sepeti mantığıyla hazırla',
+        '🧬 Genel Gephi ağını Analiz Sepeti motoruyla hazırla',
         use_container_width=True,
         key='v133_prepare_general_gephi'
     ):
         if not st.session_state.get('rows'):
             st.warning('Önce tarama yapılmalıdır.')
         else:
-            with st.spinner('Genel Gephi ağı Analiz Sepeti mantığıyla hazırlanıyor...'):
+            with st.spinner('Genel Gephi ağı Analiz Sepeti motoruyla hazırlanıyor...'):
                 try:
                     _gdf=pd.DataFrame(st.session_state.rows)
                     if not _gdf.empty and 'Tarih_dt' in _gdf.columns:
@@ -33886,7 +34833,7 @@ else:
             d1.download_button(
                 '⬇️ Kaynak-Çerçeve GEXF',
                 _gpkg['source_gexf'],
-                'Genel_Gephi_Kaynak_Cerceve_V133.gexf',
+                'Genel_Gephi_Kaynak_Cerceve_V134.gexf',
                 'application/xml',
                 use_container_width=True,
                 key='v133_general_source_gexf'
@@ -33895,7 +34842,7 @@ else:
             d2.download_button(
                 '⬇️ Söylem-Çerçeve GEXF',
                 _gpkg['discourse_gexf'],
-                'Genel_Gephi_Soylem_Cerceve_V133.gexf',
+                'Genel_Gephi_Soylem_Cerceve_V134.gexf',
                 'application/xml',
                 use_container_width=True,
                 key='v133_general_discourse_gexf'
@@ -33904,7 +34851,7 @@ else:
             d3.download_button(
                 '⬇️ Source Edges CSV',
                 _se.to_csv(index=False).encode('utf-8-sig'),
-                'Genel_Gephi_Source_Edges_V133.csv',
+                'Genel_Gephi_Source_Edges_V134.csv',
                 'text/csv',
                 use_container_width=True,
                 key='v133_general_source_edges_csv'
@@ -33913,7 +34860,7 @@ else:
             d4.download_button(
                 '⬇️ Discourse Edges CSV',
                 _de.to_csv(index=False).encode('utf-8-sig'),
-                'Genel_Gephi_Discourse_Edges_V133.csv',
+                'Genel_Gephi_Discourse_Edges_V134.csv',
                 'text/csv',
                 use_container_width=True,
                 key='v133_general_discourse_edges_csv'
@@ -33924,7 +34871,7 @@ else:
             n1.download_button(
                 '⬇️ Source Nodes CSV',
                 _sn.to_csv(index=False).encode('utf-8-sig'),
-                'Genel_Gephi_Source_Nodes_V133.csv',
+                'Genel_Gephi_Source_Nodes_V134.csv',
                 'text/csv',
                 use_container_width=True,
                 key='v133_general_source_nodes_csv'
@@ -33933,7 +34880,7 @@ else:
             n2.download_button(
                 '⬇️ Discourse Nodes CSV',
                 _dn.to_csv(index=False).encode('utf-8-sig'),
-                'Genel_Gephi_Discourse_Nodes_V133.csv',
+                'Genel_Gephi_Discourse_Nodes_V134.csv',
                 'text/csv',
                 use_container_width=True,
                 key='v133_general_discourse_nodes_csv'
@@ -33942,7 +34889,7 @@ else:
             n3.download_button(
                 '⬇️ Genel Gephi Analiz Notu',
                 _gpkg['analysis_docx'],
-                'Genel_Gephi_Analiz_Notu_V133.docx',
+                'Genel_Gephi_Analiz_Notu_V134.docx',
                 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                 use_container_width=True,
                 key='v133_general_analysis_docx'
@@ -33951,7 +34898,7 @@ else:
             n4.download_button(
                 '⬇️ Düğüm Açıklamaları CSV',
                 _comments.to_csv(index=False).encode('utf-8-sig'),
-                'Genel_Gephi_Dugum_Aciklamalari_V133.csv',
+                'Genel_Gephi_Dugum_Aciklamalari_V134.csv',
                 'text/csv',
                 use_container_width=True,
                 key='v133_general_node_comments_csv'
@@ -33962,11 +34909,11 @@ else:
                 """
 **Önerilen kullanım:**
 
-1. Genel ağ için önce **Genel_Gephi_Kaynak_Cerceve_V133.gexf** dosyasını açın.
+1. Genel ağ için önce **Genel_Gephi_Kaynak_Cerceve_V134.gexf** dosyasını açın.
 2. **Appearance → Nodes → Partition → ColorGroup** ile kaynak ve çerçeve gruplarını renklendirin.
 3. **Ranking → Degree / Weighted Degree** ile merkezî düğümleri büyütün.
 4. **Layout → ForceAtlas 2** çalıştırın; çok sıkışırsa LinLog mode ve Prevent Overlap açık kalabilir.
-5. Sosyal medya tepkilerini daha net görmek için **Genel_Gephi_Soylem_Cerceve_V133.gexf** dosyasını açın.
+5. Sosyal medya tepkilerini daha net görmek için **Genel_Gephi_Soylem_Cerceve_V134.gexf** dosyasını açın.
 6. Data Laboratory’de `SocialSubDiscourse`, `ActorOrAccount`, `ContentType`, `SourceRole`, `NodeExplanation` ve `AnalystEdgeNote` kolonlarını inceleyin.
 
 **Analitik okuma:**  
