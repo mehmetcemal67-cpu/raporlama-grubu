@@ -31152,7 +31152,7 @@ def _v127_gephi_network(df,network_type='family',min_weight=1):
             'EventCount':int(g['EventCount'].sum()),
             'DominantTone':_v127_mode(g['DominantTone'].tolist(),''),
             'Frame':frame,
-            'NodeExplanation':_v127_node_explanation(frame,'Frame','','',frame=frame)
+            'NodeExplanation':_v127_node_explanation(frame,'Frame','',frame,'','')
         })
 
     nodes=pd.DataFrame(node_rows)
@@ -32020,6 +32020,15 @@ def _v30_event_network(df, min_weight=None, *args, **kwargs):
 # /V129
 # ============================================================
 
+
+
+# ============================================================
+# V130 — GEPHI NODE EXPLANATION frame ARGUMENT HATASI DÜZELTMESİ
+#
+# V129 korunur. Analiz Sepeti Gephi üretiminde _v127_node_explanation
+# fonksiyonuna frame parametresinin hem pozisyonel hem anahtar kelime
+# olarak gitmesinden kaynaklanan TypeError giderilmiştir.
+# ============================================================
 
 # V33 — SADE GÜNLÜK ANA PANEL
 #
@@ -33126,7 +33135,7 @@ else:
         if st.session_state.get('v3_report_bytes'):
             st.download_button('⬇️ KAYNAKLI ANALİZ RAPORUNU İNDİR',
                 st.session_state['v3_report_bytes'],
-                file_name=f'Terorsuz_Turkiye_PDF_Tarzi_Soylem_Analizi_V128_{date.today()}.docx',
+                file_name=f'Terorsuz_Turkiye_PDF_Tarzi_Soylem_Analizi_V130_{date.today()}.docx',
                 mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                 use_container_width=True,key='v3_report_download')
 
@@ -33211,7 +33220,7 @@ else:
                 g1.download_button(
                     '⬇️ Kaynak-Çerçeve GEXF',
                     _v118_gp['source_gexf'],
-                    'Analiz_Sepeti_Kaynak_Cerceve_V129.gexf',
+                    'Analiz_Sepeti_Kaynak_Cerceve_V130.gexf',
                     'application/xml',
                     use_container_width=True,
                     key='v118_basket_source_gexf'
@@ -33221,7 +33230,7 @@ else:
                 g2.download_button(
                     '⬇️ Kesim-Çerçeve GEXF',
                     _v118_gp['discourse_gexf'],
-                    'Analiz_Sepeti_Kesim_Cerceve_V129.gexf',
+                    'Analiz_Sepeti_Kesim_Cerceve_V130.gexf',
                     'application/xml',
                     use_container_width=True,
                     key='v118_basket_discourse_gexf'
@@ -33232,7 +33241,7 @@ else:
                 g3.download_button(
                     '⬇️ Source Edges CSV',
                     _v118_se_df.to_csv(index=False).encode('utf-8-sig'),
-                    'Analiz_Sepeti_Source_Edges_V129.csv',
+                    'Analiz_Sepeti_Source_Edges_V130.csv',
                     'text/csv',
                     use_container_width=True,
                     key='v118_basket_source_edges'
@@ -33243,7 +33252,7 @@ else:
                 g4.download_button(
                     '⬇️ Discourse Edges CSV',
                     _v118_de_df.to_csv(index=False).encode('utf-8-sig'),
-                    'Analiz_Sepeti_Discourse_Edges_V129.csv',
+                    'Analiz_Sepeti_Discourse_Edges_V130.csv',
                     'text/csv',
                     use_container_width=True,
                     key='v118_basket_discourse_edges'
@@ -33264,7 +33273,7 @@ else:
                 n1.download_button(
                     '⬇️ Gephi Analiz Notu (Word)',
                     _v118_gp['analysis_docx'],
-                    'Analiz_Sepeti_Gephi_Analiz_Notu_V129.docx',
+                    'Analiz_Sepeti_Gephi_Analiz_Notu_V130.docx',
                     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                     use_container_width=True,
                     key='v127_basket_gephi_analysis_docx'
@@ -33273,7 +33282,7 @@ else:
                 n2.download_button(
                     '⬇️ Düğüm Açıklamaları CSV',
                     _v127_comments.to_csv(index=False).encode('utf-8-sig'),
-                    'Analiz_Sepeti_Gephi_Dugum_Aciklamalari_V127.csv',
+                    'Analiz_Sepeti_Gephi_Dugum_Aciklamalari_V130.csv',
                     'text/csv',
                     use_container_width=True,
                     key='v127_basket_node_comments_csv'
