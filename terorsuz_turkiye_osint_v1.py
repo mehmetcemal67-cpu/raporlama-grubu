@@ -22558,7 +22558,7 @@ def _v3_source_table(section_key,data,columns=None,height=590):
         with c1:
             do_note=st.form_submit_button('📝 Detaylı Bilgi Notu Oluştur',use_container_width=True)
         with c2:
-            do_basket=st.form_submit_button('🧺 Analiz Sepetine Ekle',use_container_width=True)
+            do_basket=st.form_submit_button('🧺 Günlük Analiz Sepetine Ekle',use_container_width=True)
 
     mask=edited['Seç'].astype(bool).to_numpy() if 'Seç' in edited.columns else []
     selected=x.loc[mask].drop(columns=['Seç'],errors='ignore') if len(mask) else pd.DataFrame()
@@ -22569,7 +22569,7 @@ def _v3_source_table(section_key,data,columns=None,height=590):
             st.warning('Önce en az bir haber seçin.')
         else:
             n=_v3_add_analysis(selected.to_dict('records'))
-            st.success(f'✅ {n} içerik Analiz Sepetine eklenmiştir.')
+            st.success(f'✅ {n} içerik Günlük Analiz Sepetine eklenmiştir.')
     if st.session_state.get(section_key+'_note_bytes'):
         st.download_button(
             '⬇️ Hazırlanan Bilgi Notunu İndir',
@@ -34012,6 +34012,308 @@ _v133_general_gephi_build = _v135_general_gephi_build
 # ============================================================
 
 
+# ============================================================
+# V136 — PANEL SADELEŞTİRME + ÇİFT KALICI ANALİZ SEPETİ
+#
+# V135 kararlı yapı korunur.
+# Değişiklikler yalnız:
+# 1) Gündem ve Söylem Haritası panelden kaldırılır.
+# 2) İki ayrı kalıcı analiz sepeti kullanılır:
+#    - Günlük Analiz Sepeti: bundan sonra tüm yeni seçimler buraya gider.
+#      Otomatik temizlenmez; kullanıcı manuel temizler.
+#    - Eski Analiz Sepeti (Arşiv): V135'e kadar kullanılan analysis_basket_v3
+#      tablosundaki mevcut içerikler burada kalır. Kullanıcı silmedikçe korunur.
+# 3) Her iki sepette de aynı rapor motoru ve AYNI Gephi motoru çalışır.
+# ============================================================
+
+V136_DAILY_TABLE='analysis_basket_daily_v136'
+V136_ARCHIVE_TABLE='analysis_basket_v3'
+
+
+def _v136_ensure_daily_table():
+    if not _init_history_db():
+        return False
+    try:
+        with _history_connect() as conn:
+            conn.execute(
+                f"CREATE TABLE IF NOT EXISTS {V136_DAILY_TABLE}("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "added_at TEXT NOT NULL,"
+                "dedup_key TEXT NOT NULL UNIQUE,"
+                "title TEXT,"
+                "url TEXT,"
+                "record_json TEXT NOT NULL"
+                ")"
+            )
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+def _v136_load_table(table_name):
+    rows=[]
+    if table_name==V136_DAILY_TABLE:
+        if not _v136_ensure_daily_table():
+            return rows
+    elif not _init_history_db():
+        return rows
+    try:
+        with _history_connect() as conn:
+            cur=conn.execute(f'SELECT record_json FROM {table_name} ORDER BY id ASC')
+            for (rec_json,) in cur.fetchall():
+                try:
+                    rows.append(json.loads(rec_json))
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return rows
+
+
+def _v136_daily_basket():
+    key='v136_daily_analysis_basket'
+    if key not in st.session_state:
+        st.session_state[key]=_v136_load_table(V136_DAILY_TABLE)
+    return st.session_state[key]
+
+
+def _v136_archive_basket():
+    key='v136_archive_analysis_basket'
+    if key not in st.session_state:
+        st.session_state[key]=_v136_load_table(V136_ARCHIVE_TABLE)
+    return st.session_state[key]
+
+
+def _v136_add_to_table(rows, table_name, session_key, getter):
+    basket=getter()
+    known={_v3_analysis_dedup_key(x) for x in basket}
+    new=[]
+    for r in rows or []:
+        rec=dict(r)
+        k=_v3_analysis_dedup_key(rec)
+        if not k or k in known:
+            continue
+        basket.append(rec)
+        known.add(k)
+        new.append((k,rec))
+    st.session_state[session_key]=basket
+
+    if new:
+        ok=_v136_ensure_daily_table() if table_name==V136_DAILY_TABLE else _init_history_db()
+        if ok:
+            now=datetime.now(timezone.utc).isoformat()
+            try:
+                with _history_connect() as conn:
+                    for k,rec in new:
+                        conn.execute(
+                            f'INSERT OR IGNORE INTO {table_name}(added_at,dedup_key,title,url,record_json) VALUES (?,?,?,?,?)',
+                            (now,k,str(rec.get('Başlık','') or ''),str(rec.get('URL','') or ''),json.dumps(rec,ensure_ascii=False,default=str))
+                        )
+                    conn.commit()
+            except Exception:
+                pass
+    return len(new)
+
+
+def _v136_daily_add(rows):
+    return _v136_add_to_table(rows,V136_DAILY_TABLE,'v136_daily_analysis_basket',_v136_daily_basket)
+
+
+def _v136_archive_add(rows):
+    return _v136_add_to_table(rows,V136_ARCHIVE_TABLE,'v136_archive_analysis_basket',_v136_archive_basket)
+
+
+def _v136_remove_from_table(indices, table_name, session_key, getter):
+    basket=getter()
+    kill={int(i) for i in indices}
+    removed=[r for i,r in enumerate(basket) if i in kill]
+    kept=[r for i,r in enumerate(basket) if i not in kill]
+    st.session_state[session_key]=kept
+    if removed:
+        ok=_v136_ensure_daily_table() if table_name==V136_DAILY_TABLE else _init_history_db()
+        if ok:
+            try:
+                with _history_connect() as conn:
+                    for r in removed:
+                        conn.execute(f'DELETE FROM {table_name} WHERE dedup_key=?',(_v3_analysis_dedup_key(r),))
+                    conn.commit()
+            except Exception:
+                pass
+    return len(removed)
+
+
+def _v136_daily_remove(indices):
+    return _v136_remove_from_table(indices,V136_DAILY_TABLE,'v136_daily_analysis_basket',_v136_daily_basket)
+
+
+def _v136_archive_remove(indices):
+    return _v136_remove_from_table(indices,V136_ARCHIVE_TABLE,'v136_archive_analysis_basket',_v136_archive_basket)
+
+
+def _v136_clear_table(table_name, session_key):
+    ok=_v136_ensure_daily_table() if table_name==V136_DAILY_TABLE else _init_history_db()
+    if ok:
+        try:
+            with _history_connect() as conn:
+                conn.execute(f'DELETE FROM {table_name}')
+                conn.commit()
+        except Exception:
+            pass
+    st.session_state[session_key]=[]
+
+
+def _v136_basket_gephi_package(bdf):
+    # Analiz Sepeti'nde beğenilen motor birebir kullanılır.
+    sn,se,ss=_v23_gephi_network(bdf,network_type='source',min_weight=1)
+    sg=_v23_gephi_gexf(sn,se,'Terörsüz Türkiye — Analiz Sepeti Kaynak-Çerçeve Ağı') if not sn.empty and not se.empty else b''
+
+    dn,de,ds=_v30_event_network(bdf,min_weight=1)
+    dg=_v30_event_gexf(dn,de,'Terörsüz Türkiye — Analiz Sepeti Söylem Çevresi-Çerçeve Ağı') if not dn.empty and not de.empty else b''
+
+    comments=_v127_node_commentary_table(sn,se,dn,de)
+    analysis_docx=_v127_gephi_analysis_note_docx(sn,se,dn,de,bdf)
+
+    return {
+        'source_nodes':sn.to_dict('records'),
+        'source_edges':se.to_dict('records'),
+        'source_summary':ss.to_dict('records'),
+        'source_gexf':sg,
+        'discourse_nodes':dn.to_dict('records'),
+        'discourse_edges':de.to_dict('records'),
+        'discourse_summary':ds.to_dict('records'),
+        'discourse_gexf':dg,
+        'node_comments':comments.to_dict('records') if comments is not None else [],
+        'analysis_docx':analysis_docx,
+    }
+
+
+def _v136_render_basket(title, description, getter, remover, table_name, session_key, key_prefix, file_prefix):
+    st.markdown(f'#### {title}')
+    st.caption(description)
+    basket=getter()
+    if not basket:
+        st.info(f'{title} henüz boş.')
+        return
+
+    bdf=pd.DataFrame(basket).reset_index(drop=True)
+    bdf.insert(0,'Çıkar',False)
+    show=[c for c in ['Çıkar','Tarih','Bölge','Kaynak','Kategori','Yaklaşım','Çerçeve','Başlık','İçerik_Özeti','URL'] if c in bdf.columns]
+    edited=st.data_editor(
+        bdf[show],
+        column_config={
+            'Çıkar':st.column_config.CheckboxColumn('Çıkar'),
+            'URL':st.column_config.LinkColumn('Kaynak / Haber'),
+            'İçerik_Özeti':st.column_config.TextColumn('Kısa İçerik',width='large')
+        },
+        disabled=[c for c in show if c!='Çıkar'],
+        hide_index=True,
+        use_container_width=True,
+        height=min(600,100+45*len(bdf)),
+        key=f'{key_prefix}_editor'
+    )
+
+    c1,c2,c3=st.columns(3)
+    with c1:
+        if st.button('🗑️ Seçilenleri Çıkar',use_container_width=True,key=f'{key_prefix}_remove'):
+            idx=edited.index[edited['Çıkar'].astype(bool)].tolist()
+            if not idx:
+                st.warning('Önce çıkarılacak içerikleri seçin.')
+            else:
+                remover(idx)
+                st.session_state.pop(f'{key_prefix}_gephi',None)
+                st.session_state.pop(f'{key_prefix}_report_bytes',None)
+                st.rerun()
+    with c2:
+        if st.button('📝 Detaylı Bilgi Notu Oluştur',use_container_width=True,key=f'{key_prefix}_note'):
+            _v3_make_note(pd.DataFrame(getter()),key_prefix)
+    with c3:
+        if st.button('🧠 PDF TARZI SÖYLEM ANALİZİ OLUŞTUR',type='primary',use_container_width=True,key=f'{key_prefix}_report'):
+            with st.spinner('Sepetteki içerikler analitik rapor motoruyla işleniyor...'):
+                try:
+                    st.session_state[f'{key_prefix}_report_bytes']=_v114_analysis_basket_report_docx(pd.DataFrame(getter()))
+                except Exception as e:
+                    st.error(f'Rapor hazırlanamadı: {e}')
+
+    if st.session_state.get(f'{key_prefix}_note_bytes'):
+        st.download_button(
+            '⬇️ Analiz Sepeti Bilgi Notunu İndir',
+            st.session_state[f'{key_prefix}_note_bytes'],
+            file_name=f'{file_prefix}_Bilgi_Notu_{date.today()}.docx',
+            mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            use_container_width=True,
+            key=f'{key_prefix}_note_download'
+        )
+    if st.session_state.get(f'{key_prefix}_report_bytes'):
+        st.download_button(
+            '⬇️ KAYNAKLI ANALİZ RAPORUNU İNDİR',
+            st.session_state[f'{key_prefix}_report_bytes'],
+            file_name=f'{file_prefix}_Soylem_Analizi_V136_{date.today()}.docx',
+            mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            use_container_width=True,
+            key=f'{key_prefix}_report_download'
+        )
+
+    with st.expander('🧹 Sepeti tamamen temizle'):
+        confirm=st.checkbox('Bu sepetteki tüm içerikleri silmeyi onaylıyorum.',key=f'{key_prefix}_clear_confirm')
+        if st.button('TÜM SEPETİ TEMİZLE',use_container_width=True,key=f'{key_prefix}_clear_all',disabled=not confirm):
+            _v136_clear_table(table_name,session_key)
+            st.session_state.pop(f'{key_prefix}_gephi',None)
+            st.session_state.pop(f'{key_prefix}_report_bytes',None)
+            st.session_state.pop(f'{key_prefix}_note_bytes',None)
+            st.rerun()
+
+    st.markdown('##### 🕸️ Analiz Sepeti Gephi Oluşturucusu')
+    st.caption(
+        'Bu sepet için kararlı Analiz Sepeti Gephi motoru aynen çalışır: '
+        'Kaynak ↔ Çerçeve ve Söylem Çevresi ↔ Çerçeve ağları, sosyal alt-söylemler, '
+        'düğüm açıklamaları ve Gephi Analiz Notu birlikte üretilir.'
+    )
+    if st.button('🕸️ BU SEPETTEN GEPHI OLUŞTUR',use_container_width=True,key=f'{key_prefix}_gephi_build'):
+        try:
+            st.session_state[f'{key_prefix}_gephi']=_v136_basket_gephi_package(pd.DataFrame(getter()))
+        except Exception as e:
+            st.error(f'Analiz Sepeti Gephi ağı oluşturulamadı: {e}')
+
+    gp=st.session_state.get(f'{key_prefix}_gephi') or {}
+    if gp:
+        summary=pd.DataFrame(gp.get('discourse_summary') or [])
+        if not summary.empty:
+            st.dataframe(summary,hide_index=True,use_container_width=True)
+
+        g1,g2,g3,g4=st.columns(4)
+        if gp.get('source_gexf'):
+            g1.download_button('⬇️ Kaynak-Çerçeve GEXF',gp['source_gexf'],f'{file_prefix}_Kaynak_Cerceve_V136.gexf','application/xml',use_container_width=True,key=f'{key_prefix}_source_gexf')
+        if gp.get('discourse_gexf'):
+            g2.download_button('⬇️ Kesim-Çerçeve GEXF',gp['discourse_gexf'],f'{file_prefix}_Kesim_Cerceve_V136.gexf','application/xml',use_container_width=True,key=f'{key_prefix}_disc_gexf')
+        se_df=pd.DataFrame(gp.get('source_edges') or [])
+        if not se_df.empty:
+            g3.download_button('⬇️ Source Edges CSV',se_df.to_csv(index=False).encode('utf-8-sig'),f'{file_prefix}_Source_Edges_V136.csv','text/csv',use_container_width=True,key=f'{key_prefix}_source_edges')
+        de_df=pd.DataFrame(gp.get('discourse_edges') or [])
+        if not de_df.empty:
+            g4.download_button('⬇️ Discourse Edges CSV',de_df.to_csv(index=False).encode('utf-8-sig'),f'{file_prefix}_Discourse_Edges_V136.csv','text/csv',use_container_width=True,key=f'{key_prefix}_disc_edges')
+
+        comments=pd.DataFrame(gp.get('node_comments') or [])
+        if not comments.empty:
+            st.markdown('##### 🧭 Gephi Düğüm Açıklamaları')
+            st.dataframe(comments,hide_index=True,use_container_width=True,height=min(520,120+32*min(12,len(comments))))
+
+        n1,n2=st.columns(2)
+        if gp.get('analysis_docx'):
+            n1.download_button('⬇️ Gephi Analiz Notu (Word)',gp['analysis_docx'],f'{file_prefix}_Gephi_Analiz_Notu_V136.docx','application/vnd.openxmlformats-officedocument.wordprocessingml.document',use_container_width=True,key=f'{key_prefix}_gephi_note')
+        if not comments.empty:
+            n2.download_button('⬇️ Düğüm Açıklamaları CSV',comments.to_csv(index=False).encode('utf-8-sig'),f'{file_prefix}_Gephi_Dugum_Aciklamalari_V136.csv','text/csv',use_container_width=True,key=f'{key_prefix}_node_comments')
+
+
+# Bundan sonraki bütün panel seçimleri GÜNLÜK sepete gider.
+_v3_analysis_basket=_v136_daily_basket
+_v3_add_analysis=_v136_daily_add
+_v3_remove_analysis=_v136_daily_remove
+
+# ============================================================
+# /V136
+# ============================================================
+
 # V33 — SADE GÜNLÜK ANA PANEL
 #
 # TARMA ÖNCESİ:
@@ -34019,10 +34321,9 @@ _v133_general_gephi_build = _v135_general_gephi_build
 #
 # TARAMA SONRASI:
 #   1. Kaynak Bazlı İzleme (kaynak sekmeleri + kronoloji/eleştirel/olay/trend)
-#   2. Gündem ve Söylem Haritası
-#   3. Gephi
-#   4. Analiz Sepeti
-#   5. Gün Sonu Performans Özeti
+#   2. Genel Gephi Ağ Analizi
+#   3. Günlük / Eski Analiz Sepetleri
+#   4. Gün Sonu Performans Özeti
 # ============================================================
 
 rows=st.session_state.rows
@@ -34110,7 +34411,7 @@ if rows is None:
             )
 
             if st.button(
-                '🧺 Seçili Yeni İçerikleri Analiz Sepetine Ekle',
+                '🧺 Seçili Yeni İçerikleri Günlük Analiz Sepetine Ekle',
                 use_container_width=True,
                 key='v120_now_to_basket'
             ):
@@ -34120,13 +34421,13 @@ if rows is None:
                 _recs=_v120_now_records_for_basket(_v34_diff,_idx)
                 _added=_v3_add_analysis(_recs)
                 if _added:
-                    st.success(f'{_added} içerik Analiz Sepetine eklendi.')
+                    st.success(f'{_added} içerik Günlük Analiz Sepetine eklendi.')
                 else:
                     st.info('Yeni içerik eklenmedi veya seçilenler zaten sepette mevcut.')
 
     st.info(
         'Yeni ana taramayı başlatmak için üstteki **TARAMAYI BAŞLAT / YENİLE** düğmesini kullanın. '
-        'Kaynak Bazlı İzleme, Gündem ve Söylem Haritası ve Gephi tarama tamamlandıktan sonra açılır.'
+        'Kaynak Bazlı İzleme ve Genel Gephi Ağ Analizi tarama tamamlandıktan sonra açılır.'
     )
 else:
     df=pd.DataFrame(rows)
@@ -34383,495 +34684,8 @@ else:
                 watchlist_hits(df,watch)
             )
 
-        # ====================================================
-        # 2. GÜNDEM VE SÖYLEM HARİTASI — V110
-        # ====================================================
+        # V136 — Gündem ve Söylem Haritası panelden kaldırıldı.
         st.markdown('---')
-        st.subheader('🧭 Gündem ve Söylem Haritası')
-        st.caption(
-            'Son 24/48 saatte Kaynak Bazlı İzleme’de bulunan tüm gerçek içerik havuzu taranır. '
-            'Her anlamlı haber, köşe yazısı, analiz, açıklama veya sosyal paylaşım somut bir odak içerik adayıdır. '
-            'Sistem “bu olay hakkında başka kim konuştu?” sorusunu sorar ve aynı somut olaya bağlı farklı kesimlerin '
-            'haber, yorum, tepki, analiz ve paylaşımlarını gerçek bağlantılarıyla bir araya getirir.'
-        )
-
-        _v110_period=st.radio(
-            'Gündem penceresi',
-            [24,48],
-            index=0,
-            horizontal=True,
-            format_func=lambda x:f'Son {x} saat',
-            key='v110_period'
-        )
-
-        with st.spinner(
-            'Tüm kaynak havuzunda olaylar ve farklı kesimlerin gerçek söylem yankıları eşleştiriliyor...'
-        ):
-            _v110_agenda,_v110_dossier_map,_v110_anchor_map=_v120_get_agenda(
-                df,
-                _v110_period,
-                20
-            )
-
-        if _v110_agenda.empty:
-            st.info(
-                'Seçilen pencerede başka bir gerçek kaynak veya farklı söylem çevresiyle somut olay bağı kurulabilen '
-                'bir gündem bulunmadı.'
-            )
-        else:
-            st.markdown('##### Çok Kaynaklı / Karşı-Söylem Üreten Gündemler')
-            st.caption(
-                'V118: Yerli basının hacmi tek başına gündemi belirlemez. '
-                'Uygun karşı-söylem bulunduğunda Kürt bölgesel medya, PKK/KCK açık kaynak, '
-                'yabancı basın ve think tank içerikleri de doğrudan odak haber olarak seçilir.'
-            )
-
-            _agenda_cols=[
-                'Sıra','Odak Kaynak Ailesi','Odak Kaynak','Odak Haber / Açıklama',
-                'Karşılık','Farklı Kesim','Benzersiz Kaynak',
-                'Doğrudan Tepki / Yorum',
-                'Yabancı','Kürt Bölgesel','PKK/KCK','Sosyal',
-                'Odak Bağlantı'
-            ]
-
-            _agenda_show=_v110_agenda[
-                [c for c in _agenda_cols if c in _v110_agenda.columns]
-            ].reset_index(drop=True)
-            _agenda_show.insert(0,'Seç',False)
-
-            with st.form('v110_agenda_form',clear_on_submit=False):
-                _agenda_edited=st.data_editor(
-                    _agenda_show,
-                    column_config={
-                        'Seç':st.column_config.CheckboxColumn('Seç'),
-                        'Odak Haber / Açıklama':st.column_config.TextColumn(
-                            'Gündem / Odak Haber',
-                            width='large'
-                        ),
-                        'Odak Bağlantı':st.column_config.LinkColumn(
-                            'Odak Haber',
-                            display_text='Aç'
-                        )
-                    },
-                    disabled=[c for c in _agenda_show.columns if c!='Seç'],
-                    hide_index=True,
-                    use_container_width=True,
-                    height=min(760,135+39*len(_v110_agenda)),
-                    key='v110_agenda_editor'
-                )
-                _agenda_basket_btn=st.form_submit_button(
-                    '🧺 Seçili Gündemleri Analiz Sepetine Ekle',
-                    use_container_width=True
-                )
-
-            if _agenda_basket_btn:
-                # _agenda_show ile _v110_agenda aynı satır sırasını paylaşır (ikisi de
-                # aynı reset_index(drop=True) uygulanmış kaynaktan türetildi); bu yüzden
-                # işaretli konumlar doğrudan orijinal EventKey'lere eşlenebilir.
-                _sel_pos=_agenda_edited.index[_agenda_edited['Seç'].astype(bool)].tolist()
-                _agenda_ordered=_v110_agenda.reset_index(drop=True)
-                _sel_keys=[
-                    str(_agenda_ordered.loc[i,'EventKey'])
-                    for i in _sel_pos if i in _agenda_ordered.index
-                ]
-                if not _sel_keys:
-                    st.warning('Önce en az bir gündem seçin.')
-                else:
-                    _sel_records=[
-                        _v110_anchor_map[k] for k in _sel_keys
-                        if k in _v110_anchor_map
-                    ]
-                    _n=_v3_add_analysis(_sel_records)
-                    st.success(f'✅ {_n} odak haber Analiz Sepetine eklenmiştir.')
-
-            _opts={
-                f"{int(r['Sıra'])}. {r.get('Odak Kaynak','')} — "
-                f"{str(r.get('Odak Haber / Açıklama',''))[:150]} "
-                f"[{int(r.get('Karşılık',0) or 0)} karşılık / "
-                f"{int(r.get('Farklı Kesim',0) or 0)} farklı kesim]":
-                    str(r['EventKey'])
-                for _,r in _v110_agenda.iterrows()
-            }
-
-            _label=st.selectbox(
-                'İncelenecek gündem / odak haber',
-                list(_opts.keys()),
-                key='v110_agenda_select'
-            )
-            _ek=_opts[_label]
-            _arow=_v110_agenda[
-                _v110_agenda['EventKey'].astype(str)==str(_ek)
-            ].iloc[0]
-
-            _anchor_dict=_v110_anchor_map.get(_ek)
-            if not _anchor_dict:
-                st.warning('Odak içerik yüklenemedi.')
-            else:
-                _anchor=pd.Series(_anchor_dict)
-                _anchor_uid=_v110_uid(_anchor)
-
-                st.markdown(
-                    f"##### 1. Odak Haber / Açıklama — {_anchor.get('Kaynak','Açık Kaynak')}"
-                )
-
-                st.dataframe(
-                    pd.DataFrame([{
-                        'Kaynak Ailesi':_v110_family(_anchor),
-                        'Kaynak':str(_anchor.get('Kaynak','') or ''),
-                        'İçerik Türü':_v110_content_kind(_anchor),
-                        'Başlık':str(_anchor.get('Başlık','') or ''),
-                        'Gerçek Bağlantı':str(_anchor.get('URL','') or '')
-                    }]),
-                    hide_index=True,
-                    use_container_width=True,
-                    column_config={
-                        'Başlık':st.column_config.TextColumn(
-                            'Gündem Olan Somut İçerik',
-                            width='large'
-                        ),
-                        'Gerçek Bağlantı':st.column_config.LinkColumn(
-                            'Odak İçerik',
-                            display_text='Aç'
-                        )
-                    }
-                )
-
-                _pkg=st.session_state.get('_v110_anchor_package') or {}
-                _pkg_ok=(
-                    str(_pkg.get('scan_time',''))==str(st.session_state.get('scan_time',''))
-                    and str(_pkg.get('event_key',''))==str(_ek)
-                    and str(_pkg.get('anchor_uid',''))==str(_anchor_uid)
-                    and int(_pkg.get('period',0) or 0)==int(_v110_period)
-                )
-
-                if _pkg_ok:
-                    _dossier=pd.DataFrame(_pkg.get('dossier') or [])
-                    st.success(
-                        f"Derin tarama dahil: {len(_dossier)} gerçek ilişkili içerik."
-                    )
-                else:
-                    _dossier=pd.DataFrame(
-                        _v110_dossier_map.get(_ek,[]) or []
-                    )
-
-                st.markdown('##### 2. Bu Olay Hakkında Diğer Kesimler Ne Dedi?')
-                st.caption(
-                    'Aşağıdaki içerikler, yukarıdaki Kaynak Bazlı İzleme’de yer alan tüm 24/48 saatlik havuzdan seçilir. '
-                    'Aynı genel temayı konuşmaları yetmez; aynı somut aktör/örgüt, olay kavramı, yakın zaman, doğrudan tepki '
-                    'veya aynı açıklamanın işlenişi gibi olay bağı aranır. Her satır gerçek başlık, gerçek spot ve gerçek URL taşır.'
-                )
-
-                if _dossier.empty:
-                    st.info(
-                        'Ana tarama havuzunda bu somut olaya bağlı başka gerçek içerik bulunamadı. '
-                        'İsterseniz aşağıdaki derin tarama ile açık web ve sosyal indekslerde özel arama yapabilirsiniz.'
-                    )
-                else:
-                    _dossier_show=_dossier[
-                        [c for c in [
-                            'Kesim','Bağ Türü','Tarih','Kaynak Ailesi',
-                            'Kaynak','İçerik Türü','Aktörler',
-                            'Ne Dedi / Ne Yazdı?','Başlık','Çerçeve',
-                            'İlişki Kanıtı','Gerçek Bağlantı'
-                        ] if c in _dossier.columns]
-                    ].reset_index(drop=True)
-                    _dossier_show.insert(0,'Seç',False)
-
-                    with st.form('v110_dossier_form',clear_on_submit=False):
-                        _dossier_edited=st.data_editor(
-                            _dossier_show,
-                            hide_index=True,
-                            use_container_width=True,
-                            height=min(980,145+39*min(140,len(_dossier))),
-                            column_config={
-                                'Seç':st.column_config.CheckboxColumn('Seç'),
-                                'Kesim':st.column_config.TextColumn(
-                                    'Kesim / Kaynak Ekosistemi',
-                                    width='medium'
-                                ),
-                                'Bağ Türü':st.column_config.TextColumn(
-                                    'İlişki',
-                                    width='medium'
-                                ),
-                                'Ne Dedi / Ne Yazdı?':st.column_config.TextColumn(
-                                    'Bu Olay Hakkında Ne Dedi / Ne Yazdı?',
-                                    width='large'
-                                ),
-                                'Başlık':st.column_config.TextColumn(
-                                    'Gerçek İçerik',
-                                    width='large'
-                                ),
-                                'İlişki Kanıtı':st.column_config.TextColumn(
-                                    'Odak Olayla Bağı',
-                                    width='large'
-                                ),
-                                'Gerçek Bağlantı':st.column_config.LinkColumn(
-                                    'Gerçek Link',
-                                    display_text='Aç'
-                                )
-                            },
-                            disabled=[c for c in _dossier_show.columns if c!='Seç'],
-                            key='v110_dossier_editor'
-                        )
-                        _dossier_basket_btn=st.form_submit_button(
-                            '🧺 Seçili Söylemleri Analiz Sepetine Ekle',
-                            use_container_width=True
-                        )
-
-                    if _dossier_basket_btn:
-                        _dsel=_dossier_edited[_dossier_edited['Seç'].astype(bool)]
-                        if _dsel.empty:
-                            st.warning('Önce en az bir söylem/içerik seçin.')
-                        else:
-                            _drecords=[{
-                                'Tarih':str(r.get('Tarih','') or ''),
-                                'Kaynak':str(r.get('Kaynak','') or ''),
-                                'Başlık':str(r.get('Başlık','') or ''),
-                                'URL':str(r.get('Gerçek Bağlantı','') or ''),
-                                'Çerçeve':str(r.get('Çerçeve','') or ''),
-                                'Kategori':str(r.get('Kesim','') or ''),
-                                'Yaklaşım':str(r.get('Bağ Türü','') or ''),
-                                'İçerik_Özeti':str(r.get('Ne Dedi / Ne Yazdı?','') or '')
-                            } for _,r in _dsel.iterrows()]
-                            _n=_v3_add_analysis(_drecords)
-                            st.success(f'✅ {_n} söylem/içerik Analiz Sepetine eklenmiştir.')
-
-                    st.markdown('##### 3. Söylem Yoğunluğu')
-                    _density=_v110_section_density(_dossier)
-                    if not _density.empty:
-                        st.dataframe(
-                            _density,
-                            hide_index=True,
-                            use_container_width=True,
-                            height=min(500,110+36*len(_density))
-                        )
-
-                    st.markdown('##### 4. Yayılım Haritası — "Bu Olaya Kim Ne Dedi?"')
-                    st.caption(
-                        'Odak içerikle GERÇEK olay bağı kurulmuş içerikler kesim bazında sayılır: '
-                        'Türk medyasında kaç haber, kaç köşe yazısı/yorum, kaç sosyal medya paylaşımı, '
-                        'kaç think tank değerlendirmesi, PKK/KCK çevresinden kaç açıklama, Kürt bölgesel '
-                        'medyada (Rudaw, Kurdistan24 vb.) kaç haber ve uluslararası basında kaç haber var — '
-                        'her satır tıklanabilir gerçek başlık ve linke bağlıdır. Bir kesimde sayaç 0 ise mevcut '
-                        'tarama havuzunda bu somut olaya bağlı gerçek içerik yakalanmamış demektir; içerik '
-                        'uydurulmaz, aşağıdaki "Derin Tara" ile havuz genişletilebilir.'
-                    )
-                    _spread=_v110_spread_map(_anchor,_dossier)
-                    _total_echo=sum(b['Adet'] for b in _spread)
-                    if _total_echo==0:
-                        st.info('Bu odak içerikle gerçek olay bağı kurulan başka kesimden içerik bulunamadı.')
-                    else:
-                        _mcols=st.columns(len(_spread))
-                        for _mc,_b in zip(_mcols,_spread):
-                            _mc.metric(_b['Kesim'],_b['Adet'])
-                        for _b in _spread:
-                            if _b['Adet']==0:
-                                continue
-                            with st.expander(f"{_b['Kesim']} — {_b['Adet']} içerik",False):
-                                st.dataframe(
-                                    pd.DataFrame(_b['Örnekler']),
-                                    hide_index=True,
-                                    use_container_width=True,
-                                    column_config={
-                                        'Başlık':st.column_config.TextColumn(
-                                            'Gerçek İçerik',
-                                            width='large'
-                                        ),
-                                        'Gerçek Bağlantı':st.column_config.LinkColumn(
-                                            'Gerçek Link',
-                                            display_text='Aç'
-                                        )
-                                    }
-                                )
-
-                    st.markdown('##### 5. Ayrıntılı Zaman Çizelgesi (Kronolojik)')
-                    _timeline=_v110_timeline(_anchor,_dossier)
-                    if not _timeline.empty:
-                        st.dataframe(
-                            _timeline,
-                            hide_index=True,
-                            use_container_width=True,
-                            height=min(620,115+35*min(60,len(_timeline))),
-                            column_config={
-                                'Başlık':st.column_config.TextColumn(
-                                    'Gerçek İçerik',
-                                    width='large'
-                                ),
-                                'Gerçek Bağlantı':st.column_config.LinkColumn(
-                                    'Gerçek Link',
-                                    display_text='Aç'
-                                )
-                            }
-                        )
-
-                if st.button(
-                    '🔬 Bu Odak Olayı Tüm Kesimlerde Derin Tara',
-                    type='primary',
-                    use_container_width=True,
-                    key='v110_deep_btn'
-                ):
-                    with st.spinner(
-                        'Odak olaydan sapmadan yabancı basın, sosyal medya, PKK/KCK çevresi, Kürt bölgesel medya, '
-                        'think tank ve farklı yerli söylem çevrelerinde ek gerçek içerikler aranıyor...'
-                    ):
-                        _deep,_diag=_v110_deep_search(
-                            _anchor,
-                            _v110_period
-                        )
-
-                    _full=_v110_merge_dossiers(
-                        _dossier,
-                        _deep
-                    )
-
-                    st.session_state['_v110_anchor_package']={
-                        'scan_time':str(st.session_state.get('scan_time','')),
-                        'period':int(_v110_period),
-                        'event_key':str(_ek),
-                        'anchor_uid':str(_anchor_uid),
-                        'anchor':_anchor.to_dict(),
-                        'dossier':_full.to_dict('records'),
-                        'diag':(
-                            _diag.to_dict('records')
-                            if _diag is not None and not _diag.empty
-                            else []
-                        )
-                    }
-                    st.session_state.pop('_v110_event_network',None)
-                    st.rerun()
-
-                if not _dossier.empty:
-                    c_net,c_report=st.columns(2)
-
-                    with c_net:
-                        if st.button(
-                            '🕸️ Olay → Kesim → Kaynak → Aktör → Çerçeve Ağını Hazırla',
-                            use_container_width=True,
-                            key='v110_event_gephi_btn'
-                        ):
-                            _nodes,_edges=_v110_event_graph(
-                                _anchor,
-                                _dossier
-                            )
-                            st.session_state['_v110_event_network']={
-                                'scan_time':str(st.session_state.get('scan_time','')),
-                                'event_key':str(_ek),
-                                'anchor_uid':str(_anchor_uid),
-                                'nodes':_nodes.to_dict('records'),
-                                'edges':_edges.to_dict('records')
-                            }
-
-                    with c_report:
-                        if st.button(
-                            '📄 Seçili Olayın Günlük Raporunu Oluştur',
-                            use_container_width=True,
-                            key='v110_report_btn'
-                        ):
-                            # Existing report engine is reused; only the richer
-                            # V110 dossier is converted into its expected schema.
-                            _event_rows=[]
-                            for _,rr in _dossier.iterrows():
-                                _event_rows.append({
-                                    'Tarih':rr.get('Tarih',''),
-                                    'Kaynak':rr.get('Kaynak',''),
-                                    'Başlık':rr.get('Başlık',''),
-                                    'İçerik_Özeti':rr.get('Ne Dedi / Ne Yazdı?',''),
-                                    'URL':rr.get('Gerçek Bağlantı',''),
-                                    'İçerik Türü':rr.get('İçerik Türü',''),
-                                    'Kaynak_Grubu':rr.get('Kaynak Ailesi','')
-                                })
-                            _event_df=pd.DataFrame(_event_rows)
-
-                            _grp=_v26_group_summary(_event_df)
-                            _frm=_v25_frame_summary(_event_df)
-                            _mov=_v25_movement_divergence(_event_df)
-                            _nn,_ee,_net=_v30_event_network(_event_df,1)
-
-                            st.session_state['_v110_report_bytes']=_v30_daily_report_docx(
-                                str(_anchor.get('Başlık','') or ''),
-                                int(_v110_period),
-                                pd.concat(
-                                    [pd.DataFrame([_anchor.to_dict()]),_event_df],
-                                    ignore_index=True,
-                                    sort=False
-                                ),
-                                _event_df,
-                                _grp,_frm,_mov,_net,
-                                _v110_agenda
-                            )
-
-                    _np=st.session_state.get('_v110_event_network') or {}
-                    _np_ok=(
-                        str(_np.get('scan_time',''))==str(st.session_state.get('scan_time',''))
-                        and str(_np.get('event_key',''))==str(_ek)
-                        and str(_np.get('anchor_uid',''))==str(_anchor_uid)
-                    )
-
-                    if _np_ok:
-                        _nodes=pd.DataFrame(_np.get('nodes') or [])
-                        _edges=pd.DataFrame(_np.get('edges') or [])
-
-                        if not _nodes.empty and not _edges.empty:
-                            st.markdown('##### 5. Olay-Özel Çok Katmanlı Ağ')
-                            st.caption(
-                                'Ağ katmanları: Olay → Kesim → Kaynak → Aktör → Çerçeve. '
-                                'Aktör çıkarılamayan içeriklerde Kaynak → Çerçeve bağlantısı kullanılır.'
-                            )
-
-                            _node_counts=(
-                                _nodes['NodeType'].value_counts()
-                                .rename_axis('Katman')
-                                .reset_index(name='Düğüm')
-                            )
-                            st.dataframe(
-                                _node_counts,
-                                hide_index=True,
-                                use_container_width=True
-                            )
-
-                            try:
-                                _gexf=_v110_event_gexf(
-                                    _nodes,
-                                    _edges,
-                                    str(_anchor.get('Başlık','') or 'Odak Olay')
-                                )
-                                g1,g2,g3=st.columns(3)
-                                g1.download_button(
-                                    '⬇️ Çok Katmanlı GEXF',
-                                    _gexf,
-                                    'terorsuz_turkiye_soylem_yanki_v110.gexf',
-                                    'application/xml',
-                                    use_container_width=True,
-                                    key='v110_gexf_dl'
-                                )
-                                g2.download_button(
-                                    '⬇️ Nodes CSV',
-                                    _nodes.to_csv(index=False).encode('utf-8-sig'),
-                                    'terorsuz_turkiye_soylem_nodes_v110.csv',
-                                    'text/csv',
-                                    use_container_width=True,
-                                    key='v110_nodes_dl'
-                                )
-                                g3.download_button(
-                                    '⬇️ Edges CSV',
-                                    _edges.to_csv(index=False).encode('utf-8-sig'),
-                                    'terorsuz_turkiye_soylem_edges_v110.csv',
-                                    'text/csv',
-                                    use_container_width=True,
-                                    key='v110_edges_dl'
-                                )
-                            except Exception as _e:
-                                st.warning(f'Çok katmanlı ağ dışa aktarılamadı: {_e}')
-
-                    if st.session_state.get('_v110_report_bytes'):
-                        st.download_button(
-                            '⬇️ Seçili Olayın Günlük Söylem Raporunu İndir',
-                            st.session_state['_v110_report_bytes'],
-                            file_name=f'Terorsuz_Turkiye_Soylem_Yanki_Raporu_{date.today()}.docx',
-                            mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                            use_container_width=True,
-                            key='v110_report_dl'
-                        )
 
         # ====================================================
         # 3. GENERAL GEPHI — scan-only
@@ -35100,208 +34914,38 @@ Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bi
 
     st.markdown('---')
 
-    # ---------------- ANALİZ SEPETİ ----------------
+    # ---------------- ÇİFT ANALİZ SEPETİ — V136 ----------------
     st.markdown('---')
-    st.subheader('🧺 Analiz Sepeti')
-    st.caption('Panelin otomatik odaklamadığı veya analistin ayrıca incelemek istediği içerikleri tek yerde biriktirir. '
-               'V118 raporu düz yazı biçimindedir: sepetteki her haber/paylaşım ayrı bir paragraf olur; paragrafta önce '
-               'kısa içerik özeti, ardından “hangi kesim ne diyor?” analizi ve tıklanabilir kaynak atfı verilir.')
-    basket=_v3_analysis_basket()
-    if not basket:
-        st.info('Analiz Sepeti henüz boş.')
-    else:
-        bdf=pd.DataFrame(basket).reset_index(drop=True)
-        bdf.insert(0,'Çıkar',False)
-        show=[c for c in ['Çıkar','Tarih','Bölge','Kaynak','Kategori','Yaklaşım','Çerçeve','Başlık','İçerik_Özeti','URL'] if c in bdf.columns]
-        edited=st.data_editor(
-            bdf[show],
-            column_config={'Çıkar':st.column_config.CheckboxColumn('Çıkar'),
-                           'URL':st.column_config.LinkColumn('Kaynak / Haber'),
-                           'İçerik_Özeti':st.column_config.TextColumn('Kısa İçerik',width='large')},
-            disabled=[c for c in show if c!='Çıkar'],hide_index=True,use_container_width=True,height=min(600,100+45*len(bdf)),
-            key='v3_analysis_basket_editor'
-        )
-        c1,c2,c3=st.columns(3)
-        with c1:
-            if st.button('🗑️ Seçilenleri Çıkar',use_container_width=True,key='v3_remove_basket'):
-                idx=edited.index[edited['Çıkar'].astype(bool)].tolist()
-                _v3_remove_analysis(idx); st.rerun()
-        with c2:
-            if st.button('📝 Detaylı Bilgi Notu Oluştur',use_container_width=True,key='v3_basket_note'):
-                _v3_make_note(pd.DataFrame(_v3_analysis_basket()),'analysis_basket')
-        with c3:
-            if st.button('🧠 PDF TARZI SÖYLEM ANALİZİ OLUŞTUR',type='primary',use_container_width=True,key='v3_report'):
-                with st.spinner(
-                    'Analiz sepetindeki içerikler okunuyor; içerik türü, mecra/site, yazar/hesap, kısa içerik özeti ve kaynak bağlamı, '
-                    'atıf-metin uyumu ve sayfa altı bağlantı dipnotları hazırlanıyor...'
-                ):
-                    try:
-                        st.session_state['v3_report_bytes']=_v114_analysis_basket_report_docx(
-                            pd.DataFrame(_v3_analysis_basket())
-                        )
-                    except Exception as e:
-                        st.error(f'Rapor hazırlanamadı: {e}')
-        if st.session_state.get('analysis_basket_note_bytes'):
-            st.download_button('⬇️ Analiz Sepeti Bilgi Notunu İndir',
-                st.session_state['analysis_basket_note_bytes'],
-                file_name=f'Terorsuz_Turkiye_Analiz_Sepeti_Bilgi_Notu_{date.today()}.docx',
-                mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                use_container_width=True,key='v3_basket_note_download')
-        if st.session_state.get('v3_report_bytes'):
-            st.download_button('⬇️ KAYNAKLI ANALİZ RAPORUNU İNDİR',
-                st.session_state['v3_report_bytes'],
-                file_name=f'Terorsuz_Turkiye_PDF_Tarzi_Soylem_Analizi_V132_{date.today()}.docx',
-                mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                use_container_width=True,key='v3_report_download')
+    st.subheader('🧺 Analiz Sepetleri')
+    st.caption(
+        'V136 ile iki ayrı kalıcı sepet kullanılır. Bundan sonra Kaynak Bazlı İzleme, kronoloji ve '
+        'Şu An Bilmem Gerekenler bölümlerinden eklediğiniz yeni içerikler Günlük Analiz Sepetine gider. '
+        'Eski Analiz Sepeti ise önceki kararlı sürümde biriktirdiğiniz içerikleri arşiv olarak korur. '
+        'Her iki sepet de siz silmediğiniz sürece yeni oturumlarda ve sonraki günlerde korunur.'
+    )
 
-        st.markdown('##### 🕸️ Analiz Sepeti Gephi Oluşturucusu')
-        st.caption(
-            'Yalnız Analiz Sepetine seçtiğiniz içeriklerden iki ayrı ağ üretir: '
-            'Kaynak ↔ Çerçeve ve Söylem Çevresi ↔ Çerçeve. V132 ile kaynak aileleri ve genel çerçeve ayrıştırması düzeltilir, '
-            'sosyal medya alt-söylemlere ayrılır ve otomatik Gephi Analiz Notu üretilir.'
+    _daily_tab,_archive_tab=st.tabs([
+        f'📅 Günlük Analiz Sepeti ({len(_v136_daily_basket())})',
+        f'🗂️ Eski Analiz Sepeti / Arşiv ({len(_v136_archive_basket())})'
+    ])
+
+    with _daily_tab:
+        _v136_render_basket(
+            '📅 Günlük Analiz Sepeti',
+            'Gün içinde yeni seçtiğiniz içerikler burada birikir. Otomatik olarak gün sonunda veya yeni taramada silinmez; '
+            'siz manuel olarak temizleyene kadar kalıcıdır.',
+            _v136_daily_basket,_v136_daily_remove,V136_DAILY_TABLE,
+            'v136_daily_analysis_basket','v136_daily','Gunluk_Analiz_Sepeti'
         )
 
-        if st.button(
-            '🕸️ ANALİZ SEPETİNDEN GEPHI OLUŞTUR',
-            use_container_width=True,
-            key='v118_basket_gephi_build'
-        ):
-            try:
-                _v118_bdf=pd.DataFrame(_v3_analysis_basket())
-
-                _v118_sn,_v118_se,_v118_ss=_v23_gephi_network(
-                    _v118_bdf,
-                    network_type='source',
-                    min_weight=1
-                )
-                _v118_sg=_v23_gephi_gexf(
-                    _v118_sn,
-                    _v118_se,
-                    'Terörsüz Türkiye — Analiz Sepeti Kaynak-Çerçeve Ağı'
-                ) if not _v118_sn.empty and not _v118_se.empty else b''
-
-                _v118_dn,_v118_de,_v118_ds=_v30_event_network(
-                    _v118_bdf,
-                    min_weight=1
-                )
-                _v118_dg=_v30_event_gexf(
-                    _v118_dn,
-                    _v118_de,
-                    'Terörsüz Türkiye — Analiz Sepeti Söylem Çevresi-Çerçeve Ağı'
-                ) if not _v118_dn.empty and not _v118_de.empty else b''
-
-                _v127_node_notes=_v127_node_commentary_table(
-                    _v118_sn,
-                    _v118_se,
-                    _v118_dn,
-                    _v118_de
-                )
-                _v127_analysis_docx=_v127_gephi_analysis_note_docx(
-                    _v118_sn,
-                    _v118_se,
-                    _v118_dn,
-                    _v118_de,
-                    _v118_bdf
-                )
-
-                st.session_state['v118_basket_gephi']={
-                    'source_nodes':_v118_sn.to_dict('records'),
-                    'source_edges':_v118_se.to_dict('records'),
-                    'source_summary':_v118_ss.to_dict('records'),
-                    'source_gexf':_v118_sg,
-                    'discourse_nodes':_v118_dn.to_dict('records'),
-                    'discourse_edges':_v118_de.to_dict('records'),
-                    'discourse_summary':_v118_ds.to_dict('records'),
-                    'discourse_gexf':_v118_dg,
-                    'node_comments':_v127_node_notes.to_dict('records') if _v127_node_notes is not None else [],
-                    'analysis_docx':_v127_analysis_docx,
-                }
-            except Exception as _e:
-                st.error(f'Analiz Sepeti Gephi ağı oluşturulamadı: {_e}')
-
-        _v118_gp=st.session_state.get('v118_basket_gephi') or {}
-        if _v118_gp:
-            _v118_summary=pd.DataFrame(_v118_gp.get('discourse_summary') or [])
-            if not _v118_summary.empty:
-                st.dataframe(
-                    _v118_summary,
-                    hide_index=True,
-                    use_container_width=True
-                )
-
-            g1,g2,g3,g4=st.columns(4)
-
-            if _v118_gp.get('source_gexf'):
-                g1.download_button(
-                    '⬇️ Kaynak-Çerçeve GEXF',
-                    _v118_gp['source_gexf'],
-                    'Analiz_Sepeti_Kaynak_Cerceve_V132.gexf',
-                    'application/xml',
-                    use_container_width=True,
-                    key='v118_basket_source_gexf'
-                )
-
-            if _v118_gp.get('discourse_gexf'):
-                g2.download_button(
-                    '⬇️ Kesim-Çerçeve GEXF',
-                    _v118_gp['discourse_gexf'],
-                    'Analiz_Sepeti_Kesim_Cerceve_V132.gexf',
-                    'application/xml',
-                    use_container_width=True,
-                    key='v118_basket_discourse_gexf'
-                )
-
-            _v118_se_df=pd.DataFrame(_v118_gp.get('source_edges') or [])
-            if not _v118_se_df.empty:
-                g3.download_button(
-                    '⬇️ Source Edges CSV',
-                    _v118_se_df.to_csv(index=False).encode('utf-8-sig'),
-                    'Analiz_Sepeti_Source_Edges_V132.csv',
-                    'text/csv',
-                    use_container_width=True,
-                    key='v118_basket_source_edges'
-                )
-
-            _v118_de_df=pd.DataFrame(_v118_gp.get('discourse_edges') or [])
-            if not _v118_de_df.empty:
-                g4.download_button(
-                    '⬇️ Discourse Edges CSV',
-                    _v118_de_df.to_csv(index=False).encode('utf-8-sig'),
-                    'Analiz_Sepeti_Discourse_Edges_V132.csv',
-                    'text/csv',
-                    use_container_width=True,
-                    key='v118_basket_discourse_edges'
-                )
-
-            _v127_comments=pd.DataFrame(_v118_gp.get('node_comments') or [])
-            if not _v127_comments.empty:
-                st.markdown('##### 🧭 Gephi Düğüm Açıklamaları')
-                st.dataframe(
-                    _v127_comments,
-                    hide_index=True,
-                    use_container_width=True,
-                    height=min(520,120+32*min(12,len(_v127_comments)))
-                )
-
-            n1,n2=st.columns(2)
-            if _v118_gp.get('analysis_docx'):
-                n1.download_button(
-                    '⬇️ Gephi Analiz Notu (Word)',
-                    _v118_gp['analysis_docx'],
-                    'Analiz_Sepeti_Gephi_Analiz_Notu_V132.docx',
-                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                    use_container_width=True,
-                    key='v127_basket_gephi_analysis_docx'
-                )
-            if not _v127_comments.empty:
-                n2.download_button(
-                    '⬇️ Düğüm Açıklamaları CSV',
-                    _v127_comments.to_csv(index=False).encode('utf-8-sig'),
-                    'Analiz_Sepeti_Gephi_Dugum_Aciklamalari_V132.csv',
-                    'text/csv',
-                    use_container_width=True,
-                    key='v127_basket_node_comments_csv'
-                )
+    with _archive_tab:
+        _v136_render_basket(
+            '🗂️ Eski Analiz Sepeti / Arşiv',
+            'V135 ve önceki sürümlerde Analiz Sepetine eklenmiş içerikler burada korunur. '
+            'Bu içerikler yalnız siz çıkardığınız veya tüm sepeti temizlediğiniz zaman silinir.',
+            _v136_archive_basket,_v136_archive_remove,V136_ARCHIVE_TABLE,
+            'v136_archive_analysis_basket','v136_archive','Eski_Analiz_Sepeti_Arsiv'
+        )
 
     st.markdown('---')
 
@@ -35315,15 +34959,16 @@ Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bi
     p3.metric('Yerli Basın',int(local_mask.sum()))
     p4.metric('Yabancı Basın',int(foreign_mask.sum()))
     p5.metric('Think Tank',int(think_mask.sum()))
-    p6,p7,p8,p9=st.columns(4)
+    p6,p7,p8,p9,p10=st.columns(5)
     p6.metric('Kürt Bölgesel',int(kurdish_mask.sum()))
     p7.metric('PKK/KCK OSINT',int(movement_mask.sum()))
     p8.metric('Sosyal Medya',int(social_mask.sum()))
-    p9.metric('Analiz Sepeti',len(_v3_analysis_basket()))
+    p9.metric('Günlük Sepet',len(_v136_daily_basket()))
+    p10.metric('Eski Sepet / Arşiv',len(_v136_archive_basket()))
 
     st.caption(
-        'Günlük çalışma akışı: Kaynak Bazlı İzleme → Gündem ve Söylem Haritası → '
-        'Gephi → Analiz Sepeti → Gün Sonu Performans Özeti. '
+        'Günlük çalışma akışı: Kaynak Bazlı İzleme ve Kronoloji → Genel Gephi Ağ Analizi → '
+        'Günlük / Eski Analiz Sepetleri → Gün Sonu Performans Özeti. '
         'Şu An Bilmem Gerekenler yalnız tarama öncesinde son iki tamamlanmış tarama arasındaki bütün yeni içerikleri gösterir.'
     )
 
