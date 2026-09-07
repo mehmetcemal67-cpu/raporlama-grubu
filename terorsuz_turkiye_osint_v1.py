@@ -35501,6 +35501,586 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
 # ============================================================
 
 
+# ============================================================
+# V140 — MANUEL KAYNAK / LİNK HAVUZU
+#
+# Amaç:
+# - Analistin tarama sırasında bir sitede gezinirken keşfettiği, otomatik
+#   taramada yer alıp almadığı belirsiz haber/linkleri elle kaydedebilmesi.
+# - Kullanıcının yapıştırdığı ORİJİNAL URL'yi hiçbir şekilde değiştirmemek.
+# - Siteye otomatik erişim sağlanırsa başlık/tarih/içerik/kaynak bilgisini
+#   doldurmak; erişim sağlanamazsa linki yine de kalıcı havuzda tutmak.
+# - Havuzdaki kayıtları Günlük Analiz Sepetine aktararak mevcut Word analiz
+#   ve Gephi motorlarına NORMAL sepet kaydı gibi dahil etmek.
+# - Havuzu SQLite'ta kalıcı tutmak; uygulama kapanınca kaybolmamasını sağlamak.
+# ============================================================
+
+V140_MANUAL_TABLE='manual_link_pool_v140'
+V140_MANUAL_SESSION='v140_manual_link_pool'
+
+
+def _v140_ensure_manual_table():
+    if not _init_history_db():
+        return False
+    try:
+        with _history_connect() as conn:
+            conn.execute(
+                f"CREATE TABLE IF NOT EXISTS {V140_MANUAL_TABLE}("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "added_at TEXT NOT NULL,"
+                "dedup_key TEXT NOT NULL UNIQUE,"
+                "url TEXT NOT NULL,"
+                "record_json TEXT NOT NULL"
+                ")"
+            )
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+def _v140_manual_key(rec):
+    try:
+        k=_v3_analysis_dedup_key(rec)
+        if k:
+            return str(k)
+    except Exception:
+        pass
+    u=str((rec or {}).get('URL','') or '').strip()
+    if u:
+        return 'url::'+hashlib.sha1(u.encode('utf-8','ignore')).hexdigest()
+    t=title_key((rec or {}).get('Başlık',''))
+    if t:
+        return 'title::'+hashlib.sha1(t.encode('utf-8','ignore')).hexdigest()
+    return ''
+
+
+def _v140_load_manual_pool():
+    rows=[]
+    if not _v140_ensure_manual_table():
+        return rows
+    try:
+        with _history_connect() as conn:
+            cur=conn.execute(
+                f'SELECT record_json FROM {V140_MANUAL_TABLE} ORDER BY id ASC'
+            )
+            for (rec_json,) in cur.fetchall():
+                try:
+                    rec=json.loads(rec_json)
+                    if isinstance(rec,dict):
+                        rows.append(rec)
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return rows
+
+
+def _v140_manual_pool():
+    if V140_MANUAL_SESSION not in st.session_state:
+        st.session_state[V140_MANUAL_SESSION]=_v140_load_manual_pool()
+    return st.session_state[V140_MANUAL_SESSION]
+
+
+def _v140_replace_manual_pool(rows):
+    clean=[]; seen=set()
+    for item in rows or []:
+        rec=dict(item or {})
+        k=_v140_manual_key(rec)
+        if not k or k in seen:
+            continue
+        seen.add(k); clean.append(rec)
+
+    st.session_state[V140_MANUAL_SESSION]=clean
+    if not _v140_ensure_manual_table():
+        return False
+    try:
+        now=datetime.now(timezone.utc).isoformat()
+        with _history_connect() as conn:
+            conn.execute(f'DELETE FROM {V140_MANUAL_TABLE}')
+            for rec in clean:
+                k=_v140_manual_key(rec)
+                conn.execute(
+                    f'INSERT OR IGNORE INTO {V140_MANUAL_TABLE}(added_at,dedup_key,url,record_json) VALUES (?,?,?,?)',
+                    (
+                        str(rec.get('Manuel_Ekleme_Zamanı') or now),
+                        k,
+                        str(rec.get('URL','') or ''),
+                        json.dumps(rec,ensure_ascii=False,default=str)
+                    )
+                )
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+def _v140_add_manual_records(records):
+    pool=list(_v140_manual_pool())
+    known={_v140_manual_key(x) for x in pool}
+    added=0
+    for item in records or []:
+        rec=dict(item or {})
+        k=_v140_manual_key(rec)
+        if not k or k in known:
+            continue
+        pool.append(rec); known.add(k); added+=1
+    _v140_replace_manual_pool(pool)
+    return added
+
+
+def _v140_remove_manual_indices(indices):
+    pool=list(_v140_manual_pool())
+    kill={int(i) for i in indices if 0 <= int(i) < len(pool)}
+    kept=[r for i,r in enumerate(pool) if i not in kill]
+    removed=len(pool)-len(kept)
+    if removed:
+        _v140_replace_manual_pool(kept)
+    return removed
+
+
+def _v140_url_domain(u):
+    # URL'YE DOKUNMA. Alias sadece sınıflandırma amacıyla kullanılır.
+    try:
+        if '_v139_classification_domain' in globals():
+            d=_v139_classification_domain(u)
+            if d:
+                return d
+    except Exception:
+        pass
+    try:
+        return _tt_norm_domain(u)
+    except Exception:
+        try:
+            return domain(u)
+        except Exception:
+            return ''
+
+
+def _v140_source_label(domain_name, supplied='', detail_source=''):
+    if str(supplied or '').strip():
+        return str(supplied).strip()
+    if str(detail_source or '').strip() and norm(detail_source) not in {
+        'google news','google haberler','google','bing','açık kaynak','acik kaynak'
+    }:
+        return str(detail_source).strip()
+    d=str(domain_name or '').lower().replace('www.','')
+    for mapping_name in ('V138_SOURCE_NAMES','V137_SOURCE_NAMES'):
+        try:
+            mapping=globals().get(mapping_name,{}) or {}
+            if d in mapping:
+                return str(mapping[d])
+        except Exception:
+            pass
+    return d or 'Manuel Açık Kaynak'
+
+
+def _v140_safe_date(date_value):
+    raw=str(date_value or '').strip()
+    if not raw:
+        return None,''
+    try:
+        dt=parse_dt(raw)
+    except Exception:
+        dt=None
+    if dt:
+        try:
+            if dt.tzinfo is None:
+                dt=dt.replace(tzinfo=timezone.utc)
+            else:
+                dt=dt.astimezone(timezone.utc)
+        except Exception:
+            pass
+        try:
+            return dt,fmt_dt(dt)
+        except Exception:
+            return dt,raw
+    return None,raw
+
+
+def _v140_refresh_manual_record(rec, allow_fetch=False):
+    """Manuel kaydı analitik alanlarla tamamlar; URL'yi ASLA değiştirmez."""
+    r=dict(rec or {})
+    original_url=str(r.get('URL','') or r.get('Manuel_Orijinal_URL','') or '').strip()
+    if not original_url:
+        return r
+    r['URL']=original_url
+    r['Manuel_Orijinal_URL']=original_url
+
+    d=_v140_url_domain(original_url)
+    title=str(r.get('Başlık','') or '').strip()
+    summary=str(r.get('İçerik_Özeti','') or '').strip()
+    source=str(r.get('Kaynak','') or '').strip()
+    published=str(r.get('Tarih_Orijinal','') or r.get('Tarih','') or '').strip()
+    detail={}
+
+    # Yalnız kullanıcı link eklerken otomatik zenginleştirme dene. Tablo her rerun'da
+    # aynı sayfayı yeniden indirmesin.
+    if allow_fetch:
+        seed={
+            'URL':original_url,
+            'Başlık':title,
+            'İçerik_Özeti':summary,
+            'Kaynak':source,
+            'Yayıncı_URL':original_url,
+            'Tarih':published,
+        }
+        try:
+            detail=article_detail(seed) or {}
+        except Exception:
+            detail={}
+
+        if not title:
+            title=str(detail.get('title') or '').strip()
+        if not source:
+            source=str(detail.get('source') or '').strip()
+        if not published:
+            published=str(detail.get('published') or '').strip()
+        if not summary:
+            body=str(detail.get('text') or '').strip()
+            # article_detail erişemediğinde başlığı fallback olarak döndürebilir.
+            if body and norm(body)!=norm(title):
+                summary=re.sub(r'\s+',' ',body).strip()[:2500]
+
+    source=_v140_source_label(d,source,detail.get('source','') if detail else '')
+    if not title:
+        try:
+            path=urlparse(original_url).path.strip('/').split('/')[-1]
+            guess=re.sub(r'[-_]+',' ',requests.utils.unquote(path)).strip()
+        except Exception:
+            guess=''
+        title=(guess[:220] if len(guess)>=8 else f'{source} kaynağındaki manuel bağlantı')
+    if not summary:
+        summary=title
+
+    dt,date_text=_v140_safe_date(published)
+    text=f'{title} {summary}'
+
+    try:
+        sentiment,score,status,neg,risk,cat,risk_reasons=classify(title,summary,d)
+    except Exception:
+        sentiment,score,status,neg,risk,cat,risk_reasons=(
+            'Nötr',0,'Normal',[],[],'Genel / Terörsüz Türkiye',['manuel kaynak']
+        )
+
+    try:
+        group=source_group(d)
+    except Exception:
+        group='❔ Kaynağı Belirsiz / Diğer'
+    try:
+        region=_tt_region(d)
+    except Exception:
+        region='Diğer'
+    try:
+        stance=_tt_stance(text)
+    except Exception:
+        stance='Nötr / Bilgilendirici'
+    try:
+        frame=_tt_frame(text)
+    except Exception:
+        frame='Genel Süreç'
+    try:
+        ctype=_v7_content_type(title,summary,original_url)
+    except Exception:
+        ctype='📰 Haber'
+
+    manual_summary_present=bool(str(rec.get('İçerik_Özeti','') or '').strip())
+    auto_body=str((detail or {}).get('text','') or '').strip()
+    auto_ok=bool(
+        allow_fetch and auto_body and len(auto_body)>=180
+        and norm(auto_body)!=norm(title)
+    )
+    if manual_summary_present and not auto_ok:
+        access='🟦 Manuel içerik / not mevcut'
+    elif auto_ok:
+        access='🟢 İçerik otomatik alındı'
+    else:
+        access='🟡 Link kayıtlı / tam metin alınamadı'
+
+    r.update({
+        'Tarih_dt':dt,
+        'Tarih':date_text,
+        'Tarih_Orijinal':published,
+        'Tarih Kaynağı':('Manuel/otomatik' if published else 'Tarih bulunamadı'),
+        'Başlık':title,
+        'İçerik_Özeti':summary[:2500],
+        'Kaynak':source,
+        'Yayıncı':source,
+        # URL korunur. Yayıncı_URL de kullanıcı linkini değiştirmesin.
+        'Yayıncı_URL':original_url,
+        'RSS_URL':original_url,
+        'Domain':d,
+        'Kaynak_Grubu':group,
+        'Kaynak Perspektifi':(
+            (V113_KURDISH_SOURCE_LABELS.get(d) if 'V113_KURDISH_SOURCE_LABELS' in globals() else '')
+            or 'Manuel keşif / analist eklemesi'
+        ),
+        'Bölge':region,
+        'Kategori':cat,
+        'Duygu':sentiment,
+        'Skor':score,
+        'Risk_Skoru':score,
+        'Risk_Durumu':status,
+        'Risk_Gerekçesi':'; '.join(risk_reasons),
+        'Negatif_Sinyaller':neg,
+        'Risk_Sinyalleri':risk,
+        'Yaklaşım':stance,
+        'Çerçeve':frame,
+        'İçerik Türü':ctype,
+        'Tarama Kanalı':'manual',
+        '_mode':'manual',
+        'Seç':False,
+        'Görsel_URL':str(r.get('Görsel_URL','') or ''),
+        'Manuel_Kaynak':True,
+        'Erişim_Durumu':access,
+        'Manuel_Ekleme_Zamanı':str(
+            r.get('Manuel_Ekleme_Zamanı') or datetime.now(timezone.utc).isoformat()
+        ),
+    })
+    # Kullanıcının URL'sini en son tekrar sabitle.
+    r['URL']=original_url
+    r['Manuel_Orijinal_URL']=original_url
+    return r
+
+
+def _v140_prepare_manual_record(url, title='', summary='', source='', published=''):
+    original_url=str(url or '').strip()
+    if not re.match(r'^https?://',original_url,re.I):
+        raise ValueError('Bağlantı http:// veya https:// ile başlamalıdır.')
+    rec={
+        'URL':original_url,
+        'Manuel_Orijinal_URL':original_url,
+        'Başlık':str(title or '').strip(),
+        'İçerik_Özeti':str(summary or '').strip(),
+        'Kaynak':str(source or '').strip(),
+        'Tarih_Orijinal':str(published or '').strip(),
+        'Manuel_Kaynak':True,
+    }
+    return _v140_refresh_manual_record(rec,allow_fetch=True)
+
+
+def _v140_manual_presence(rec,current_rows=None):
+    url=str((rec or {}).get('URL','') or '').strip()
+    tk=title_key((rec or {}).get('Başlık',''))
+
+    scan=list(current_rows or [])
+    in_scan=False
+    for x in scan:
+        xu=str((x or {}).get('URL','') or '').strip()
+        xt=title_key((x or {}).get('Başlık',''))
+        if (url and xu==url) or (tk and xt and tk==xt):
+            in_scan=True; break
+
+    in_daily=False
+    for x in _v136_daily_basket():
+        xu=str((x or {}).get('URL','') or '').strip()
+        xt=title_key((x or {}).get('Başlık',''))
+        if (url and xu==url) or (tk and xt and tk==xt):
+            in_daily=True; break
+
+    if in_daily:
+        return '🧺 Günlük Analiz Sepetinde'
+    if in_scan:
+        return '✅ Ana taramada mevcut'
+    return '🆕 Ana taramada bulunmamış / manuel keşif'
+
+
+def _v140_render_manual_pool(current_rows=None):
+    st.markdown('#### 🔗 Manuel Kaynak / Link Havuzu')
+    st.caption(
+        'Bir haber sitesinde gezinirken keşfettiğiniz bağlantıları buraya ekleyebilirsiniz. '
+        'Yapıştırdığınız URL aynen korunur; otomatik erişim başarısız olsa bile kayıt silinmez. '
+        'Seçilen kayıtları Günlük Analiz Sepetine aktardığınızda mevcut Gephi ve Word analiz motorlarına otomatik olarak dahil olur.'
+    )
+
+    with st.form('v140_manual_link_form',clear_on_submit=True):
+        links_text=st.text_area(
+            'Haber bağlantısı / bağlantıları',
+            placeholder='https://...\nhttps://...\n(Birden fazla bağlantıyı alt alta yapıştırabilirsiniz.)',
+            height=100
+        )
+        c1,c2=st.columns(2)
+        with c1:
+            manual_title=st.text_input('Başlık — isteğe bağlı (tek link için)')
+            manual_source=st.text_input('Kaynak adı — isteğe bağlı')
+        with c2:
+            manual_date=st.text_input('Tarih — isteğe bağlı',placeholder='08.09.2026 veya kaynakta görünen tarih')
+            manual_summary=st.text_area('Kısa içerik / analist notu — isteğe bağlı (tek link için)',height=80)
+        submitted=st.form_submit_button('➕ Linki / Linkleri Manuel Havuza Ekle',type='primary',use_container_width=True)
+
+    if submitted:
+        urls=[]; seen=set()
+        for line in str(links_text or '').splitlines():
+            u=line.strip()
+            if not u or u in seen:
+                continue
+            seen.add(u); urls.append(u)
+        if not urls:
+            st.warning('En az bir haber bağlantısı yapıştırın.')
+        else:
+            valid=[]; invalid=[]
+            for u in urls:
+                if re.match(r'^https?://',u,re.I):
+                    valid.append(u)
+                else:
+                    invalid.append(u)
+            if invalid:
+                st.warning('Geçersiz bağlantılar atlandı: '+', '.join(invalid[:4]))
+
+            prepared=[]
+            if valid:
+                # Birden çok linkte yalnız kaynak adı ortak uygulanır; başlık/özet/tarih tablo üzerinden düzenlenebilir.
+                multi=len(valid)>1
+                def build_one(u):
+                    try:
+                        return _v140_prepare_manual_record(
+                            u,
+                            '' if multi else manual_title,
+                            '' if multi else manual_summary,
+                            manual_source,
+                            '' if multi else manual_date,
+                        )
+                    except Exception:
+                        # Siteye erişim veya ayrıştırma hatası olsa dahi URL'yi kaybetme.
+                        try:
+                            return _v140_refresh_manual_record({
+                                'URL':u,
+                                'Manuel_Orijinal_URL':u,
+                                'Başlık':('' if multi else manual_title),
+                                'İçerik_Özeti':('' if multi else manual_summary),
+                                'Kaynak':manual_source,
+                                'Tarih_Orijinal':('' if multi else manual_date),
+                                'Manuel_Kaynak':True,
+                            },allow_fetch=False)
+                        except Exception:
+                            return None
+
+                with st.spinner('Manuel bağlantılar kontrol ediliyor; erişilemeyenler de link olarak korunacak...'):
+                    try:
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4,max(1,len(valid)))) as ex:
+                            prepared=[x for x in ex.map(build_one,valid) if isinstance(x,dict)]
+                    except Exception:
+                        prepared=[x for x in (build_one(u) for u in valid) if isinstance(x,dict)]
+
+                added=_v140_add_manual_records(prepared)
+                if added:
+                    st.success(f'✅ {added} yeni bağlantı Manuel Link Havuzuna eklendi.')
+                else:
+                    st.info('Yeni bağlantı eklenmedi; yapıştırılan bağlantılar havuzda zaten bulunuyor olabilir.')
+
+    pool=list(_v140_manual_pool())
+    if not pool:
+        st.info('Manuel Link Havuzu henüz boş.')
+        return
+
+    display=[]
+    scan_rows=list(current_rows or [])
+    for rec in pool:
+        display.append({
+            'Aktar':False,
+            'Sil':False,
+            'Kaynak':str(rec.get('Kaynak','') or ''),
+            'Tarih':str(rec.get('Tarih','') or rec.get('Tarih_Orijinal','') or ''),
+            'Başlık':str(rec.get('Başlık','') or ''),
+            'İçerik_Özeti':str(rec.get('İçerik_Özeti','') or ''),
+            'Erişim':str(rec.get('Erişim_Durumu','') or ''),
+            'Tarama Durumu':_v140_manual_presence(rec,scan_rows),
+            'URL':str(rec.get('URL','') or ''),
+        })
+    ddf=pd.DataFrame(display)
+
+    edited=st.data_editor(
+        ddf,
+        column_config={
+            'Aktar':st.column_config.CheckboxColumn('Analiz Sepetine'),
+            'Sil':st.column_config.CheckboxColumn('Sil'),
+            'Kaynak':st.column_config.TextColumn('Kaynak',width='medium'),
+            'Tarih':st.column_config.TextColumn('Tarih',width='small'),
+            'Başlık':st.column_config.TextColumn('Başlık',width='large'),
+            'İçerik_Özeti':st.column_config.TextColumn('Kısa İçerik / Not',width='large'),
+            'Erişim':st.column_config.TextColumn('İçerik Durumu',width='medium'),
+            'Tarama Durumu':st.column_config.TextColumn('Tarama Durumu',width='medium'),
+            'URL':st.column_config.LinkColumn('Orijinal Haber Linki',display_text='Haberi Aç'),
+        },
+        disabled=['Erişim','Tarama Durumu','URL'],
+        hide_index=True,
+        use_container_width=True,
+        height=min(650,120+45*len(ddf)),
+        key='v140_manual_pool_editor'
+    )
+
+    c1,c2,c3=st.columns(3)
+    with c1:
+        if st.button('💾 Manuel Alan Düzenlemelerini Kaydet',use_container_width=True,key='v140_manual_save_edits'):
+            updated=[]
+            for i,base in enumerate(pool):
+                rec=dict(base)
+                if i in edited.index:
+                    rec['Kaynak']=str(edited.at[i,'Kaynak'] or '').strip()
+                    rec['Tarih_Orijinal']=str(edited.at[i,'Tarih'] or '').strip()
+                    rec['Başlık']=str(edited.at[i,'Başlık'] or '').strip()
+                    rec['İçerik_Özeti']=str(edited.at[i,'İçerik_Özeti'] or '').strip()
+                rec=_v140_refresh_manual_record(rec,allow_fetch=False)
+                updated.append(rec)
+            _v140_replace_manual_pool(updated)
+            st.success('✅ Manuel kaynak bilgileri kaydedildi.')
+            st.rerun()
+
+    with c2:
+        if st.button('🧺 Seçilenleri Günlük Analiz Sepetine Aktar',type='primary',use_container_width=True,key='v140_manual_to_daily'):
+            idx=edited.index[edited['Aktar'].astype(bool)].tolist()
+            if not idx:
+                st.warning('Önce Analiz Sepetine aktarılacak kayıtları işaretleyin.')
+            else:
+                records=[]
+                for i in idx:
+                    if 0 <= int(i) < len(pool):
+                        rec=dict(pool[int(i)])
+                        # Editor'da henüz Kaydet'e basılmamış değişiklikleri de aktar.
+                        rec['Kaynak']=str(edited.at[i,'Kaynak'] or '').strip()
+                        rec['Tarih_Orijinal']=str(edited.at[i,'Tarih'] or '').strip()
+                        rec['Başlık']=str(edited.at[i,'Başlık'] or '').strip()
+                        rec['İçerik_Özeti']=str(edited.at[i,'İçerik_Özeti'] or '').strip()
+                        rec=_v140_refresh_manual_record(rec,allow_fetch=False)
+                        records.append(rec)
+                added=_v136_daily_add(records)
+                # Havuzdaki düzenlemeleri de kalıcılaştır.
+                refreshed=list(pool)
+                for i,rec in zip(idx,records):
+                    refreshed[int(i)]=rec
+                _v140_replace_manual_pool(refreshed)
+                st.session_state.pop('v136_daily_gephi',None)
+                st.session_state.pop('v136_daily_report_bytes',None)
+                if added:
+                    st.success(
+                        f'✅ {added} manuel içerik Günlük Analiz Sepetine aktarıldı. '
+                        'Bu kayıtlar artık sepetin Gephi ve Word analizine dahildir.'
+                    )
+                else:
+                    st.info('Seçilen kayıtlar Günlük Analiz Sepetinde zaten mevcut olabilir.')
+                st.rerun()
+
+    with c3:
+        if st.button('🗑️ İşaretli Manuel Kayıtları Sil',use_container_width=True,key='v140_manual_remove'):
+            idx=edited.index[edited['Sil'].astype(bool)].tolist()
+            if not idx:
+                st.warning('Önce silinecek manuel kayıtları işaretleyin.')
+            else:
+                removed=_v140_remove_manual_indices(idx)
+                st.success(f'🗑️ {removed} manuel kayıt havuzdan silindi.')
+                st.rerun()
+
+    st.caption(
+        'Not: Manuel havuza eklenen içerik doğrudan genel tarama Gephi hesabına girmez. '
+        'Günlük Analiz Sepetine aktarıldığı anda sepetin Kaynak-Çerçeve / Söylem-Çerçeve Gephi paketlerine '
+        've kaynaklı Word söylem analizine normal bir sepet kaydı gibi dahil edilir.'
+    )
+
+
+# ============================================================
+# /V140 MANUEL KAYNAK / LİNK HAVUZU
+# ============================================================
+
 # V33 — SADE GÜNLÜK ANA PANEL
 #
 # TARMA ÖNCESİ:
@@ -36105,22 +36685,26 @@ Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bi
     st.markdown('---')
     st.subheader('🧺 Analiz Sepetleri')
     st.caption(
-        'V136 ile iki ayrı kalıcı sepet kullanılır. Bundan sonra Kaynak Bazlı İzleme, kronoloji ve '
+        'V140 ile Manuel Link Havuzu, Günlük Analiz Sepeti ve Eski Analiz Sepeti birlikte kullanılır. Kaynak Bazlı İzleme, kronoloji ve '
         'Şu An Bilmem Gerekenler bölümlerinden eklediğiniz yeni içerikler Günlük Analiz Sepetine gider. '
         'Eski Analiz Sepeti ise önceki kararlı sürümde biriktirdiğiniz içerikleri arşiv olarak korur. '
-        'Her iki sepet de siz silmediğiniz sürece yeni oturumlarda ve sonraki günlerde korunur.'
+        'Manuel Link Havuzu ve her iki sepet siz silmediğiniz sürece yeni oturumlarda ve sonraki günlerde korunur.'
     )
 
-    _daily_tab,_archive_tab=st.tabs([
+    _manual_tab,_daily_tab,_archive_tab=st.tabs([
+        f'🔗 Manuel Link Havuzu ({len(_v140_manual_pool())})',
         f'📅 Günlük Analiz Sepeti ({len(_v136_daily_basket())})',
         f'🗂️ Eski Analiz Sepeti / Arşiv ({len(_v136_archive_basket())})'
     ])
+
+    with _manual_tab:
+        _v140_render_manual_pool(st.session_state.get('rows') or [])
 
     with _daily_tab:
         _v136_render_basket(
             '📅 Günlük Analiz Sepeti',
             'Gün içinde yeni seçtiğiniz içerikler burada birikir. Otomatik olarak gün sonunda veya yeni taramada silinmez; '
-            'siz manuel olarak temizleyene kadar kalıcıdır.',
+            'siz manuel olarak temizleyene kadar kalıcıdır. Manuel Link Havuzundan aktardığınız içerikler de burada normal kayıt gibi çalışır.',
             _v136_daily_basket,_v136_daily_remove,V136_DAILY_TABLE,
             'v136_daily_analysis_basket','v136_daily','Gunluk_Analiz_Sepeti'
         )
@@ -36152,6 +36736,8 @@ Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bi
     p8.metric('Sosyal Medya',int(social_mask.sum()))
     p9.metric('Günlük Sepet',len(_v136_daily_basket()))
     p10.metric('Eski Sepet / Arşiv',len(_v136_archive_basket()))
+    _mp1,_mp2=st.columns([1,4])
+    _mp1.metric('Manuel Link Havuzu',len(_v140_manual_pool()))
 
     st.caption(
         'Günlük çalışma akışı: Kaynak Bazlı İzleme ve Kronoloji → Genel Gephi Ağ Analizi → '
