@@ -16417,6 +16417,343 @@ _v114_analysis_basket_report_docx = _v119_analysis_basket_report_docx
 # /V22 TARAMA
 # ============================================================
 
+
+# ============================================================
+# V138 — DOĞRUDAN KAYNAK ERİŞİMİ / PRE-SCAN PATCH
+#
+# Amaç:
+# 1) Dosyanın ilerleyen bölümlerinde tanımlanan güncel kaynak/domain
+#    düzeltmelerinin tarama butonundan ÖNCE etkin olmasını sağlamak.
+# 2) ANF, JINNEWS ve Yeni Özgür Politika'yı yalnız arama motoru indeksine
+#    bırakmamak; ANF RSS + doğrudan ana sayfa keşfi ile yedeklemek.
+# 3) Eski ANF/JINNEWS adreslerini güncel alan adlarına tarama öncesinde
+#    normalize etmek; Yeni Özgür Politika'da www kanonik adresini kullanmak.
+#
+# V137 ve önceki katmanlar korunur; bu blok yalnız pre-scan uyumluluk katmanıdır.
+# ============================================================
+
+V138_MOVEMENT_CURRENT = [
+    'anf-news.com','english.anf-news.com','deutsch.anf-news.com',
+    'espanol.anf-news.com','kurmanci.anf-news.com','sorani.anf-news.com',
+    'hawrami.anf-news.com','kirmancki.anf-news.com','arabic.anf-news.com',
+    'farsi.anf-news.com','russian.anf-news.com',
+    'jinnews.net','ozgurpolitika.com',
+]
+
+V138_MOVEMENT_DIRECT = [
+    'anf-news.com','english.anf-news.com','deutsch.anf-news.com',
+    'espanol.anf-news.com','kurmanci.anf-news.com','sorani.anf-news.com',
+    'hawrami.anf-news.com','kirmancki.anf-news.com','arabic.anf-news.com',
+    'farsi.anf-news.com','russian.anf-news.com',
+]
+
+for _name in ('TT_MOVEMENT_V9','TT_MOVEMENT_OSINT','TT_KURDISH_MEDIA'):
+    try:
+        _lst=globals().get(_name)
+        if isinstance(_lst,list):
+            _lst[:] = list(dict.fromkeys(list(_lst)+V138_MOVEMENT_CURRENT))
+    except Exception:
+        pass
+
+try:
+    TT_MOVEMENT_DIRECT_V9[:] = list(dict.fromkeys(
+        list(TT_MOVEMENT_DIRECT_V9)+V138_MOVEMENT_DIRECT
+    ))
+except Exception:
+    pass
+
+V138_URL_HOST_ALIASES = {
+    'anfenglish.com':'english.anf-news.com',
+    'anfenglishmobile.com':'english.anf-news.com',
+    'anfturkce.com':'anf-news.com',
+    'anfdeutsch.com':'deutsch.anf-news.com',
+    'anfespanol.com':'espanol.anf-news.com',
+    'anfarabic.com':'arabic.anf-news.com',
+    'anfrussian.com':'russian.anf-news.com',
+    'anfpersian.com':'farsi.anf-news.com',
+    'anfkurdi.com':'kurmanci.anf-news.com',
+    'anfsorani.com':'sorani.anf-news.com',
+    'anfkirmancki.com':'kirmancki.anf-news.com',
+    'jinnews.org':'jinnews.net',
+    'jinnews21.com':'jinnews.net',
+    # Web erişiminde kanonik ve daha kararlı adres.
+    'ozgurpolitika.com':'www.ozgurpolitika.com',
+}
+
+V138_SOURCE_NAMES = {
+    'anf-news.com':'ANF Türkçe',
+    'english.anf-news.com':'ANF English',
+    'deutsch.anf-news.com':'ANF Deutsch',
+    'espanol.anf-news.com':'ANF Español',
+    'kurmanci.anf-news.com':'ANF Kurmancî',
+    'sorani.anf-news.com':'ANF Soranî',
+    'hawrami.anf-news.com':'ANF Hewramî',
+    'kirmancki.anf-news.com':'ANF Kirmanckî',
+    'arabic.anf-news.com':'ANF Arabic',
+    'farsi.anf-news.com':'ANF Farsi',
+    'russian.anf-news.com':'ANF Russian',
+    'jinnews.net':'JINNEWS',
+    'ozgurpolitika.com':'Yeni Özgür Politika',
+}
+
+
+def _v138_fix_url(url):
+    u=str(url or '').strip()
+    if not u:
+        return u
+    if not re.match(r'^https?://',u,re.I):
+        if re.match(r'^[A-Za-z0-9._-]+\.[A-Za-z]{2,}(?:/|$)',u):
+            u='https://'+u
+        else:
+            return u
+    try:
+        p=urlparse(u)
+        host=(p.netloc or '').lower().strip()
+        host_no_www=host[4:] if host.startswith('www.') else host
+        new_host=V138_URL_HOST_ALIASES.get(host_no_www) or V138_URL_HOST_ALIASES.get(host)
+        if not new_host:
+            return u
+        return p._replace(scheme='https',netloc=new_host).geturl()
+    except Exception:
+        return u
+
+
+def _v138_fix_raw_record(rec):
+    r=dict(rec or {})
+    for k in ('url','link','source_url'):
+        if r.get(k):
+            r[k]=_v138_fix_url(r.get(k))
+    return r
+
+
+# Tarama anındaki normalize zincirini pre-scan URL düzeltmesiyle sar.
+_V138_BASE_NORMALIZE_ROWS = normalize_rows
+def normalize_rows(raw,cutoff,mode,user_query):
+    fixed=[_v138_fix_raw_record(r) for r in (raw or [])]
+    rows,reasons=_V138_BASE_NORMALIZE_ROWS(fixed,cutoff,mode,user_query)
+    for r in rows or []:
+        try:
+            for k in ('URL','RSS_URL','Yayıncı_URL'):
+                if r.get(k):
+                    r[k]=_v138_fix_url(r.get(k))
+            d=_tt_norm_domain(r.get('Domain','') or r.get('URL',''))
+            if d:
+                r['Domain']=d
+            if d in V138_SOURCE_NAMES:
+                cur=norm(r.get('Kaynak',''))
+                if not cur or cur in {'google news','news.google.com','bing','bing.com'}:
+                    r['Kaynak']=V138_SOURCE_NAMES[d]
+        except Exception:
+            pass
+    return rows,reasons
+
+
+# Bilgi notu / rapor üretiminde eski URL kaldıysa gerçek sayfaya gitmeden önce düzelt.
+_V138_BASE_ARTICLE_DETAIL = article_detail
+def article_detail(row):
+    if isinstance(row,dict):
+        rr=dict(row)
+        for k in ('URL','RSS_URL','Yayıncı_URL'):
+            if rr.get(k):
+                rr[k]=_v138_fix_url(rr.get(k))
+        return _V138_BASE_ARTICLE_DETAIL(rr)
+    return _V138_BASE_ARTICLE_DETAIL(_v138_fix_url(row))
+
+
+def _v138_topic_hit(text):
+    t=norm(text)
+    terms=[
+        'terörsüz türkiye','terorsuz turkiye','pkk','kck','öcalan','ocalan','imralı','imrali',
+        'barış ve demokratik toplum','baris ve demokratik toplum','barış süreci','baris sureci',
+        'çözüm süreci','cozum sureci','silahsızlanma','silah bırakma','silah birakma','fesih',
+        'dem parti','sdf','sdg','ypg','pyd','mazlum abdi','cemil bayık','cemil bayik',
+        'murat karayılan','murat karayilan','duran kalkan','bese hozat','besê hozat',
+        'çerçeve yasa','cerceve yasa','kürt meselesi','kurt meselesi'
+    ]
+    return any(x in t for x in terms)
+
+
+def _v138_parse_visible_date(text):
+    s=str(text or '')
+    patterns=[
+        (r'\b(\d{1,2}[./-]\d{1,2}[./-]\d{4})\b',['%d.%m.%Y','%d/%m/%Y','%d-%m-%Y']),
+        (r'\b(\d{4}-\d{1,2}-\d{1,2})\b',['%Y-%m-%d']),
+    ]
+    for pat,fmts in patterns:
+        m=re.search(pat,s)
+        if not m:
+            continue
+        val=m.group(1)
+        for fmt in fmts:
+            try:
+                return datetime.strptime(val,fmt).replace(tzinfo=timezone.utc).isoformat()
+            except Exception:
+                pass
+    return ''
+
+
+def _v138_http_get(url,timeout=9):
+    try:
+        return requests.get(
+            url,
+            headers={
+                **HEADERS,
+                'Accept-Language':'tr-TR,tr;q=0.9,en;q=0.7',
+                'Accept':'text/html,application/xhtml+xml,application/rss+xml,application/xml;q=0.9,*/*;q=0.7',
+                'Cache-Control':'no-cache',
+            },
+            timeout=timeout,
+            allow_redirects=True,
+        )
+    except Exception:
+        return None
+
+
+def _v138_rss_raw(feed_url,source_label,source_home,max_items=100):
+    rr=_v138_http_get(feed_url,9)
+    if rr is None or rr.status_code>=400 or not rr.content:
+        return []
+    try:
+        root=ET.fromstring(rr.content)
+    except Exception:
+        return []
+    out=[]
+    for it in root.findall('.//item')[:max_items]:
+        title=html.unescape(it.findtext('title') or '').strip()
+        url=_v138_fix_url((it.findtext('link') or '').strip())
+        desc=BeautifulSoup(it.findtext('description') or '','html.parser').get_text(' ',strip=True)
+        date_txt=it.findtext('pubDate') or it.findtext('date') or ''
+        if not title or not url:
+            continue
+        if not _v138_topic_hit(title+' '+desc):
+            continue
+        out.append({
+            'title':title,'url':url,'date':date_txt,'snippet':desc,
+            'source':source_label,'source_url':source_home,
+            '_v138_direct':True,
+        })
+    return out
+
+
+def _v138_homepage_raw(home_url,source_label,max_items=80):
+    rr=_v138_http_get(home_url,10)
+    if rr is None or rr.status_code>=400 or not rr.text:
+        return []
+    try:
+        soup=BeautifulSoup(rr.text,'html.parser')
+    except Exception:
+        return []
+
+    base_domain=_tt_norm_domain(rr.url or home_url)
+    out=[]; seen=set()
+    skip_parts=('javascript:','mailto:','#','/tag/','/etiket/','/kategori/','/category/','/author/','/yazar/')
+
+    for a in soup.find_all('a',href=True):
+        href=str(a.get('href') or '').strip()
+        if not href or href.startswith(skip_parts):
+            continue
+        url=requests.compat.urljoin(rr.url,href)
+        url=_v138_fix_url(url)
+        d=_tt_norm_domain(url)
+        if not d or d!=base_domain:
+            continue
+
+        title=re.sub(r'\s+',' ',a.get_text(' ',strip=True)).strip()
+        if len(title)<18 or len(title)>300:
+            continue
+
+        parent=a.find_parent(['article','li','section','div'])
+        context=''
+        if parent is not None:
+            try:
+                context=re.sub(r'\s+',' ',parent.get_text(' ',strip=True)).strip()[:1400]
+            except Exception:
+                context=''
+        combined=(title+' '+context).strip()
+        if not _v138_topic_hit(combined):
+            continue
+
+        key=(title_key(title),url)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        date_txt=''
+        if parent is not None:
+            try:
+                tm=parent.find('time')
+                if tm is not None:
+                    date_txt=str(tm.get('datetime') or tm.get_text(' ',strip=True) or '').strip()
+            except Exception:
+                pass
+        if not date_txt:
+            date_txt=_v138_parse_visible_date(context)
+
+        snippet=context
+        if snippet.startswith(title):
+            snippet=snippet[len(title):].strip(' -–—|:')
+        if len(snippet)<40:
+            snippet=title
+
+        out.append({
+            'title':title,'url':url,'date':date_txt,'snippet':snippet[:1800],
+            'source':source_label,'source_url':rr.url or home_url,
+            '_v138_direct':True,
+        })
+        if len(out)>=max_items:
+            break
+    return out
+
+
+def _v138_direct_movement_sources(hours=168):
+    """Arama motoru indeksinden bağımsız, düşük maliyetli üç kaynak yedeği."""
+    jobs=[
+        ('rss','https://anf-news.com/feed.rss','ANF Türkçe','https://anf-news.com/'),
+        ('home','https://jinnews.net/','JINNEWS',''),
+        ('home','https://www.ozgurpolitika.com/','Yeni Özgür Politika',''),
+    ]
+    rows=[]
+    def one(job):
+        kind,url,label,home=job
+        if kind=='rss':
+            return _v138_rss_raw(url,label,home,120)
+        return _v138_homepage_raw(url,label,90)
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+            for part in ex.map(one,jobs):
+                rows.extend(part or [])
+    except Exception:
+        for job in jobs:
+            try: rows.extend(one(job) or [])
+            except Exception: pass
+    # Aynı URL/başlık tekrarı
+    ded=[]; seen=set()
+    for r in rows:
+        k=(str(r.get('url') or ''),title_key(r.get('title','')))
+        if k in seen: continue
+        seen.add(k); ded.append(r)
+    return ded
+
+
+# Hareket taramasına tekil site sorguları ekle. Grup sorguları korunur.
+_V138_BASE_MOVEMENT_QUERIES = _v22_movement_queries
+def _v22_movement_queries():
+    q=list(_V138_BASE_MOVEMENT_QUERIES())
+    core='(Öcalan OR Ocalan OR PKK OR KCK OR "Barış ve Demokratik Toplum" OR "barış süreci" OR "çerçeve yasa" OR SDF OR SDG OR YPG OR "Mazlum Abdi")'
+    q.extend([
+        f'{core} site:anf-news.com',
+        f'{core} site:jinnews.net',
+        f'{core} site:www.ozgurpolitika.com',
+        '(ANF OR "Firat News") (Öcalan OR Ocalan OR PKK OR KCK OR süreç OR "peace process")',
+        'JINNEWS (Öcalan OR Ocalan OR PKK OR KCK OR SDF OR SDG OR YPG OR süreç)',
+        '("Yeni Özgür Politika" OR "Özgür Politika") (Öcalan OR Ocalan OR PKK OR KCK OR süreç)',
+    ])
+    return list(dict.fromkeys(q))
+
+# ============================================================
+# /V138 PRE-SCAN PATCH
+# ============================================================
+
 if run:
     st.session_state.pop('_v20_frame_cmp_rows',None)
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
@@ -16585,6 +16922,27 @@ if run:
 
             except Exception:
                 pass
+
+    # V138 — ANF / JINNEWS / Yeni Özgür Politika doğrudan kaynak yedeği.
+    # Arama motoru indeksleri bu siteleri kaçırsa bile ana kaynaklardan veri toplanır.
+    try:
+        _v138_direct_rows=_v138_direct_movement_sources(movement_hours)
+        for _item in _v138_direct_rows:
+            if isinstance(_item,dict):
+                _item['_origin_query']='V138 direct source fallback'
+        raw_by_mode.setdefault('movement',[]).extend(_v138_direct_rows)
+        stat['Ham sonuç']+=len(_v138_direct_rows)
+        if _v138_direct_rows:
+            _v138_counts={}
+            for _item in _v138_direct_rows:
+                _src=str(_item.get('source') or 'Açık Kaynak')
+                _v138_counts[_src]=_v138_counts.get(_src,0)+1
+            status_box.write(
+                '🛰️ V138 doğrudan kaynak yedeği: '+
+                ', '.join(f'{k} {v}' for k,v in sorted(_v138_counts.items()))
+            )
+    except Exception:
+        pass
 
     # Reddit + Bluesky açık arama: yalnız 4 güçlü sorgu, paralel ve ucuz.
     if True:
