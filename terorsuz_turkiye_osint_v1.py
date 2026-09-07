@@ -32249,6 +32249,411 @@ def _v30_event_network(df, min_weight=None, *args, **kwargs):
 # ============================================================
 
 
+
+
+# ============================================================
+# V132 — GEPHI ÇERÇEVE AYRIŞTIRMA / SİYASİ SÜREÇ İZOLASYON DÜZELTMESİ
+#
+# Sorun:
+# - Gephi'de "Siyasi Süreç / Diyalog" bazen tek ve ince bir kenarla
+#   grafiğin altına düşüyordu.
+# - Bunun nedeni bazı içeriklerin yalnız genel/fallback çerçeveye
+#   bağlanmasıydı. Bu durum analitik okuma üretmiyor, ağı da kopuk
+#   gösteriyordu.
+#
+# Çözüm:
+# - "Siyasi Süreç / Diyalog" artık zayıf/generic fallback olarak kullanılmaz.
+# - İçerik mümkün olduğunca daha özgül alt çerçevelere atanır:
+#   DEM kongresi, Öcalan/İmralı/statü, silahsızlanma/fesih, hukuki güvence,
+#   Suriye/SDG-YPG, Kürt bölgesel güç dengesi, af/kamu vicdanı,
+#   dış destek/bölücülük, PKK normalleşmesi eleştirisi, MHP/devlet aklı,
+#   merkez siyaset/temkinli destek vb.
+# - Sosyal medya için alt-söylem çerçevesi doğrudan frame olarak da kullanılır.
+# - "Siyasi Süreç / Diyalog" yalnız güçlü ve çok açık destek varsa kalır.
+# ============================================================
+
+V132_SPECIFIC_FRAME_TERMS = {
+    'DEM Parti Kongresi / Parti Dönüşümü': [
+        'dem parti','hatimoğulları','hatimogullari','bakırhan','bakirhan','kongre',
+        'veda kongresi','yeni parti','parti adı','parti adi','demokratik cumhuriyet partisi'
+    ],
+    'Öcalan / İmralı / Statü': [
+        'öcalan','ocalan','imralı','imrali','umut hakkı','umut hakki','statü','statu',
+        'özgürlük','ozgurluk','gizli görüşme','gizli gorusme','mektup','mesaj'
+    ],
+    'Silahsızlanma / Fesih / Uygulama': [
+        'silahsızlanma','silahsizlanma','silah bırakma','silah birakma','fesih','tasfiye',
+        'weapons surrender','disarmament','dissolution','silah teslim','teslim edildi'
+    ],
+    'Hukuki Güvence / Meclis': [
+        'meclis','tbmm','komisyon','yasa','kanun','hukuki güvence','hukuki guvence',
+        'law','legal','political reforms','subcommittee','verified dissolution'
+    ],
+    'Suriye / SDG-YPG / Entegrasyon': [
+        'suriye','syria','şam','sam','damascus','sdf','sdg','ypg','pyd','mazlum abdi',
+        'mazloum abdi','entegrasyon','integration','state building','devletin inşası','devletin insasi'
+    ],
+    'Kürt Bölgesel Güç Dengesi': [
+        'darka mazi','barzani','kdp','ikby','kurdistan','rudaw','kurdpress','kürt bölgesel',
+        'kurt bolgesel','kandil','erbil','hewlêr','hewler','kürt milliyetçi','kurdish nationalist'
+    ],
+    'Af / Kamu Vicdanı Tepkisi': [
+        'af','affı','affi','amnesty','ceza','ceza hukuku','taziye','kamu vicdanı','kamu vicdani',
+        'şehit','sehit','gazi','mağdur','magdur'
+    ],
+    'PKK Normalleşmesi Eleştirisi': [
+        'propaganda','propoganda','normalleştirme','normalleştir','normallestirme','normallestir',
+        'meşrulaştır','mesrulastir','teröristleri kutsayan','teroristleri kutsayan'
+    ],
+    'Dış Destek / Bölücülük Algısı': [
+        'dış destek','dis destek','dış destekli','dis destekli','bölücü','bolucu','bölücülük',
+        'boluculuk','organize hareket','tehdit','threat'
+    ],
+    'Güvenlikçi Destek / Devlet Aklı': [
+        'mhp','bahçeli','bahceli','yurdakul','devlet aklı','devlet akli','devlet otoritesi',
+        'terörsüz bölge','terorsuz bolge','güvenlik','guvenlik','gaziler','şehit','sehit'
+    ],
+    'Merkez Siyaset / Temkinli Destek': [
+        'deva partisi','devapartisi','elif esen','temkinli','destek verdik','huzur','kalkınma',
+        'kalkinma','bölgeye huzur','bolgeye huzur','ülke içinde','ulke icinde','sınırlarımızın ötesinde',
+        'sinirlarimizin otesinde'
+    ],
+    'Demokratik Çözüm / Barış': [
+        'barış','baris','demokratik siyaset','demokratik çözüm','demokratik cozum','toplumsal barış',
+        'toplumsal baris','demokratik entegrasyon','barış süreci','baris sureci','peace process'
+    ],
+    'Yabancı Basın / Dış Güvenlik': [
+        'reuters','ap news','bbc','dw','france24','al-monitor','middle east eye','the media line',
+        'alestiklal','foreign','international','regional security','political reforms'
+    ],
+}
+
+V132_FRAME_EXPLANATIONS = {
+    'DEM Parti Kongresi / Parti Dönüşümü':'DEM Parti kongresi, parti adı, temsil krizi ve yeni süreçte parti kimliğinin dönüşümü etrafındaki tartışmayı gösterir.',
+    'Öcalan / İmralı / Statü':'Öcalan’ın rolü, İmralı hattı, statü/umut hakkı ve süreç üzerindeki yönlendirme kapasitesiyle ilgili tartışmayı gösterir.',
+    'Silahsızlanma / Fesih / Uygulama':'PKK/KCK veya bağlantılı yapıların silah bırakma, fesih, tasfiye, entegrasyon ve uygulama eşikleri üzerinden ele alınmasını gösterir.',
+    'Hukuki Güvence / Meclis':'Sürecin TBMM, yasa, komisyon, hukuki güvence, doğrulama ve reform mekanizmaları üzerinden tartışıldığını gösterir.',
+    'Suriye / SDG-YPG / Entegrasyon':'Türkiye’deki sürecin Suriye sahası, SDG/SDF/YPG, Mazlum Abdi, Şam ve yeni devlet düzeniyle bağlantılı okunduğunu gösterir.',
+    'Kürt Bölgesel Güç Dengesi':'Darka Mazi, Rudaw, KDP/Barzani, IKBY, Kandil ve Kürt aktörler arası güç dengesi etrafındaki bölgesel okumayı gösterir.',
+    'Af / Kamu Vicdanı Tepkisi':'Sürecin af, ceza hukuku, şehit-gazi hassasiyeti, mağduriyet ve kamu vicdanı üzerinden eleştirildiğini gösterir.',
+    'PKK Normalleşmesi Eleştirisi':'PKK/KCK veya örgütü olumlayan söylemlerin normalleştirilmesi/meşrulaştırılması riskine dönük eleştiriyi gösterir.',
+    'Dış Destek / Bölücülük Algısı':'Sürecin veya sokak/toplumsal hareketliliğin dış destek, bölücülük ve güvenlik tehdidi algısıyla yorumlandığını gösterir.',
+    'Güvenlikçi Destek / Devlet Aklı':'MHP, devlet aklı, güvenlikçi destek ve terörle mücadele kazanımlarının korunması çerçevesindeki okumayı gösterir.',
+    'Merkez Siyaset / Temkinli Destek':'Merkez/çoğulcu siyasal aktörlerde sürece huzur, kalkınma ve güvenlik hedefleriyle verilen ihtiyatlı desteği gösterir.',
+    'Demokratik Çözüm / Barış':'Sürecin demokratik çözüm, toplumsal barış, temsil ve demokratik entegrasyon kavramlarıyla olumlu/kurucu biçimde ele alındığını gösterir.',
+    'Yabancı Basın / Dış Güvenlik':'Uluslararası basının süreci bölgesel güvenlik, reform, silahsızlanma ve dış politika etkileriyle birlikte okuduğunu gösterir.',
+    'Siyasi Süreç / Diyalog':'Yalnız başka güçlü alt çerçeve bulunmadığında kullanılan geniş siyasi süreç ve diyalog çerçevesidir; V132’de zayıf fallback olarak bastırılır.',
+}
+
+try:
+    V127_FRAME_TERMS.update(V132_SPECIFIC_FRAME_TERMS)
+except Exception:
+    V127_FRAME_TERMS = dict(V132_SPECIFIC_FRAME_TERMS)
+try:
+    V127_FRAME_EXPLANATIONS.update(V132_FRAME_EXPLANATIONS)
+except Exception:
+    V127_FRAME_EXPLANATIONS = dict(V132_FRAME_EXPLANATIONS)
+
+V132_LABEL_FAMILY_MAP = {
+    'yetkin report':'Yerli Basın',
+    'yetkinreport':'Yerli Basın',
+    'medyascope':'Yerli Basın',
+    't24':'Yerli Basın',
+    'sol haber':'Yerli Basın',
+    'yeniçağ':'Yerli Basın',
+    'yenicag':'Yerli Basın',
+    'darka mazi':'Kürt Bölgesel Medyası',
+    'darkamazi':'Kürt Bölgesel Medyası',
+    'rudaw':'Kürt Bölgesel Medyası',
+    'rûdaw':'Kürt Bölgesel Medyası',
+    'shafaq':'Kürt Bölgesel Medyası',
+    'the new region':'Kürt Bölgesel Medyası',
+    'kurdpress':'Kürt Bölgesel Medyası',
+    'medya haber':'PKK/KCK Açık Kaynak',
+    'politikahaber':'PKK/KCK Açık Kaynak',
+    'the media line':'Yabancı Basın',
+    'alestiklal':'Yabancı Basın',
+    'bosphorusnews':'Yabancı Basın',
+    'newsaboutturkey':'Yabancı Basın',
+}
+
+try:
+    _V132_PREV_SOURCE_FAMILY = _v127_source_family
+except Exception:
+    _V132_PREV_SOURCE_FAMILY = None
+
+def _v132_source_family(row):
+    try:
+        d=_v127_domain(row)
+    except Exception:
+        d=''
+    d=str(d or '').lower().replace('www.','')
+    if d in {'darkamazi.site','rudaw.net','shafaq.com','thenewregion.com','kurdpress.com','kurdpress.net','kurdistan24.net','basnews.com','guneydoguekspres.com','ilketv.com.tr','hengaw.net','aranews.net','npasyria.com','rojavainformationcenter.org'}:
+        return 'Kürt Bölgesel Medyası'
+    if d in {'medyahabertv.digital','politikahaber.com','anfenglish.com','anf-news.com','anfturkce.com','hawarnews.com','ozgurpolitika.com','medyanews.net','yeniyasamgazetesi9.com','mezopotamyaajansi35.com','jinnews.net','jinnews.org'}:
+        return 'PKK/KCK Açık Kaynak'
+    if d in {'x.com','twitter.com','facebook.com','instagram.com','tiktok.com','youtube.com','youtu.be','reddit.com','threads.net','bsky.app','t.me'}:
+        return 'Sosyal Medya'
+    if d in {'bosphorusnews.com','themedialine.org','alestiklal.net','newsaboutturkey.com','reuters.com','apnews.com','bbc.com','dw.com','france24.com','euronews.com','al-monitor.com','middleeasteye.net'}:
+        return 'Yabancı Basın'
+    if d in {'yetkinreport.com','medyascope.tv','t24.com.tr','solhaber.org','sol.org.tr','yenicaggazetesi.com','hurriyet.com.tr','gazetepano.com','canakkalehaber.com','etikhaber.com'}:
+        return 'Yerli Basın'
+
+    label=norm(' '.join(str(row.get(c,'')) for c in ['Kaynak','SourceLabel','Label','SampleTitles','SampleURLs','URL']))
+    for k,v in V132_LABEL_FAMILY_MAP.items():
+        if k in label:
+            return v
+
+    if _V132_PREV_SOURCE_FAMILY:
+        try:
+            return _V132_PREV_SOURCE_FAMILY(row)
+        except Exception:
+            pass
+    return 'Diğer'
+
+_v127_source_family = _v132_source_family
+_v23_source_family = _v132_source_family
+
+def _v132_textn(row):
+    try:
+        return _v127_textn(row)
+    except Exception:
+        return norm(' '.join(str(row.get(c,'')) for c in ['Başlık','İçerik_Özeti','Özet','Kaynak','URL','SampleTitles','SampleURLs']))
+
+def _v132_frame_scores(row):
+    text=_v132_textn(row)
+    title=norm(row.get('Başlık','') or row.get('SampleTitles',''))
+    fam=_v132_source_family(row)
+
+    scored=[]
+    for frame,terms in V132_SPECIFIC_FRAME_TERMS.items():
+        score=0
+        for term in terms:
+            n=norm(term)
+            if not n:
+                continue
+            if n in title:
+                score += 4
+            elif n in text:
+                score += 1
+        if score>0:
+            scored.append((score,frame))
+
+    # Source-specific fallback. Prevents one weak generic "Siyasi Süreç" edge.
+    if not scored:
+        role=''
+        try:
+            role=norm(_v127_source_role(row))
+        except Exception:
+            pass
+        if fam=='Sosyal Medya':
+            try:
+                return [_v127_social_subdiscourse(row)]
+            except Exception:
+                return ['Genel Kamuoyu Tepkisi']
+        if 'yetkin' in text:
+            return ['Silahsızlanma / Fesih / Uygulama']
+        if 'medyascope' in text or 'ruşen çakır' in text or 'rusen cakir' in text:
+            return ['DEM Parti Kongresi / Parti Dönüşümü']
+        if 'deva' in text or 'elif esen' in text or 'temkinli' in text:
+            return ['Merkez Siyaset / Temkinli Destek']
+        if 'mhp' in text or 'yurdakul' in text or 'bahçeli' in text or 'bahceli' in text or 'gaziler' in text:
+            return ['Güvenlikçi Destek / Devlet Aklı']
+        if fam=='Kürt Bölgesel Medyası':
+            return ['Kürt Bölgesel Güç Dengesi']
+        if fam=='PKK/KCK Açık Kaynak':
+            return ['Silahsızlanma / Fesih / Uygulama']
+        if fam=='Yabancı Basın':
+            return ['Yabancı Basın / Dış Güvenlik']
+        return ['Demokratik Çözüm / Barış']
+
+    scored.sort(key=lambda x:(x[0],x[1]),reverse=True)
+
+    # Strong social sub-discourse is kept as a frame to separate reactions.
+    selected=[]
+    if fam=='Sosyal Medya':
+        try:
+            sub=_v127_social_subdiscourse(row)
+            if sub and sub not in selected:
+                selected.append(sub)
+        except Exception:
+            pass
+
+    for score,frame in scored:
+        # Generic frame is only allowed if very strongly supported and not isolated.
+        if frame=='Siyasi Süreç / Diyalog':
+            continue
+        if frame not in selected:
+            selected.append(frame)
+        if len(selected)>=3:
+            break
+
+    # If selected only one very generic subframe? keep source-specific fallback additional.
+    if not selected:
+        if fam=='Sosyal Medya':
+            try:
+                selected.append(_v127_social_subdiscourse(row))
+            except Exception:
+                selected.append('Genel Kamuoyu Tepkisi')
+        elif fam=='Yabancı Basın':
+            selected.append('Yabancı Basın / Dış Güvenlik')
+        elif fam=='Kürt Bölgesel Medyası':
+            selected.append('Kürt Bölgesel Güç Dengesi')
+        else:
+            selected.append('Demokratik Çözüm / Barış')
+
+    # Allow "Siyasi Süreç / Diyalog" only as second/third strong umbrella when it has real repeated terms.
+    generic_score=0
+    for term in ['siyasi süreç','siyasi surec','diyalog','normalleşme','normallesme','peace process','terörsüz türkiye','terorsuz turkiye']:
+        if term in text:
+            generic_score+=1
+    if generic_score>=4 and len(selected)<3 and 'Siyasi Süreç / Diyalog' not in selected:
+        selected.append('Siyasi Süreç / Diyalog')
+
+    return selected[:3]
+
+_v127_frame_scores = _v132_frame_scores
+_v23_frame_scores = _v132_frame_scores
+
+def _v132_evidence_terms(row,frames=None):
+    text=_v132_textn(row)
+    out=[]
+    for frame in (frames or _v132_frame_scores(row)):
+        terms=list(V132_SPECIFIC_FRAME_TERMS.get(frame,[])) + list(V127_FRAME_TERMS.get(frame,[]))
+        for term in terms:
+            n=norm(term)
+            if n and n in text and term not in out:
+                out.append(term)
+            if len(out)>=8:
+                break
+        if len(out)>=8:
+            break
+    return ', '.join(out)
+
+_v127_evidence_terms = _v132_evidence_terms
+
+def _v132_node_explanation(label,node_type='',family='',frame='',role='',sub=''):
+    if str(node_type)=='Frame':
+        return V132_FRAME_EXPLANATIONS.get(str(frame or label), V127_FRAME_EXPLANATIONS.get(str(frame or label),'Bu çerçeve analiz sepetindeki ortak vurgu alanını gösterir.'))
+    if str(family)=='Sosyal Medya':
+        return f"{label} düğümü, sosyal medya kaynaklarında '{sub or 'Genel Kamuoyu Tepkisi'}' alt-söyleminin hangi özgül çerçevelere bağlandığını gösterir."
+    if role:
+        return f"{label} düğümü, {role} olarak seçili içeriklerde hangi özgül çerçevelere bağlandığını gösterir."
+    return V127_FAMILY_EXPLANATIONS.get(str(family), f"{label} düğümü seçili açık kaynak havuzundaki çerçeve bağlantılarını gösterir.")
+
+_v127_node_explanation = _v132_node_explanation
+
+def _v132_gephi_network(df, network_type='source', min_weight=1, *args, **kwargs):
+    # The original V127 generator already produces the desired 3 outputs and rich columns.
+    # We reuse it after overriding frame/source functions above.
+    nodes, edges, summary = _v127_gephi_network(df, network_type=network_type, min_weight=min_weight)
+    if edges is None or edges.empty:
+        return nodes, edges, summary
+
+    edges=edges.copy()
+    nodes=nodes.copy() if nodes is not None else pd.DataFrame()
+
+    # Safety pass: remove isolated weak generic political-process edges where a more specific frame exists for same source.
+    if {'Source','Frame','Weight'}.issubset(edges.columns):
+        source_has_specific=edges.groupby('Source')['Frame'].apply(lambda s:any(str(x)!='Siyasi Süreç / Diyalog' for x in s)).to_dict()
+        mask=[]
+        for _,r in edges.iterrows():
+            is_weak_generic=(str(r.get('Frame',''))=='Siyasi Süreç / Diyalog' and float(r.get('Weight',1) or 1)<=1 and source_has_specific.get(str(r.get('Source','')),False))
+            mask.append(not is_weak_generic)
+        edges=edges[pd.Series(mask,index=edges.index)].reset_index(drop=True)
+
+    if not nodes.empty and 'Id' in nodes.columns and {'Source','Target'}.issubset(edges.columns):
+        keep=set(edges['Source'].astype(str)) | set(edges['Target'].astype(str))
+        nodes=nodes[nodes['Id'].astype(str).isin(keep)].reset_index(drop=True)
+
+    # Refresh summary after filtering.
+    try:
+        summary=_v131_summary_from_edges(edges, 'source')
+    except Exception:
+        summary=summary if summary is not None else pd.DataFrame()
+
+    return nodes, edges, summary
+
+_v23_gephi_network = _v132_gephi_network
+
+def _v132_event_network(df, min_weight=1, *args, **kwargs):
+    nodes, edges, summary = _v127_event_network(df, min_weight=min_weight)
+    if edges is None or edges.empty:
+        return nodes, edges, summary
+    try:
+        summary=_v131_summary_from_edges(edges, 'discourse')
+    except Exception:
+        pass
+    return nodes, edges, summary
+
+_v30_event_network = _v132_event_network
+
+def _v132_top_frames(edges,limit=7):
+    if edges is None or edges.empty or 'Frame' not in edges.columns:
+        return []
+    tmp=edges.copy()
+    tmp['_w']=pd.to_numeric(tmp.get('Weight',1),errors='coerce').fillna(1)
+    return list(tmp.groupby('Frame')['_w'].sum().sort_values(ascending=False).head(limit).items())
+
+def _v132_gephi_analysis_note_docx(source_nodes,source_edges,discourse_nodes,discourse_edges,basket_df=None):
+    sn=pd.DataFrame(source_nodes) if not isinstance(source_nodes,pd.DataFrame) else source_nodes.copy()
+    se=pd.DataFrame(source_edges) if not isinstance(source_edges,pd.DataFrame) else source_edges.copy()
+    dn=pd.DataFrame(discourse_nodes) if not isinstance(discourse_nodes,pd.DataFrame) else discourse_nodes.copy()
+    de=pd.DataFrame(discourse_edges) if not isinstance(discourse_edges,pd.DataFrame) else discourse_edges.copy()
+
+    doc=Document()
+    sec=doc.sections[0]
+    sec.top_margin=Cm(2); sec.bottom_margin=Cm(2); sec.left_margin=Cm(2.3); sec.right_margin=Cm(2.3)
+    doc.styles['Normal'].font.name='Times New Roman'
+    doc.styles['Normal'].font.size=Pt(11)
+    doc.styles['Normal']._element.rPr.rFonts.set(qn('w:eastAsia'),'Times New Roman')
+
+    p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    r=p.add_run('TERÖRSÜZ TÜRKİYE — GEPHI AĞ ANALİZ NOTU')
+    r.bold=True; r.font.name='Times New Roman'; r.font.size=Pt(13)
+    p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.RIGHT
+    p.add_run(datetime.now().astimezone().strftime('%d.%m.%Y'))
+
+    def para(txt,bold_lead=None):
+        p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        p.paragraph_format.first_line_indent=Cm(1.0); p.paragraph_format.line_spacing=1.15; p.paragraph_format.space_after=Pt(6)
+        if bold_lead and txt.startswith(bold_lead):
+            rr=p.add_run(bold_lead); rr.bold=True
+            p.add_run(txt[len(bold_lead):])
+        else:
+            p.add_run(txt)
+
+    total_nodes=(0 if sn.empty else len(sn))+(0 if dn.empty else len(dn))
+    total_edges=(0 if se.empty else len(se))+(0 if de.empty else len(de))
+    para(f"Bu not, Analiz Sepeti üzerinden üretilen Gephi ağının yorumlanması amacıyla hazırlanmıştır. Ağda toplam {total_nodes} düğüm ve {total_edges} kenar bulunmaktadır. V132 ile genel 'Siyasi Süreç / Diyalog' çerçevesinin zayıf ve izole bağlantı olarak grafiğin kenarına düşmesini önlemek için içerikler daha özgül alt çerçevelere ayrıştırılmıştır.")
+
+    frames=_v132_top_frames(se if not se.empty else de,8)
+    if frames:
+        para('Baskın çerçeveler: '+', '.join(f'{f} ({int(w)})' for f,w in frames)+'. Bu dağılım, gündemin artık tek bir genel siyasi süreç düğümü yerine somut söylem başlıkları üzerinden okunmasını sağlar.','Baskın çerçeveler:')
+
+    if not se.empty and 'SourceFamily' in se.columns:
+        tmp=se.copy(); tmp['_w']=pd.to_numeric(tmp.get('Weight',1),errors='coerce').fillna(1)
+        fam=tmp.groupby('SourceFamily')['_w'].sum().sort_values(ascending=False)
+        para('Kaynak ailesi dağılımı: '+', '.join(f'{k}: {int(v)}' for k,v in fam.items())+'.','Kaynak ailesi dağılımı:')
+
+    if not se.empty and 'SocialSubDiscourse' in se.columns:
+        s=se[se['SocialSubDiscourse'].astype(str).str.len()>0].copy()
+        if not s.empty:
+            s['_w']=pd.to_numeric(s.get('Weight',1),errors='coerce').fillna(1)
+            vals=s.groupby('SocialSubDiscourse')['_w'].sum().sort_values(ascending=False).head(8)
+            para('Sosyal medya alt-söylemleri: '+', '.join(f'{k}: {int(v)}' for k,v in vals.items())+'.','Sosyal medya alt-söylemleri:')
+
+    para("Analitik sonuç: V132 sonrasında ağın amacı 'Siyasi Süreç / Diyalog' düğümünü tek merkez yapmak değil, bu genel başlığın altında yer alan somut çatışma ve yorum hatlarını ayrıştırmaktır. Bu nedenle DEM Parti kongresi/parti dönüşümü, Öcalan-İmralı/statü, silahsızlanma-fesih, Suriye/SDG-YPG entegrasyonu, Kürt bölgesel güç dengesi, af/kamu vicdanı ve güvenlikçi devlet aklı gibi alt çerçeveler daha görünür hale getirilmiştir.", 'Analitik sonuç:')
+
+    bio=BytesIO(); doc.save(bio); return bio.getvalue()
+
+_v127_gephi_analysis_note_docx = _v132_gephi_analysis_note_docx
+
+# ============================================================
+# /V132
+# ============================================================
+
+
 # V33 — SADE GÜNLÜK ANA PANEL
 #
 # TARMA ÖNCESİ:
@@ -33354,14 +33759,14 @@ else:
         if st.session_state.get('v3_report_bytes'):
             st.download_button('⬇️ KAYNAKLI ANALİZ RAPORUNU İNDİR',
                 st.session_state['v3_report_bytes'],
-                file_name=f'Terorsuz_Turkiye_PDF_Tarzi_Soylem_Analizi_V130_{date.today()}.docx',
+                file_name=f'Terorsuz_Turkiye_PDF_Tarzi_Soylem_Analizi_V132_{date.today()}.docx',
                 mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                 use_container_width=True,key='v3_report_download')
 
         st.markdown('##### 🕸️ Analiz Sepeti Gephi Oluşturucusu')
         st.caption(
             'Yalnız Analiz Sepetine seçtiğiniz içeriklerden iki ayrı ağ üretir: '
-            'Kaynak ↔ Çerçeve ve Söylem Çevresi ↔ Çerçeve. V131 ile kaynak aileleri düzeltilir, '
+            'Kaynak ↔ Çerçeve ve Söylem Çevresi ↔ Çerçeve. V132 ile kaynak aileleri ve genel çerçeve ayrıştırması düzeltilir, '
             'sosyal medya alt-söylemlere ayrılır ve otomatik Gephi Analiz Notu üretilir.'
         )
 
@@ -33439,7 +33844,7 @@ else:
                 g1.download_button(
                     '⬇️ Kaynak-Çerçeve GEXF',
                     _v118_gp['source_gexf'],
-                    'Analiz_Sepeti_Kaynak_Cerceve_V131.gexf',
+                    'Analiz_Sepeti_Kaynak_Cerceve_V132.gexf',
                     'application/xml',
                     use_container_width=True,
                     key='v118_basket_source_gexf'
@@ -33449,7 +33854,7 @@ else:
                 g2.download_button(
                     '⬇️ Kesim-Çerçeve GEXF',
                     _v118_gp['discourse_gexf'],
-                    'Analiz_Sepeti_Kesim_Cerceve_V131.gexf',
+                    'Analiz_Sepeti_Kesim_Cerceve_V132.gexf',
                     'application/xml',
                     use_container_width=True,
                     key='v118_basket_discourse_gexf'
@@ -33460,7 +33865,7 @@ else:
                 g3.download_button(
                     '⬇️ Source Edges CSV',
                     _v118_se_df.to_csv(index=False).encode('utf-8-sig'),
-                    'Analiz_Sepeti_Source_Edges_V131.csv',
+                    'Analiz_Sepeti_Source_Edges_V132.csv',
                     'text/csv',
                     use_container_width=True,
                     key='v118_basket_source_edges'
@@ -33471,7 +33876,7 @@ else:
                 g4.download_button(
                     '⬇️ Discourse Edges CSV',
                     _v118_de_df.to_csv(index=False).encode('utf-8-sig'),
-                    'Analiz_Sepeti_Discourse_Edges_V131.csv',
+                    'Analiz_Sepeti_Discourse_Edges_V132.csv',
                     'text/csv',
                     use_container_width=True,
                     key='v118_basket_discourse_edges'
@@ -33492,7 +33897,7 @@ else:
                 n1.download_button(
                     '⬇️ Gephi Analiz Notu (Word)',
                     _v118_gp['analysis_docx'],
-                    'Analiz_Sepeti_Gephi_Analiz_Notu_V131.docx',
+                    'Analiz_Sepeti_Gephi_Analiz_Notu_V132.docx',
                     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                     use_container_width=True,
                     key='v127_basket_gephi_analysis_docx'
@@ -33501,7 +33906,7 @@ else:
                 n2.download_button(
                     '⬇️ Düğüm Açıklamaları CSV',
                     _v127_comments.to_csv(index=False).encode('utf-8-sig'),
-                    'Analiz_Sepeti_Gephi_Dugum_Aciklamalari_V131.csv',
+                    'Analiz_Sepeti_Gephi_Dugum_Aciklamalari_V132.csv',
                     'text/csv',
                     use_container_width=True,
                     key='v127_basket_node_comments_csv'
