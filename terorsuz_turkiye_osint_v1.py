@@ -32030,6 +32030,225 @@ def _v30_event_network(df, min_weight=None, *args, **kwargs):
 # olarak gitmesinden kaynaklanan TypeError giderilmiştir.
 # ============================================================
 
+
+
+# ============================================================
+# V131 — GEPHI WRAPPER / UNPACK HATALARI TAM DÜZELTME
+#
+# Hata:
+#   not enough values to unpack (expected 3, got 2)
+#
+# Sebep:
+# - Analiz Sepeti Gephi arayüzü _v23_gephi_network ve _v30_event_network
+#   fonksiyonlarından 3 çıktı bekliyordu: nodes, edges, summary.
+# - V128/V129 uyumluluk wrapper'ları bazı durumlarda yalnız 2 çıktı
+#   döndürüyordu: nodes, edges.
+#
+# Çözüm:
+# - _v23_gephi_network ve _v30_event_network artık her koşulda 3 çıktı
+#   döndürür.
+# - Eski fonksiyon 2 çıktı döndürürse summary otomatik üretilir.
+# - Eski fonksiyon min_weight kabul etmiyorsa güvenli geri dönüş yapılır.
+# - _v127_node_explanation esnek hale getirilir; frame parametresi çift
+#   verilse bile hata üretmez.
+# - V128 zenginleştirme kolonları varsa korunur.
+# ============================================================
+
+try:
+    _V131_ORIGINAL_NODE_EXPLANATION = _v127_node_explanation
+except Exception:
+    _V131_ORIGINAL_NODE_EXPLANATION = None
+
+def _v127_node_explanation(label, *args, **kwargs):
+    """
+    Flexible compatibility wrapper.
+    Accepts both old positional usage and accidental keyword duplication.
+    """
+    node_type = ''
+    family = ''
+    frame = ''
+    role = ''
+    sub = ''
+
+    if len(args) > 0: node_type = args[0]
+    if len(args) > 1: family = args[1]
+    if len(args) > 2: frame = args[2]
+    if len(args) > 3: role = args[3]
+    if len(args) > 4: sub = args[4]
+
+    node_type = kwargs.get('node_type', node_type)
+    family = kwargs.get('family', family)
+    frame = kwargs.get('frame', frame)
+    role = kwargs.get('role', role)
+    sub = kwargs.get('sub', sub)
+
+    try:
+        if str(node_type) == 'Frame':
+            return V127_FRAME_EXPLANATIONS.get(
+                str(frame or label),
+                'Bu çerçeve, analiz sepetindeki içeriklerin ortak vurgu alanını gösterir.'
+            )
+        if str(family) == 'Sosyal Medya':
+            return f"{label} düğümü, sosyal medya kaynaklarında '{sub or 'Genel Kamuoyu Tepkisi'}' alt-söyleminin hangi çerçevelere bağlandığını gösterir."
+        if role:
+            return f"{label} düğümü, {role} olarak seçili içeriklerde hangi çerçevelere bağlandığını gösterir."
+        return V127_FAMILY_EXPLANATIONS.get(
+            str(family),
+            f"{label} düğümü, seçili açık kaynak havuzundaki çerçeve bağlantılarını gösterir."
+        )
+    except Exception:
+        return f"{label} düğümü, seçili açık kaynak havuzundaki çerçeve bağlantılarını gösterir."
+
+def _v131_empty_network():
+    return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+def _v131_summary_from_edges(edges, mode='source'):
+    if edges is None or getattr(edges, 'empty', True):
+        return pd.DataFrame()
+    e = edges.copy()
+    try:
+        e['_w'] = pd.to_numeric(e.get('Weight', 1), errors='coerce').fillna(1)
+    except Exception:
+        e['_w'] = 1
+
+    rows = []
+    if mode == 'discourse' and 'Group' in e.columns:
+        group_col = 'Group'
+        label_col = 'Söylem Çevresi'
+    elif 'SourceFamily' in e.columns:
+        group_col = 'SourceFamily'
+        label_col = 'Kaynak Ailesi'
+    elif 'SourceLabel' in e.columns:
+        group_col = 'SourceLabel'
+        label_col = 'Kaynak'
+    else:
+        group_col = None
+        label_col = 'Grup'
+
+    if group_col and group_col in e.columns:
+        for group, g in e.groupby(group_col, dropna=False):
+            total = float(g['_w'].sum())
+            row = {label_col: str(group), 'Toplam Bağ': int(total)}
+            if 'SourceRole' in g.columns:
+                row['Kaynak Rolü'] = _v127_mode(g['SourceRole'].tolist(), '') if '_v127_mode' in globals() else ''
+            if 'SocialSubDiscourse' in g.columns:
+                row['Sosyal Alt-Söylem'] = _v127_mode(g['SocialSubDiscourse'].tolist(), '') if '_v127_mode' in globals() else ''
+            if 'Frame' in g.columns:
+                top = g.groupby('Frame')['_w'].sum().sort_values(ascending=False).head(3)
+                for i, (frame, weight) in enumerate(top.items(), 1):
+                    row[f'{i}. Çerçeve'] = str(frame)
+                    row[f'{i}. Pay %'] = round(100 * float(weight) / max(1.0, total), 1)
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+def _v131_apply_min_weight(nodes, edges, min_weight=None):
+    try:
+        if min_weight is None or edges is None or edges.empty or 'Weight' not in edges.columns:
+            return nodes, edges
+        mw = float(min_weight)
+        ee = edges.copy()
+        ee['_v131_w'] = pd.to_numeric(ee['Weight'], errors='coerce').fillna(0)
+        ee = ee[ee['_v131_w'] >= mw].drop(columns=['_v131_w'], errors='ignore').reset_index(drop=True)
+        nn = nodes
+        if nodes is not None and not nodes.empty and {'Source', 'Target'}.issubset(ee.columns) and 'Id' in nodes.columns:
+            keep = set(ee['Source'].astype(str)) | set(ee['Target'].astype(str))
+            nn = nodes[nodes['Id'].astype(str).isin(keep)].reset_index(drop=True)
+        return nn, ee
+    except Exception:
+        return nodes, edges
+
+def _v131_enrich(nodes, edges):
+    try:
+        return _v128_enrich_gephi_tables(nodes, edges)
+    except Exception:
+        return nodes, edges
+
+def _v131_call_network(base_func, df, network_type=None, min_weight=None, discourse=False, *args, **kwargs):
+    if base_func is None:
+        return _v131_empty_network()
+
+    call_kwargs = dict(kwargs or {})
+    if min_weight is not None:
+        call_kwargs['min_weight'] = min_weight
+
+    try:
+        if network_type is None:
+            result = base_func(df, *args, **call_kwargs)
+        else:
+            result = base_func(df, network_type=network_type, *args, **call_kwargs)
+    except TypeError as e:
+        # Drop unsupported kwargs such as min_weight.
+        if 'unexpected keyword argument' in str(e) or 'positional' in str(e) or 'multiple values' in str(e):
+            if network_type is None:
+                result = base_func(df)
+            else:
+                result = base_func(df, network_type=network_type)
+        else:
+            raise
+
+    if isinstance(result, tuple):
+        if len(result) >= 3:
+            nodes, edges, summary = result[0], result[1], result[2]
+        elif len(result) == 2:
+            nodes, edges = result[0], result[1]
+            summary = _v131_summary_from_edges(edges, 'discourse' if discourse else 'source')
+        else:
+            return _v131_empty_network()
+    else:
+        return _v131_empty_network()
+
+    nodes, edges = _v131_apply_min_weight(nodes, edges, min_weight)
+    nodes, edges = _v131_enrich(nodes, edges)
+    if summary is None or getattr(summary, 'empty', True):
+        summary = _v131_summary_from_edges(edges, 'discourse' if discourse else 'source')
+    return nodes, edges, summary
+
+try:
+    _V131_BASE_SOURCE_NETWORK = _v127_gephi_network
+except Exception:
+    try:
+        _V131_BASE_SOURCE_NETWORK = _V129_BASE_V23_GEPHI_NETWORK
+    except Exception:
+        try:
+            _V131_BASE_SOURCE_NETWORK = _V128_BASE_GEPHI_NETWORK
+        except Exception:
+            _V131_BASE_SOURCE_NETWORK = None
+
+try:
+    _V131_BASE_DISCOURSE_NETWORK = _v127_event_network
+except Exception:
+    try:
+        _V131_BASE_DISCOURSE_NETWORK = _V129_BASE_V30_EVENT_NETWORK
+    except Exception:
+        _V131_BASE_DISCOURSE_NETWORK = None
+
+def _v23_gephi_network(df, network_type='source', min_weight=None, *args, **kwargs):
+    return _v131_call_network(
+        _V131_BASE_SOURCE_NETWORK,
+        df,
+        network_type=network_type,
+        min_weight=min_weight,
+        discourse=False,
+        *args,
+        **kwargs
+    )
+
+def _v30_event_network(df, min_weight=None, *args, **kwargs):
+    return _v131_call_network(
+        _V131_BASE_DISCOURSE_NETWORK,
+        df,
+        network_type=None,
+        min_weight=min_weight,
+        discourse=True,
+        *args,
+        **kwargs
+    )
+
+# ============================================================
+# /V131
+# ============================================================
+
+
 # V33 — SADE GÜNLÜK ANA PANEL
 #
 # TARMA ÖNCESİ:
@@ -33142,7 +33361,7 @@ else:
         st.markdown('##### 🕸️ Analiz Sepeti Gephi Oluşturucusu')
         st.caption(
             'Yalnız Analiz Sepetine seçtiğiniz içeriklerden iki ayrı ağ üretir: '
-            'Kaynak ↔ Çerçeve ve Söylem Çevresi ↔ Çerçeve. V127 ile kaynak aileleri düzeltilir, '
+            'Kaynak ↔ Çerçeve ve Söylem Çevresi ↔ Çerçeve. V131 ile kaynak aileleri düzeltilir, '
             'sosyal medya alt-söylemlere ayrılır ve otomatik Gephi Analiz Notu üretilir.'
         )
 
@@ -33220,7 +33439,7 @@ else:
                 g1.download_button(
                     '⬇️ Kaynak-Çerçeve GEXF',
                     _v118_gp['source_gexf'],
-                    'Analiz_Sepeti_Kaynak_Cerceve_V130.gexf',
+                    'Analiz_Sepeti_Kaynak_Cerceve_V131.gexf',
                     'application/xml',
                     use_container_width=True,
                     key='v118_basket_source_gexf'
@@ -33230,7 +33449,7 @@ else:
                 g2.download_button(
                     '⬇️ Kesim-Çerçeve GEXF',
                     _v118_gp['discourse_gexf'],
-                    'Analiz_Sepeti_Kesim_Cerceve_V130.gexf',
+                    'Analiz_Sepeti_Kesim_Cerceve_V131.gexf',
                     'application/xml',
                     use_container_width=True,
                     key='v118_basket_discourse_gexf'
@@ -33241,7 +33460,7 @@ else:
                 g3.download_button(
                     '⬇️ Source Edges CSV',
                     _v118_se_df.to_csv(index=False).encode('utf-8-sig'),
-                    'Analiz_Sepeti_Source_Edges_V130.csv',
+                    'Analiz_Sepeti_Source_Edges_V131.csv',
                     'text/csv',
                     use_container_width=True,
                     key='v118_basket_source_edges'
@@ -33252,7 +33471,7 @@ else:
                 g4.download_button(
                     '⬇️ Discourse Edges CSV',
                     _v118_de_df.to_csv(index=False).encode('utf-8-sig'),
-                    'Analiz_Sepeti_Discourse_Edges_V130.csv',
+                    'Analiz_Sepeti_Discourse_Edges_V131.csv',
                     'text/csv',
                     use_container_width=True,
                     key='v118_basket_discourse_edges'
@@ -33273,7 +33492,7 @@ else:
                 n1.download_button(
                     '⬇️ Gephi Analiz Notu (Word)',
                     _v118_gp['analysis_docx'],
-                    'Analiz_Sepeti_Gephi_Analiz_Notu_V130.docx',
+                    'Analiz_Sepeti_Gephi_Analiz_Notu_V131.docx',
                     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                     use_container_width=True,
                     key='v127_basket_gephi_analysis_docx'
@@ -33282,7 +33501,7 @@ else:
                 n2.download_button(
                     '⬇️ Düğüm Açıklamaları CSV',
                     _v127_comments.to_csv(index=False).encode('utf-8-sig'),
-                    'Analiz_Sepeti_Gephi_Dugum_Aciklamalari_V130.csv',
+                    'Analiz_Sepeti_Gephi_Dugum_Aciklamalari_V131.csv',
                     'text/csv',
                     use_container_width=True,
                     key='v127_basket_node_comments_csv'
