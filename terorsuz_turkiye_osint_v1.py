@@ -30053,6 +30053,514 @@ _v114_analysis_basket_report_docx = _v125_analysis_basket_report_docx
 # ============================================================
 
 
+
+
+# ============================================================
+# V126 — RAPOR PARAGRAF SIRASI / İÇERİK TÜRÜ ÖNCE / ATIF UYUMU
+#
+# V124 kararlı atıf-metin uyumu ve V125 içerik türü katmanı korunur.
+# Bu sürüm rapor paragrafını kullanıcının istediği sıraya çeker:
+#
+#   İçerik türü + mecra/site + yazar/hesap/aktör
+#   -> içerikten kısa çıkarım
+#   -> hangi kesim/söylem hattını yansıttığı
+#   -> akademik üstsimge atıf / sayfa altı doğrudan link
+#
+# Örnek düzeltmeler:
+# - Reddit /r/vlandiya artık @r olarak değil r/vlandiya olarak görünür.
+# - Yetkin Report / Alparslan Özerdem içerikleri haber/analiz sitesi ve
+#   yazar bilgisiyle birlikte yorumlanır.
+# - Analiz ile atıf aynı kaynağa bağlı kalır.
+# ============================================================
+
+V126_SITE_LABELS = {
+    'yetkin.report':'Yetkin Report',
+    'www.yetkin.report':'Yetkin Report',
+    'medyascope.tv':'Medyascope',
+    'www.medyascope.tv':'Medyascope',
+    'etikhaber.com':'Etik Haber',
+    'www.etikhaber.com':'Etik Haber',
+    'canakkalehaber.com':'Çanakkale Haber',
+    'www.canakkalehaber.com':'Çanakkale Haber',
+    'medyahabertv.digital':'Medya Haber',
+    'www.medyahabertv.digital':'Medya Haber',
+    'guneydoguekspres.com':'Güneydoğu Ekspres',
+    'www.guneydoguekspres.com':'Güneydoğu Ekspres',
+    'politikahaber.com':'Politika Haber',
+    'www.politikahaber.com':'Politika Haber',
+    'darkamazi.site':'Darka Mazi',
+    'rudaw.net':'Rudaw',
+    'www.rudaw.net':'Rudaw',
+    'shafaq.com':'Shafaq News',
+    'www.shafaq.com':'Shafaq News',
+    'thenewregion.com':'The New Region',
+    'www.thenewregion.com':'The New Region',
+    'kurdpress.com':'KurdPress',
+    'www.kurdpress.com':'KurdPress',
+}
+
+V126_AUTHOR_HINTS = {
+    'alparslan özerdem':('Alparslan Özerdem','Yetkin Report çizgisinde akademik/uzman siyasal analiz hattı'),
+    'alparslan ozerdem':('Alparslan Özerdem','Yetkin Report çizgisinde akademik/uzman siyasal analiz hattı'),
+    'ruşen çakır':('Ruşen Çakır','Medyascope çizgisinde muhalif-analitik medya yorumu'),
+    'rusen cakir':('Ruşen Çakır','Medyascope çizgisinde muhalif-analitik medya yorumu'),
+    'gürkan zengin':('Gürkan Zengin','güvenlik ve dış politika odaklı yorum hattı'),
+    'gurkan zengin':('Gürkan Zengin','güvenlik ve dış politika odaklı yorum hattı'),
+    'murat yetkin':('Murat Yetkin','Yetkin Report çizgisinde siyasal analiz hattı'),
+    'fehim taştekin':('Fehim Taştekin','Ortadoğu/Kürt meselesi odaklı eleştirel dış politika analizi'),
+    'fehim tastekin':('Fehim Taştekin','Ortadoğu/Kürt meselesi odaklı eleştirel dış politika analizi'),
+}
+
+V126_SOCIAL_PLATFORMS = {
+    'reddit.com':'Reddit', 'www.reddit.com':'Reddit',
+    'x.com':'X', 'www.x.com':'X', 'twitter.com':'X', 'www.twitter.com':'X',
+    'facebook.com':'Facebook', 'www.facebook.com':'Facebook',
+    'instagram.com':'Instagram', 'www.instagram.com':'Instagram',
+    'tiktok.com':'TikTok', 'www.tiktok.com':'TikTok',
+    'youtube.com':'YouTube', 'www.youtube.com':'YouTube', 'youtu.be':'YouTube',
+    'threads.net':'Threads', 'www.threads.net':'Threads',
+    'bsky.app':'Bluesky', 'www.bsky.app':'Bluesky',
+    't.me':'Telegram', 'telegram.me':'Telegram'
+}
+
+V126_SOCIAL_ACCOUNT_LABELS = {
+    'devapartisi':'DEVA Partisi',
+    'demtvyoutube':'DEM TV',
+    'turkishindy':'Independent Turkish',
+    'ayyuceturkestas':'Dr. Ayyüce Türkeş Taş',
+    'milliyetcihbr':'MilliyetciHbr',
+    'mctvhaber':'MC TV Haber',
+    'lutfu.turkkan':'Lütfü Türkkan',
+    'dr.turhancomez':'Dr. Turhan Çömez',
+    'notosoloji':'Notosoloji',
+    'numedya24':'Numedya24',
+}
+
+def _v126_clean(value):
+    try:
+        return _v116_clean_original_text(value)
+    except Exception:
+        return re.sub(r'\s+',' ',str(value or '')).strip()
+
+def _v126_norm(value):
+    try:
+        return norm(_v126_clean(value))
+    except Exception:
+        return str(value or '').lower().strip()
+
+def _v126_url(rec):
+    try:
+        return _v124_url(rec)
+    except Exception:
+        return str(rec.get('URL','') or '').strip()
+
+def _v126_domain(rec):
+    url=_v126_url(rec)
+    try:
+        return _tt_norm_domain(url)
+    except Exception:
+        try:
+            return domain(url)
+        except Exception:
+            return ''
+
+def _v126_text(rec):
+    return _v126_clean(
+        f"{rec.get('Kaynak','')} {rec.get('Başlık','')} {rec.get('Özet','')} {rec.get('URL','')}"
+    )
+
+def _v126_textn(rec):
+    return _v126_norm(_v126_text(rec))
+
+def _v126_site_name(rec):
+    d=_v126_domain(rec)
+    if d in V126_SITE_LABELS:
+        return V126_SITE_LABELS[d]
+    try:
+        s=_v124_source(rec)
+    except Exception:
+        try:
+            s=_v118_report_source_name(rec)
+        except Exception:
+            s=str(rec.get('Kaynak','') or '')
+    s=_v126_clean(s)
+    if s and s.lower() not in {'news.google.com','google news'}:
+        return s
+    return d.replace('www.','') if d else 'Açık Kaynak'
+
+def _v126_platform(rec):
+    d=_v126_domain(rec)
+    return V126_SOCIAL_PLATFORMS.get(d,'')
+
+def _v126_social_account(rec):
+    url=_v126_url(rec)
+    title=_v126_clean(rec.get('Başlık',''))
+    try:
+        u=urlparse(url)
+        d=u.netloc.lower().replace('www.','')
+        parts=[p for p in u.path.split('/') if p]
+
+        # Reddit special: /r/vlandiya/comments/... => r/vlandiya
+        if d=='reddit.com':
+            if len(parts)>=2 and parts[0].lower()=='r':
+                return f"r/{parts[1]}"
+            if parts and parts[0].lower()=='user' and len(parts)>=2:
+                return f"u/{parts[1]}"
+            return ''
+
+        if parts:
+            first=parts[0].strip('@')
+            if first.lower() in {'watch','reel','reels','videos','video','shorts','status','posts','p'} and len(parts)>1:
+                first=parts[1].strip('@')
+            if first.lower() not in {'watch','reel','reels','videos','video','shorts','status','posts','p'}:
+                return V126_SOCIAL_ACCOUNT_LABELS.get(first.lower(), first)
+    except Exception:
+        pass
+
+    # Title fallbacks: "Independent Turkish on X: ..." or "Name: ..."
+    m=re.match(r'^(.{2,80}?)\s+on\s+(X|Twitter|Facebook|Instagram|TikTok|YouTube)\b',title,re.I)
+    if m:
+        return m.group(1).strip()
+    m=re.match(r'^([A-ZÇĞİÖŞÜ][^:|]{2,70})\s*:',title)
+    if m:
+        return m.group(1).strip()
+    return ''
+
+def _v126_author(rec):
+    t=_v126_textn(rec)
+    url=_v126_url(rec)
+    path=urlparse(url).path.lower() if url else ''
+
+    for key,val in V126_AUTHOR_HINTS.items():
+        if key in t or key.replace(' ','-') in path:
+            return val
+
+    # Yetkin-specific: use observed author if available in title/snippet/url.
+    if 'yetkin.report' in _v126_domain(rec):
+        if 'alparslan' in t or 'alparslan-ozerdem' in path:
+            return ('Alparslan Özerdem','Yetkin Report çizgisinde akademik/uzman siyasal analiz hattı')
+        if 'murat-yetkin' in path or 'murat yetkin' in t:
+            return ('Murat Yetkin','Yetkin Report çizgisinde siyasal analiz hattı')
+
+    title=_v126_clean(rec.get('Başlık',''))
+    m=re.search(r'([A-ZÇĞİÖŞÜ][a-zçğıöşü]+(?:\s+[A-ZÇĞİÖŞÜ][a-zçğıöşü]+){1,3})\s+(?:yazdı|kaleme aldı|yorumladı)',title)
+    if m:
+        return (m.group(1).strip(), _v126_context_label(rec))
+
+    return ('','')
+
+def _v126_content_kind(rec):
+    d=_v126_domain(rec)
+    url=_v126_url(rec).lower()
+    t=_v126_textn(rec)
+
+    if _v126_platform(rec):
+        if any(x in url for x in ['video','videos','reel','shorts']) or d in {'tiktok.com','youtube.com','youtu.be','www.youtube.com'}:
+            return 'sosyal medya/video paylaşımı'
+        return 'sosyal medya paylaşımı'
+
+    if 'yetkin.report' in d:
+        return 'haber/analiz sitesi içeriği'
+
+    if any(x in url for x in ['/yazar/', '/yazarlar/', '/column/', '/columns/', '/opinion/', '/yorum/']):
+        return 'köşe yazısı/yorum'
+
+    if any(x in t for x in ['kaleme aldı','kaleme aldi','yazdı','yazdi','köşe yazısı','kose yazisi','op-ed','opinion']):
+        return 'köşe yazısı/yorum'
+
+    if any(x in t for x in ['analiz','analysis','değerlendirme','degerlendirme']):
+        return 'analiz/değerlendirme yazısı'
+
+    if any(x in t for x in ['röportaj','roportaj','interview','konuştu','konustu','açıklamalarda bulundu','aciklamalarda bulundu']):
+        return 'röportaj/açıklama haberi'
+
+    return 'haber içeriği'
+
+def _v126_context_label(rec):
+    key=''
+    try:
+        key=_v124_source_key(rec)
+    except Exception:
+        key=''
+    d=_v126_domain(rec)
+    t=_v126_textn(rec)
+
+    if 'yetkin.report' in d:
+        return 'liberal/çoğulcu medya çevresi ve uzman siyasal analiz hattı'
+    if key=='medyascope_rusen_cakir' or 'medyascope' in d:
+        return 'muhalif-analitik medya hattı'
+    if key=='reddit_sosyal' or d=='reddit.com':
+        return 'açık sosyal medya/toplumsal tepki hattı'
+    if key=='gaziler_gokhan_uz':
+        return 'güvenlikçi-milliyetçi/gaziler hassasiyeti'
+    if key=='mhp_yurdakul':
+        return 'MHP/devlet merkezli güvenlik söylemi'
+    if key=='medya_haber_hatimogullari':
+        return 'DEM Parti ve barış/demokratik çözüm söylemi'
+    if key=='guneydogu_ocalan':
+        return 'Öcalan merkezli teorik/siyasal süreç söylemi'
+    if key=='politika_haber_mazlum_abdi':
+        return 'Suriye Kürtleri/Mazlum Abdi kurumsallaşma söylemi'
+    if key=='darka_mazi':
+        return 'Barzani-KDP perspektifine yakın Kürt milliyetçi-eleştirel yayın çizgisi'
+    if key in {'rudaw','shafaq','the_new_region','kurdpress'}:
+        return 'Kürt bölgesel medya perspektifi'
+    if key in {'lutfu_turkkan','turhan_comez','ayyuce_turkes_tas'}:
+        return 'muhalif/milliyetçi siyaset ve güvenlik-hukuk eleştirisi'
+    if _v126_platform(rec):
+        return 'açık sosyal medya/toplumsal tepki hattı'
+
+    try:
+        label=_v124_line(rec)
+        if label:
+            return str(label).replace('—','/').strip()
+    except Exception:
+        pass
+
+    try:
+        return _v118_report_group(rec)
+    except Exception:
+        return 'seçili kaynağın metinsel çerçevesi'
+
+def _v126_fact_brief(rec):
+    t=_v126_textn(rec)
+
+    # Reddit target case: turn raw/offensive wording into a concise source-grounded summary.
+    if _v126_domain(rec) == 'reddit.com' or 'reddit.com/r/' in _v126_url(rec):
+        if any(x in t for x in ['organize','dış destek','dis destek','bölücü','bolucu']):
+            return 'paylaşımda sürecin organize, dış destekli ve bölücülük tehdidiyle ilişkili bir hareket olarak görüldüğü anlaşılmaktadır'
+        return 'paylaşımda sürece ilişkin taban düzeyinde kuşku, tepki ve güvenlik kaygısı öne çıkmaktadır'
+
+    if 'yetkin.report' in _v126_domain(rec):
+        if any(x in t for x in ['silah bırakmanın gecikmesi','silah birakmanin gecikmesi','siyasi maliyet']):
+            return 'silah bırakmanın gecikmesinin siyasi maliyeti üzerinden sürecin meşruiyeti, siyasi sonucu ve aktörlerin sorumluluğu tartışılmaktadır'
+        return 'süreç, yalnız olay aktarımı değil siyasi maliyet, meşruiyet ve aktörlerin pozisyonu üzerinden ele alınmaktadır'
+
+    try:
+        fact=_v120_underlying_fact(rec)
+    except Exception:
+        try:
+            fact=_v119_summary_from_source(rec)
+        except Exception:
+            fact=''
+    fact=_v126_clean(fact)
+    if not fact:
+        return ''
+    fact=re.sub(r'^(Haberde|İçerikte|Paylaşımda)\s*','',fact,flags=re.I).strip()
+    if not fact:
+        return ''
+    nf=_v126_norm(fact)
+    if 'missing:' in nf or 'show results with' in nf:
+        return ''
+    if len(fact)>300:
+        fact=fact[:297].rstrip()+'…'
+    return fact[0].lower()+fact[1:] if fact[0].isupper() else fact
+
+def _v126_specific_analysis(rec):
+    d=_v126_domain(rec)
+    t=_v126_textn(rec)
+
+    if d=='reddit.com' or 'reddit.com/r/' in _v126_url(rec):
+        return (
+            "sürecin taban düzeyinde güvenlik, dış destek ve bölücülük algısıyla tartışıldığını göstermektedir. "
+            "Bu hatta kurumsal bir politika analizi yerine, kamuoyundaki anlık kuşku, tepki ve tehdit algısı öne çıkmaktadır."
+        )
+
+    if 'yetkin.report' in d:
+        return (
+            "haberin yalnız olay aktarımı değil, sürecin meşruiyeti, siyasi sonucu ve ilgili aktörlerin pozisyonu "
+            "üzerinden okunması gerektiğine işaret etmektedir. Bu hatta süreç, güvenlik adımı olmanın ötesinde "
+            "siyasi maliyet, toplumsal meşruiyet ve karar alıcıların sorumluluk üstlenme kapasitesi bakımından değerlendirilmektedir."
+        )
+
+    # Use the source-safe V124 analysis for known sources, but remove duplicate generic openings where possible.
+    try:
+        analysis=_v124_analysis_line(rec)
+    except Exception:
+        try:
+            analysis=_v120_analysis_line(rec)
+        except Exception:
+            analysis=''
+    analysis=_v126_clean(analysis)
+    if analysis:
+        return analysis
+
+    return (
+        "seçili gelişmenin yalnız haber değeriyle değil, sürecin meşruiyeti, güvenlik sonucu, temsil tartışması ve "
+        "ilgili aktörlerin pozisyonu üzerinden okunması gerektiğini göstermektedir."
+    )
+
+def _v126_opening_sentence(rec):
+    kind=_v126_content_kind(rec)
+    site=_v126_site_name(rec)
+    platform=_v126_platform(rec)
+    account=_v126_social_account(rec) if platform else ''
+    author,author_ctx=_v126_author(rec)
+    context=_v126_context_label(rec)
+    fact=_v126_fact_brief(rec)
+    analysis=_v126_specific_analysis(rec)
+
+    if platform:
+        if account:
+            opener=f"İçerik türü bakımından sosyal paylaşım platformu olan {platform}'te {account} tarafından yapılan {kind}"
+        else:
+            opener=f"İçerik türü bakımından sosyal paylaşım platformu olan {platform}'te yapılan {kind}"
+
+        if fact:
+            return (
+                f"{opener}, {fact}; bu çerçevede {analysis} "
+                f"Bu raporda kişiye/hayata dair kesin siyasi kimlik atfedilmeden, paylaşımın taşıdığı metinsel vurgu {context} bağlamında değerlendirilmiştir."
+            )
+        return (
+            f"{opener}, {analysis} "
+            f"Bu raporda kişiye/hayata dair kesin siyasi kimlik atfedilmeden, paylaşımın taşıdığı metinsel vurgu {context} bağlamında değerlendirilmiştir."
+        )
+
+    # Websites/articles first: source type, site, author/actor.
+    if author:
+        opener=f"İçerik türü bakımından {kind} olan {site} sitesinde {author} tarafından yazıldığı gözlemlenen içerik"
+        if author_ctx and author_ctx not in context:
+            context=f"{context}; yazarın okuması ayrıca {author_ctx} içinde"
+    elif kind=='köşe yazısı/yorum':
+        opener=f"İçerik türü bakımından köşe yazısı/yorum niteliğindeki {site} içeriği"
+    elif kind=='röportaj/açıklama haberi':
+        try:
+            actor=_v119_actor_from_text(rec)
+        except Exception:
+            actor=''
+        if actor and actor != site:
+            opener=f"İçerik türü bakımından röportaj/açıklama haberi olan {site} içeriğinde {actor} açıklaması"
+        else:
+            opener=f"İçerik türü bakımından röportaj/açıklama haberi olan {site} içeriği"
+    elif kind=='analiz/değerlendirme yazısı':
+        opener=f"İçerik türü bakımından analiz/değerlendirme yazısı olan {site} içeriği"
+    elif kind=='haber/analiz sitesi içeriği':
+        opener=f"İçerik türü bakımından haber/analiz sitesi olan {site} sitesindeki içerik"
+    else:
+        opener=f"İçerik türü bakımından haber sitesi olan {site} sitesindeki içerik"
+
+    if fact:
+        return (
+            f"{opener}, {fact}; bu nedenle {analysis} "
+            f"Bu içerik, raporda {context} bağlamında konumlandırılmıştır."
+        )
+    return (
+        f"{opener}, {analysis} "
+        f"Bu içerik, raporda {context} bağlamında konumlandırılmıştır."
+    )
+
+def _v126_day_assessment(records):
+    # Use V124 assessment when available, but the report now benefits from
+    # source/content-type-aware grouping labels.
+    try:
+        return _v124_day_assessment(records)
+    except Exception:
+        try:
+            return _v120_day_assessment(records)
+        except Exception:
+            return _v119_daily_synthesis(records)
+
+def _v126_analysis_basket_report_docx(df):
+    doc=Document()
+    sec=doc.sections[0]
+    sec.top_margin=Cm(2.0)
+    sec.bottom_margin=Cm(2.0)
+    sec.left_margin=Cm(2.3)
+    sec.right_margin=Cm(2.3)
+
+    normal=doc.styles['Normal']
+    normal.font.name='Times New Roman'
+    normal.font.size=Pt(11)
+    normal._element.rPr.rFonts.set(qn('w:eastAsia'),'Times New Roman')
+
+    title=doc.add_paragraph()
+    title.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    tr=title.add_run('TERÖRSÜZ TÜRKİYE - AÇIK KAYNAK SÖYLEM ANALİZİ')
+    tr.bold=True
+    tr.font.name='Times New Roman'
+    tr.font.size=Pt(12)
+
+    datep=doc.add_paragraph()
+    datep.alignment=WD_ALIGN_PARAGRAPH.RIGHT
+    dr=datep.add_run(datetime.now().astimezone().strftime('%d.%m.%Y'))
+    dr.font.name='Times New Roman'
+    dr.font.size=Pt(9)
+
+    rows,details=_v114_resolve_basket_rows(df)
+    records=_v116_citation_records(rows,details)
+    footnotes=[]
+
+    if not records:
+        p=doc.add_paragraph('Analiz sepetinde raporlanabilecek içerik bulunmamaktadır.')
+        p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+    else:
+        try:
+            records=sorted(records,key=lambda r:(_v124_line(r),int(r.get('No',9999))))
+        except Exception:
+            records=sorted(records,key=lambda r:int(r.get('No',9999)))
+
+        intro=doc.add_paragraph()
+        intro.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        intro.paragraph_format.first_line_indent=Cm(1.0)
+        intro.paragraph_format.line_spacing=1.15
+        intro.paragraph_format.space_after=Pt(8)
+        intro.add_run(
+            "Aşağıdaki değerlendirme, Analiz Sepetine seçilen açık kaynak içeriklerin yalnız haber değeri bakımından değil; "
+            "hangi mecra ve içerik türü üzerinden dolaşıma girdiği, paylaşımı yapan hesap veya yazarı, hangi siyasi yaklaşımı "
+            "yansıttığı ve hangi karşıtlık hattını görünür kıldığı bakımından okunması amacıyla hazırlanmıştır. Atıf numaraları "
+            "ilgili paragrafın sonunda üstsimge olarak, bağlantılar ise sayfa altı dipnotunda doğrudan link şeklinde verilmiştir."
+        )
+
+        for rec in records:
+            p=doc.add_paragraph()
+            p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+            p.paragraph_format.first_line_indent=Cm(1.0)
+            p.paragraph_format.line_spacing=1.15
+            p.paragraph_format.space_after=Pt(8)
+
+            p.add_run(_v126_opening_sentence(rec))
+
+            url=_v126_url(rec)
+            if url.startswith('http'):
+                fid=len(footnotes)+1
+                p.add_run(' ')
+                try:
+                    _v124_add_body_footnote(p,fid)
+                except Exception:
+                    try:
+                        _v123_add_footnote_reference(p,fid)
+                    except Exception:
+                        r=p.add_run(str(fid)); r.font.superscript=True
+                footnotes.append({'id':fid,'url':url})
+
+        final=doc.add_paragraph()
+        final.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        final.paragraph_format.first_line_indent=Cm(1.0)
+        final.paragraph_format.line_spacing=1.15
+        final.paragraph_format.space_before=Pt(6)
+        final.paragraph_format.space_after=Pt(10)
+        fr=final.add_run('Günün genel değerlendirmesi: ')
+        fr.bold=True
+        final.add_run(_v126_day_assessment(records))
+
+    bio=BytesIO()
+    doc.save(bio)
+    raw=bio.getvalue()
+    try:
+        return _v124_patch_docx_footnotes(raw,footnotes)
+    except Exception:
+        try:
+            return _v123_patch_docx_footnotes(raw,footnotes)
+        except Exception:
+            return raw
+
+_v114_analysis_basket_report_docx = _v126_analysis_basket_report_docx
+
+# ============================================================
+# /V126
+# ============================================================
+
+
 # V33 — SADE GÜNLÜK ANA PANEL
 #
 # TARMA ÖNCESİ:
@@ -31140,7 +31648,7 @@ else:
         with c3:
             if st.button('🧠 PDF TARZI SÖYLEM ANALİZİ OLUŞTUR',type='primary',use_container_width=True,key='v3_report'):
                 with st.spinner(
-                    'Analiz sepetindeki içerikler okunuyor; metin türü, yazar/hesap bilgisi, kaynak bağlamı, '
+                    'Analiz sepetindeki içerikler okunuyor; içerik türü, mecra/site, yazar/hesap, kısa içerik özeti ve kaynak bağlamı, '
                     'atıf-metin uyumu ve sayfa altı bağlantı dipnotları hazırlanıyor...'
                 ):
                     try:
@@ -31158,7 +31666,7 @@ else:
         if st.session_state.get('v3_report_bytes'):
             st.download_button('⬇️ KAYNAKLI ANALİZ RAPORUNU İNDİR',
                 st.session_state['v3_report_bytes'],
-                file_name=f'Terorsuz_Turkiye_PDF_Tarzi_Soylem_Analizi_V125_{date.today()}.docx',
+                file_name=f'Terorsuz_Turkiye_PDF_Tarzi_Soylem_Analizi_V126_{date.today()}.docx',
                 mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                 use_container_width=True,key='v3_report_download')
 
