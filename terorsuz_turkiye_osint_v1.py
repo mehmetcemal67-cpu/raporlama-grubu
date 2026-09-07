@@ -33835,6 +33835,183 @@ _v133_general_gephi_build = _v134_general_gephi_build
 # ============================================================
 
 
+
+
+# ============================================================
+# V135 — GENEL GEPHI = ANALİZ SEPETİ GEPHI MOTORUNUN AYNISI
+#
+# Kullanıcı talebi:
+# - Analiz Sepeti Gephi beğeniliyor ve aynen korunuyor.
+# - Genel Gephi'de farklı/özet/custom ağ motoru kullanılmayacak.
+# - Genel Gephi de son 24 saat / seçilen kapsam verisini aldıktan sonra
+#   ANALİZ SEPETİ GEPHI İLE AYNI fonksiyonları aynı sırayla çağıracak:
+#
+#     _v23_gephi_network(..., network_type='source', min_weight=1)
+#     _v23_gephi_gexf(...)
+#     _v30_event_network(..., min_weight=1)
+#     _v30_event_gexf(...)
+#     _v127_node_commentary_table(...)
+#     _v127_gephi_analysis_note_docx(...)
+#
+# Başka Gephi sınıflandırma/motor mantığı eklenmez.
+# ============================================================
+
+def _v135_prepare_general_input(df, scope_label='Son 24 saat — tüm içerikler', balanced=False):
+    """
+    Yalnız veri kapsamını seçer.
+    Ağ oluşturma mantığına dokunmaz.
+    Çıkan DataFrame doğrudan Analiz Sepeti Gephi motoruna verilir.
+    """
+    x = pd.DataFrame(df).copy() if df is not None else pd.DataFrame()
+    if x.empty:
+        return x, 0
+
+    raw_count = len(x)
+
+    # V133'ün mevcut tarih filtresi yalnız veri kapsamı için kullanılabilir.
+    try:
+        x = _v133_filter_scope(x, scope_label)
+    except Exception:
+        # Güvenli 24 saat filtresi.
+        if 'Son 24 saat' in str(scope_label):
+            dt_col = 'Tarih_dt' if 'Tarih_dt' in x.columns else ('Tarih' if 'Tarih' in x.columns else None)
+            if dt_col:
+                try:
+                    dt = pd.to_datetime(x[dt_col], utc=True, errors='coerce')
+                    newest = dt.max()
+                    anchor = newest if pd.notna(newest) else pd.Timestamp.now(tz='UTC')
+                    mask = dt >= (anchor - pd.Timedelta(hours=24))
+                    y = x[mask.fillna(False)].copy()
+                    if not y.empty:
+                        x = y
+                except Exception:
+                    pass
+
+    # Kullanıcı özellikle dengeli temsil seçerse yalnız veri kümesini azaltır.
+    # Ağ motoru yine Analiz Sepeti Gephi motorunun aynısıdır.
+    if balanced:
+        try:
+            x = _v133_balance_df(x)
+        except Exception:
+            pass
+
+    return x.reset_index(drop=True), raw_count
+
+def _v135_general_gephi_build(
+    df,
+    scope_label='Son 24 saat — tüm içerikler',
+    min_weight=1,
+    balanced=False
+):
+    """
+    ANALİZ SEPETİ GEPHI BLOĞUNUN AYNI MOTORU.
+
+    Not:
+    min_weight parametresi UI uyumluluğu için tutulur; Analiz Sepeti gibi
+    ağ üretiminde 1 kullanılır.
+    """
+    used, input_count = _v135_prepare_general_input(
+        df,
+        scope_label=scope_label,
+        balanced=balanced
+    )
+
+    if used.empty:
+        return {
+            'scope': scope_label,
+            'balanced': bool(balanced),
+            'raw_count': int(input_count),
+            'used_count': 0,
+            'source_nodes': pd.DataFrame(),
+            'source_edges': pd.DataFrame(),
+            'source_summary': pd.DataFrame(),
+            'source_gexf': b'',
+            'discourse_nodes': pd.DataFrame(),
+            'discourse_edges': pd.DataFrame(),
+            'discourse_summary': pd.DataFrame(),
+            'discourse_gexf': b'',
+            'node_comments': pd.DataFrame(),
+            'analysis_docx': b'',
+        }
+
+    # --------------------------------------------------------
+    # AŞAĞIDAKİ KISIM ANALİZ SEPETİ GEPHI BLOĞU İLE AYNI
+    # --------------------------------------------------------
+
+    source_nodes, source_edges, source_summary = _v23_gephi_network(
+        used,
+        network_type='source',
+        min_weight=1
+    )
+
+    source_gexf = _v23_gephi_gexf(
+        source_nodes,
+        source_edges,
+        'Terörsüz Türkiye — Genel Kaynak-Çerçeve Ağı'
+    ) if (
+        source_nodes is not None and
+        source_edges is not None and
+        not source_nodes.empty and
+        not source_edges.empty
+    ) else b''
+
+    discourse_nodes, discourse_edges, discourse_summary = _v30_event_network(
+        used,
+        min_weight=1
+    )
+
+    discourse_gexf = _v30_event_gexf(
+        discourse_nodes,
+        discourse_edges,
+        'Terörsüz Türkiye — Genel Söylem Çevresi-Çerçeve Ağı'
+    ) if (
+        discourse_nodes is not None and
+        discourse_edges is not None and
+        not discourse_nodes.empty and
+        not discourse_edges.empty
+    ) else b''
+
+    node_comments = _v127_node_commentary_table(
+        source_nodes,
+        source_edges,
+        discourse_nodes,
+        discourse_edges
+    )
+
+    analysis_docx = _v127_gephi_analysis_note_docx(
+        source_nodes,
+        source_edges,
+        discourse_nodes,
+        discourse_edges,
+        used
+    )
+
+    return {
+        'scope': scope_label,
+        'balanced': bool(balanced),
+        'raw_count': int(input_count),
+        'used_count': int(len(used)),
+        'source_nodes': source_nodes,
+        'source_edges': source_edges,
+        'source_summary': source_summary,
+        'source_gexf': source_gexf,
+        'discourse_nodes': discourse_nodes,
+        'discourse_edges': discourse_edges,
+        'discourse_summary': discourse_summary,
+        'discourse_gexf': discourse_gexf,
+        'node_comments': node_comments if node_comments is not None else pd.DataFrame(),
+        'analysis_docx': analysis_docx,
+    }
+
+# V133 Genel Gephi arayüzü bu ismi çağırıyor.
+# Artık başka/custom motor değil, Analiz Sepeti Gephi motorunun aynısını çalıştırır.
+_v133_general_gephi_build = _v135_general_gephi_build
+
+# ============================================================
+# /V135
+# ============================================================
+
+
 # V33 — SADE GÜNLÜK ANA PANEL
 #
 # TARMA ÖNCESİ:
@@ -34701,7 +34878,7 @@ else:
         # ====================================================
     # ---------------- GEPHI AĞ ANALİZİ ----------------
 
-    st.subheader('🕸️ Genel Gephi Ağ Analizi — Analiz Sepeti Motoruyla')
+    st.subheader('🕸️ Genel Gephi Ağ Analizi — Analiz Sepeti Gephi Motorunun Aynısı')
     st.caption(
         'Bu bölüm artık Analiz Sepeti Gephi ile aynı mantıkta çalışır. '
         'Son 24 saatteki veya mevcut taramadaki içeriklerden iki ayrı ağ üretir: '
@@ -34741,14 +34918,14 @@ else:
     )
 
     if st.button(
-        '🧬 Genel Gephi ağını Analiz Sepeti motoruyla hazırla',
+        '🧬 Genel Gephi ağını Analiz Sepeti Gephi motoruyla hazırla',
         use_container_width=True,
         key='v133_prepare_general_gephi'
     ):
         if not st.session_state.get('rows'):
             st.warning('Önce tarama yapılmalıdır.')
         else:
-            with st.spinner('Genel Gephi ağı Analiz Sepeti motoruyla hazırlanıyor...'):
+            with st.spinner('Genel Gephi ağı Analiz Sepeti Gephi motorunun aynısıyla hazırlanıyor...'):
                 try:
                     _gdf=pd.DataFrame(st.session_state.rows)
                     if not _gdf.empty and 'Tarih_dt' in _gdf.columns:
@@ -34833,7 +35010,7 @@ else:
             d1.download_button(
                 '⬇️ Kaynak-Çerçeve GEXF',
                 _gpkg['source_gexf'],
-                'Genel_Gephi_Kaynak_Cerceve_V134.gexf',
+                'Genel_Gephi_Kaynak_Cerceve_V135.gexf',
                 'application/xml',
                 use_container_width=True,
                 key='v133_general_source_gexf'
@@ -34842,7 +35019,7 @@ else:
             d2.download_button(
                 '⬇️ Söylem-Çerçeve GEXF',
                 _gpkg['discourse_gexf'],
-                'Genel_Gephi_Soylem_Cerceve_V134.gexf',
+                'Genel_Gephi_Soylem_Cerceve_V135.gexf',
                 'application/xml',
                 use_container_width=True,
                 key='v133_general_discourse_gexf'
@@ -34851,7 +35028,7 @@ else:
             d3.download_button(
                 '⬇️ Source Edges CSV',
                 _se.to_csv(index=False).encode('utf-8-sig'),
-                'Genel_Gephi_Source_Edges_V134.csv',
+                'Genel_Gephi_Source_Edges_V135.csv',
                 'text/csv',
                 use_container_width=True,
                 key='v133_general_source_edges_csv'
@@ -34860,7 +35037,7 @@ else:
             d4.download_button(
                 '⬇️ Discourse Edges CSV',
                 _de.to_csv(index=False).encode('utf-8-sig'),
-                'Genel_Gephi_Discourse_Edges_V134.csv',
+                'Genel_Gephi_Discourse_Edges_V135.csv',
                 'text/csv',
                 use_container_width=True,
                 key='v133_general_discourse_edges_csv'
@@ -34871,7 +35048,7 @@ else:
             n1.download_button(
                 '⬇️ Source Nodes CSV',
                 _sn.to_csv(index=False).encode('utf-8-sig'),
-                'Genel_Gephi_Source_Nodes_V134.csv',
+                'Genel_Gephi_Source_Nodes_V135.csv',
                 'text/csv',
                 use_container_width=True,
                 key='v133_general_source_nodes_csv'
@@ -34880,7 +35057,7 @@ else:
             n2.download_button(
                 '⬇️ Discourse Nodes CSV',
                 _dn.to_csv(index=False).encode('utf-8-sig'),
-                'Genel_Gephi_Discourse_Nodes_V134.csv',
+                'Genel_Gephi_Discourse_Nodes_V135.csv',
                 'text/csv',
                 use_container_width=True,
                 key='v133_general_discourse_nodes_csv'
@@ -34889,7 +35066,7 @@ else:
             n3.download_button(
                 '⬇️ Genel Gephi Analiz Notu',
                 _gpkg['analysis_docx'],
-                'Genel_Gephi_Analiz_Notu_V134.docx',
+                'Genel_Gephi_Analiz_Notu_V135.docx',
                 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                 use_container_width=True,
                 key='v133_general_analysis_docx'
@@ -34898,7 +35075,7 @@ else:
             n4.download_button(
                 '⬇️ Düğüm Açıklamaları CSV',
                 _comments.to_csv(index=False).encode('utf-8-sig'),
-                'Genel_Gephi_Dugum_Aciklamalari_V134.csv',
+                'Genel_Gephi_Dugum_Aciklamalari_V135.csv',
                 'text/csv',
                 use_container_width=True,
                 key='v133_general_node_comments_csv'
@@ -34909,11 +35086,11 @@ else:
                 """
 **Önerilen kullanım:**
 
-1. Genel ağ için önce **Genel_Gephi_Kaynak_Cerceve_V134.gexf** dosyasını açın.
+1. Genel ağ için önce **Genel_Gephi_Kaynak_Cerceve_V135.gexf** dosyasını açın.
 2. **Appearance → Nodes → Partition → ColorGroup** ile kaynak ve çerçeve gruplarını renklendirin.
 3. **Ranking → Degree / Weighted Degree** ile merkezî düğümleri büyütün.
 4. **Layout → ForceAtlas 2** çalıştırın; çok sıkışırsa LinLog mode ve Prevent Overlap açık kalabilir.
-5. Sosyal medya tepkilerini daha net görmek için **Genel_Gephi_Soylem_Cerceve_V134.gexf** dosyasını açın.
+5. Sosyal medya tepkilerini daha net görmek için **Genel_Gephi_Soylem_Cerceve_V135.gexf** dosyasını açın.
 6. Data Laboratory’de `SocialSubDiscourse`, `ActorOrAccount`, `ContentType`, `SourceRole`, `NodeExplanation` ve `AnalystEdgeNote` kolonlarını inceleyin.
 
 **Analitik okuma:**  
