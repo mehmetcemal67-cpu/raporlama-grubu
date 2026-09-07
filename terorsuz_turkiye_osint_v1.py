@@ -32654,6 +32654,240 @@ _v127_gephi_analysis_note_docx = _v132_gephi_analysis_note_docx
 # ============================================================
 
 
+
+
+# ============================================================
+# V133 — GENEL GEPHI'Yİ ANALİZ SEPETİ GEPHI MANTIĞINA ÇEVİRME
+#
+# V132 kararlı sürüm korunur.
+# Bu sürüm, paneldeki Genel Gephi sekmesini de Analiz Sepeti Gephi gibi
+# çalıştırır:
+# - Son 24 saatteki / mevcut taramadaki kayıtlar üzerinden Kaynak ↔ Çerçeve
+#   ve Söylem Çevresi ↔ Çerçeve ağlarını birlikte üretir.
+# - Kaynak ailesi düzeltmesi, sosyal medya alt-söylemi, aktör/hesap, içerik
+#   türü, düğüm açıklaması ve AnalystEdgeNote kolonları genel Gephi için de
+#   zorunlu hale gelir.
+# - Genel Gephi Word Analiz Notu ve Düğüm Açıklamaları CSV çıktısı üretir.
+# - İsteğe bağlı dengeli temsil modu vardır; ancak varsayılan kapsam son 24
+#   saatteki tüm içeriklerdir.
+# ============================================================
+
+V133_GENERAL_GEPHI_LABEL = 'V133'
+
+V133_GENERAL_BALANCE_LIMITS = {
+    'Yerli Basın': 80,
+    'Sosyal Medya': 70,
+    'Yabancı Basın': 60,
+    'PKK/KCK Açık Kaynak': 55,
+    'Kürt Bölgesel Medyası': 55,
+    'Think Tank / Analiz': 35,
+    'Diğer': 25,
+}
+
+V133_FAMILY_ORDER = [
+    'PKK/KCK Açık Kaynak',
+    'Kürt Bölgesel Medyası',
+    'Yabancı Basın',
+    'Sosyal Medya',
+    'Yerli Basın',
+    'Think Tank / Analiz',
+    'Diğer'
+]
+
+def _v133_safe_df(obj):
+    try:
+        return obj.copy() if isinstance(obj, pd.DataFrame) else pd.DataFrame(obj)
+    except Exception:
+        return pd.DataFrame()
+
+def _v133_row_key(row):
+    vals=[]
+    for c in ['URL','Gerçek Bağlantı','Başlık','İçerik_Özeti','Kaynak']:
+        vals.append(str(row.get(c,'') or '').strip())
+    key='|'.join(vals[:2]) or '|'.join(vals)
+    return key
+
+def _v133_family(row):
+    try:
+        return _v132_source_family(row)
+    except Exception:
+        try:
+            return _v127_source_family(row)
+        except Exception:
+            try:
+                return _v23_source_family(row)
+            except Exception:
+                return str(row.get('Kaynak Ailesi','') or row.get('SourceFamily','') or 'Diğer')
+
+def _v133_record_score(row):
+    text=norm(' '.join(str(row.get(c,'')) for c in ['Başlık','İçerik_Özeti','Özet','Kaynak','URL']))
+    score=0
+    for term in [
+        'öcalan','ocalan','imralı','imrali','pkk','kck','dem parti','hatimoğulları','hatimogullari',
+        'mazlum abdi','mazloum abdi','sdf','sdg','ypg','silahsızlanma','silah bırakma','fesih',
+        'barış','baris','af','kamu vicdanı','hukuki güvence','meclis','mhp','bahçeli','bahceli',
+        'darka mazi','rudaw','shafaq','kurdpress','suriye','syria','kandil'
+    ]:
+        if term in text:
+            score += 2
+    try:
+        score += int(row.get('Önem_Skoru',0) or 0)
+    except Exception:
+        pass
+    try:
+        score += int(row.get('Risk_Skoru',0) or 0)
+    except Exception:
+        pass
+    fam=_v133_family(row)
+    if fam in {'PKK/KCK Açık Kaynak','Kürt Bölgesel Medyası'}:
+        score += 8
+    elif fam=='Yabancı Basın':
+        score += 5
+    elif fam=='Sosyal Medya':
+        score += 3
+    return score
+
+def _v133_filter_scope(df, scope_label):
+    x=_v133_safe_df(df)
+    if x.empty:
+        return x
+
+    # Drop exact duplicates before graph generation.
+    try:
+        x['_v133_key']=x.apply(lambda r:_v133_row_key(r.to_dict()), axis=1)
+        x=x.drop_duplicates('_v133_key').drop(columns=['_v133_key'], errors='ignore').reset_index(drop=True)
+    except Exception:
+        pass
+
+    if 'Son 24 saat' not in str(scope_label):
+        return x
+
+    dt_col='Tarih_dt' if 'Tarih_dt' in x.columns else ('Tarih' if 'Tarih' in x.columns else None)
+    if not dt_col:
+        return x
+
+    try:
+        dt=pd.to_datetime(x[dt_col], utc=True, errors='coerce')
+        now=pd.Timestamp.now(tz='UTC')
+        # If data is not aligned with server clock, use the newest record as anchor.
+        newest=dt.max()
+        anchor=now
+        if pd.notna(newest) and abs((newest-now).total_seconds()) > 72*3600:
+            anchor=newest
+        mask=dt >= (anchor - pd.Timedelta(hours=24))
+        y=x[mask.fillna(False)].reset_index(drop=True)
+        return y if not y.empty else x
+    except Exception:
+        return x
+
+def _v133_balance_df(df):
+    x=_v133_safe_df(df)
+    if x.empty:
+        return x
+    try:
+        x['_v133_family']=x.apply(lambda r:_v133_family(r.to_dict()), axis=1)
+        x['_v133_score']=x.apply(lambda r:_v133_record_score(r.to_dict()), axis=1)
+        parts=[]
+        for fam in V133_FAMILY_ORDER:
+            sub=x[x['_v133_family'].astype(str).eq(fam)].sort_values('_v133_score', ascending=False)
+            limit=V133_GENERAL_BALANCE_LIMITS.get(fam, 25)
+            if not sub.empty:
+                parts.append(sub.head(limit))
+        # Keep any unknown family with a small cap.
+        known=set(V133_FAMILY_ORDER)
+        other=x[~x['_v133_family'].astype(str).isin(known)].sort_values('_v133_score', ascending=False).head(20)
+        if not other.empty:
+            parts.append(other)
+        if parts:
+            out=pd.concat(parts, ignore_index=True).drop(columns=['_v133_family','_v133_score'], errors='ignore')
+            return out.reset_index(drop=True)
+    except Exception:
+        pass
+    return x
+
+def _v133_unpack_network(result, mode='source'):
+    if isinstance(result, tuple):
+        if len(result)>=3:
+            return result[0], result[1], result[2]
+        if len(result)==2:
+            n,e=result
+            try:
+                s=_v131_summary_from_edges(e, 'discourse' if mode=='discourse' else 'source')
+            except Exception:
+                s=pd.DataFrame()
+            return n,e,s
+    return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+def _v133_general_gephi_build(df, scope_label='Son 24 saat — tüm içerikler', min_weight=1, balanced=False):
+    raw=_v133_filter_scope(df, scope_label)
+    used=_v133_balance_df(raw) if balanced else raw
+
+    # Ensure V132 enrich and frame isolation are active.
+    sn,se,ss=_v133_unpack_network(
+        _v23_gephi_network(used, network_type='source', min_weight=min_weight),
+        'source'
+    )
+    dn,de,ds=_v133_unpack_network(
+        _v30_event_network(used, min_weight=min_weight),
+        'discourse'
+    )
+
+    try:
+        node_comments=_v127_node_commentary_table(sn,se,dn,de)
+    except Exception:
+        node_comments=pd.DataFrame()
+        try:
+            src_nodes=_v133_safe_df(sn)
+            if not src_nodes.empty:
+                node_comments=src_nodes[[c for c in ['Id','Label','NodeType','SourceFamily','SourceRole','SocialSubDiscourse','ActorOrAccount','ContentType','Frame','NodeExplanation'] if c in src_nodes.columns]].copy()
+        except Exception:
+            pass
+
+    try:
+        analysis_docx=_v127_gephi_analysis_note_docx(sn,se,dn,de,used)
+    except Exception:
+        try:
+            analysis_docx=_v132_gephi_analysis_note_docx(sn,se,dn,de,used)
+        except Exception:
+            try:
+                analysis_docx=_v128_gephi_analysis_docx(sn,se)
+            except Exception:
+                analysis_docx=b''
+
+    source_gexf=b''
+    discourse_gexf=b''
+    try:
+        if sn is not None and se is not None and not sn.empty and not se.empty:
+            source_gexf=_v23_gephi_gexf(sn,se,'Terörsüz Türkiye — Genel Kaynak-Çerçeve Ağı / V133')
+    except Exception:
+        source_gexf=b''
+    try:
+        if dn is not None and de is not None and not dn.empty and not de.empty:
+            discourse_gexf=_v30_event_gexf(dn,de,'Terörsüz Türkiye — Genel Söylem Çevresi-Çerçeve Ağı / V133')
+    except Exception:
+        discourse_gexf=b''
+
+    return {
+        'scope': scope_label,
+        'balanced': bool(balanced),
+        'raw_count': int(len(raw)),
+        'used_count': int(len(used)),
+        'source_nodes': _v133_safe_df(sn),
+        'source_edges': _v133_safe_df(se),
+        'source_summary': _v133_safe_df(ss),
+        'source_gexf': source_gexf,
+        'discourse_nodes': _v133_safe_df(dn),
+        'discourse_edges': _v133_safe_df(de),
+        'discourse_summary': _v133_safe_df(ds),
+        'discourse_gexf': discourse_gexf,
+        'node_comments': _v133_safe_df(node_comments),
+        'analysis_docx': analysis_docx,
+    }
+
+# ============================================================
+# /V133
+# ============================================================
+
 # V33 — SADE GÜNLÜK ANA PANEL
 #
 # TARMA ÖNCESİ:
@@ -33520,192 +33754,225 @@ else:
         # ====================================================
     # ---------------- GEPHI AĞ ANALİZİ ----------------
 
-    st.subheader('🕸️ Gephi Ağ Analizi — Kaynak / Çerçeve Ağı')
+    st.subheader('🕸️ Genel Gephi Ağ Analizi — Analiz Sepeti Mantığıyla')
     st.caption(
-        'Bu bölüm tarama sırasında çalışmaz ve tarama hızını etkilemez. '
-        'Yalnız düğmeye bastığınızda mevcut V23 tarama verisinden güçlendirilmiş Gephi dosyaları üretir.'
+        'Bu bölüm artık Analiz Sepeti Gephi ile aynı mantıkta çalışır. '
+        'Son 24 saatteki veya mevcut taramadaki içeriklerden iki ayrı ağ üretir: '
+        'Kaynak ↔ Çerçeve ve Söylem Çevresi ↔ Çerçeve. Kaynak ailesi düzeltmesi, '
+        'sosyal medya alt-söylemi, aktör/hesap, içerik türü, düğüm açıklaması ve '
+        'Gephi Analiz Notu genel Gephi için de uygulanır.'
     )
 
-    _gephi_type=st.radio(
-        'Ağ türü',
-        [
-            'Kaynak Ailesi ↔ Çerçeve (önerilen)',
-            'Tekil Kaynak ↔ Çerçeve (detaylı)'
-        ],
-        horizontal=True,
-        key='v23_gephi_type'
-    )
+    gopt1,gopt2=st.columns([2,1])
+    with gopt1:
+        _v133_scope=st.selectbox(
+            'Genel Gephi veri kapsamı',
+            [
+                'Son 24 saat — tüm içerikler',
+                'Mevcut tarama — tüm içerikler',
+                'Son 24 saat — dengeli temsil',
+                'Mevcut tarama — dengeli temsil'
+            ],
+            index=0,
+            key='v133_general_gephi_scope'
+        )
+    with gopt2:
+        _v133_min=st.slider(
+            'Minimum kenar ağırlığı',
+            min_value=1,
+            max_value=10,
+            value=1,
+            step=1,
+            key='v133_general_gephi_min'
+        )
 
-    _gephi_min=st.slider(
-        'Minimum kenar ağırlığı (aynı bağlantıyı destekleyen en az içerik sayısı)',
-        min_value=1,
-        max_value=10,
-        value=1,
-        step=1,
-        key='v23_gephi_min'
+    _v133_balanced='dengeli temsil' in str(_v133_scope)
+    st.caption(
+        'Tüm içerikler modu, seçilen zaman aralığındaki bütün kayıtları ağ hesabına katar. '
+        'Dengeli temsil modu ise yerli basın hacminin ağı boğmaması için her kaynak ailesinden '
+        'güçlü temsilciler seçer.'
     )
 
     if st.button(
-        '🧬 Gephi ağını hazırla',
+        '🧬 Genel Gephi ağını Analiz Sepeti mantığıyla hazırla',
         use_container_width=True,
-        key='v23_prepare_gephi'
+        key='v133_prepare_general_gephi'
     ):
         if not st.session_state.get('rows'):
             st.warning('Önce tarama yapılmalıdır.')
         else:
-            with st.spinner('Kaynak–çerçeve ağı hazırlanıyor...'):
-                _gdf=pd.DataFrame(st.session_state.rows)
-
-                if not _gdf.empty and 'Tarih_dt' in _gdf.columns:
-                    _gdf['Tarih_dt']=pd.to_datetime(
-                        _gdf['Tarih_dt'],
-                        utc=True,
-                        errors='coerce'
+            with st.spinner('Genel Gephi ağı Analiz Sepeti mantığıyla hazırlanıyor...'):
+                try:
+                    _gdf=pd.DataFrame(st.session_state.rows)
+                    if not _gdf.empty and 'Tarih_dt' in _gdf.columns:
+                        _gdf['Tarih_dt']=pd.to_datetime(_gdf['Tarih_dt'],utc=True,errors='coerce')
+                    _gpkg=_v133_general_gephi_build(
+                        _gdf,
+                        scope_label=_v133_scope,
+                        min_weight=_v133_min,
+                        balanced=_v133_balanced
                     )
-
-                _mode=(
-                    'family'
-                    if _gephi_type.startswith('Kaynak Ailesi')
-                    else 'source'
-                )
-
-                _gnodes,_gedges,_gsummary=_v23_gephi_network(
-                    _gdf,
-                    network_type=_mode,
-                    min_weight=_gephi_min
-                )
-
-                if _gnodes.empty or _gedges.empty:
-                    st.session_state.pop('_v23_gephi_package',None)
-
-                    st.warning(
-                        'Bu eşikte ağ oluşturacak yeterli kaynak–çerçeve bağlantısı bulunamadı.'
-                    )
-                else:
-                    _gexf=_v23_gephi_gexf(
-                        _gnodes,
-                        _gedges,
-                        description=(
-                            'Terörsüz Türkiye — '
-                            + (
-                                'Kaynak Ailesi ↔ Çerçeve'
-                                if _mode=='family'
-                                else 'Tekil Kaynak ↔ Çerçeve'
-                            )
+                    if _gpkg['source_nodes'].empty and _gpkg['discourse_nodes'].empty:
+                        st.session_state.pop('_v133_general_gephi_package',None)
+                        st.warning('Bu eşikte ağ oluşturacak yeterli bağlantı bulunamadı.')
+                    else:
+                        st.session_state['_v133_general_gephi_package']={
+                            'scope':_gpkg['scope'],
+                            'balanced':_gpkg['balanced'],
+                            'raw_count':_gpkg['raw_count'],
+                            'used_count':_gpkg['used_count'],
+                            'source_nodes':_gpkg['source_nodes'].to_dict('records'),
+                            'source_edges':_gpkg['source_edges'].to_dict('records'),
+                            'source_summary':_gpkg['source_summary'].to_dict('records'),
+                            'source_gexf':_gpkg['source_gexf'],
+                            'discourse_nodes':_gpkg['discourse_nodes'].to_dict('records'),
+                            'discourse_edges':_gpkg['discourse_edges'].to_dict('records'),
+                            'discourse_summary':_gpkg['discourse_summary'].to_dict('records'),
+                            'discourse_gexf':_gpkg['discourse_gexf'],
+                            'node_comments':_gpkg['node_comments'].to_dict('records'),
+                            'analysis_docx':_gpkg['analysis_docx'],
+                        }
+                        st.success(
+                            f"✅ Genel Gephi hazırlandı: {_gpkg['raw_count']} kayıt incelendi, "
+                            f"{_gpkg['used_count']} kayıt ağ hesabında kullanıldı; "
+                            f"Kaynak ağı {_gpkg['source_nodes'].shape[0]} düğüm / {_gpkg['source_edges'].shape[0]} kenar, "
+                            f"Söylem ağı {_gpkg['discourse_nodes'].shape[0]} düğüm / {_gpkg['discourse_edges'].shape[0]} kenar."
                         )
-                    )
+                except Exception as _e:
+                    st.error(f'Genel Gephi ağı oluşturulamadı: {_e}')
 
-                    st.session_state['_v23_gephi_package']={
-                        'type':_mode,
-                        'nodes_csv':_gnodes.to_csv(
-                            index=False
-                        ).encode('utf-8-sig'),
-                        'edges_csv':_gedges.to_csv(
-                            index=False
-                        ).encode('utf-8-sig'),
-                        'gexf':_gexf,
-                        'summary':_gsummary.to_dict('records'),
-                        'interpretation':_v23_gephi_interpretation(
-                            _gsummary
-                        ),
-                        'node_count':len(_gnodes),
-                        'edge_count':len(_gedges)
-                    }
-
-                    st.success(
-                        f'✅ Gephi ağı hazırlandı: '
-                        f'{len(_gnodes)} düğüm / {len(_gedges)} kenar.'
-                    )
-
-    _gpkg=st.session_state.get('_v23_gephi_package')
+    _gpkg=st.session_state.get('_v133_general_gephi_package')
 
     if _gpkg:
-        _sum_df=pd.DataFrame(
-            _gpkg.get('summary') or []
+        _sn=pd.DataFrame(_gpkg.get('source_nodes') or [])
+        _se=pd.DataFrame(_gpkg.get('source_edges') or [])
+        _dn=pd.DataFrame(_gpkg.get('discourse_nodes') or [])
+        _de=pd.DataFrame(_gpkg.get('discourse_edges') or [])
+        _ss=pd.DataFrame(_gpkg.get('source_summary') or [])
+        _ds=pd.DataFrame(_gpkg.get('discourse_summary') or [])
+        _comments=pd.DataFrame(_gpkg.get('node_comments') or [])
+
+        c1,c2,c3,c4=st.columns(4)
+        c1.metric('İncelenen Kayıt',int(_gpkg.get('raw_count',0)))
+        c2.metric('Ağda Kullanılan',int(_gpkg.get('used_count',0)))
+        c3.metric('Kaynak Ağı',f"{len(_sn)} / {len(_se)}")
+        c4.metric('Söylem Ağı',f"{len(_dn)} / {len(_de)}")
+
+        st.info(
+            'Genel Gephi artık aile toplamı mantığıyla tek bir Yerli Basın düğümüne sıkışmaz. '
+            'Kaynak-çerçeve ağı tekil kaynakları; söylem çevresi ağı ise sosyal alt-söylemleri, '
+            'Kürt bölgesel/PKK-KCK/yabancı basın/yerli basın ayrımlarını gösterir.'
         )
 
-        c1,c2=st.columns(2)
-        c1.metric(
-            'Düğüm',
-            int(_gpkg.get('node_count',0))
-        )
-        c2.metric(
-            'Kenar',
-            int(_gpkg.get('edge_count',0))
-        )
+        tab1,tab2,tab3=st.tabs(['Söylem Özeti','Kaynak Özeti','Düğüm Açıklamaları'])
+        with tab1:
+            if not _ds.empty:
+                st.dataframe(_ds,hide_index=True,use_container_width=True,height=min(520,120+32*min(12,len(_ds))))
+            else:
+                st.info('Söylem çevresi özeti üretilemedi.')
+        with tab2:
+            if not _ss.empty:
+                st.dataframe(_ss,hide_index=True,use_container_width=True,height=min(520,120+32*min(12,len(_ss))))
+            else:
+                st.info('Kaynak özeti üretilemedi.')
+        with tab3:
+            if not _comments.empty:
+                st.dataframe(_comments,hide_index=True,use_container_width=True,height=min(520,120+32*min(12,len(_comments))))
+            else:
+                st.info('Düğüm açıklamaları üretilemedi.')
 
-        if _gpkg.get('interpretation'):
-            st.info(
-                _gpkg['interpretation']
-            )
-
-        if not _sum_df.empty:
-            st.markdown(
-                '**Kaynak ailelerinin baskın çerçeveleri**'
-            )
-
-            st.dataframe(
-                _sum_df,
-                hide_index=True,
-                use_container_width=True
-            )
-
-        d1,d2,d3=st.columns(3)
-
-        with d1:
-            st.download_button(
-                '⬇️ Gephi GEXF',
-                data=_gpkg['gexf'],
-                file_name='terorsuz_turkiye_kaynak_cerceve_agi.gexf',
-                mime='application/xml',
+        d1,d2,d3,d4=st.columns(4)
+        if _gpkg.get('source_gexf'):
+            d1.download_button(
+                '⬇️ Kaynak-Çerçeve GEXF',
+                _gpkg['source_gexf'],
+                'Genel_Gephi_Kaynak_Cerceve_V133.gexf',
+                'application/xml',
                 use_container_width=True,
-                key='v23_gexf_download'
+                key='v133_general_source_gexf'
             )
-
-        with d2:
-            st.download_button(
-                '⬇️ Nodes CSV',
-                data=_gpkg['nodes_csv'],
-                file_name='terorsuz_turkiye_gephi_nodes.csv',
-                mime='text/csv',
+        if _gpkg.get('discourse_gexf'):
+            d2.download_button(
+                '⬇️ Söylem-Çerçeve GEXF',
+                _gpkg['discourse_gexf'],
+                'Genel_Gephi_Soylem_Cerceve_V133.gexf',
+                'application/xml',
                 use_container_width=True,
-                key='v23_nodes_download'
+                key='v133_general_discourse_gexf'
             )
-
-        with d3:
-            st.download_button(
-                '⬇️ Edges CSV',
-                data=_gpkg['edges_csv'],
-                file_name='terorsuz_turkiye_gephi_edges.csv',
-                mime='text/csv',
+        if not _se.empty:
+            d3.download_button(
+                '⬇️ Source Edges CSV',
+                _se.to_csv(index=False).encode('utf-8-sig'),
+                'Genel_Gephi_Source_Edges_V133.csv',
+                'text/csv',
                 use_container_width=True,
-                key='v23_edges_download'
+                key='v133_general_source_edges_csv'
+            )
+        if not _de.empty:
+            d4.download_button(
+                '⬇️ Discourse Edges CSV',
+                _de.to_csv(index=False).encode('utf-8-sig'),
+                'Genel_Gephi_Discourse_Edges_V133.csv',
+                'text/csv',
+                use_container_width=True,
+                key='v133_general_discourse_edges_csv'
             )
 
-        with st.expander(
-            '📐 Gephi’de nasıl görselleştirilecek?',
-            False
-        ):
+        n1,n2,n3,n4=st.columns(4)
+        if not _sn.empty:
+            n1.download_button(
+                '⬇️ Source Nodes CSV',
+                _sn.to_csv(index=False).encode('utf-8-sig'),
+                'Genel_Gephi_Source_Nodes_V133.csv',
+                'text/csv',
+                use_container_width=True,
+                key='v133_general_source_nodes_csv'
+            )
+        if not _dn.empty:
+            n2.download_button(
+                '⬇️ Discourse Nodes CSV',
+                _dn.to_csv(index=False).encode('utf-8-sig'),
+                'Genel_Gephi_Discourse_Nodes_V133.csv',
+                'text/csv',
+                use_container_width=True,
+                key='v133_general_discourse_nodes_csv'
+            )
+        if _gpkg.get('analysis_docx'):
+            n3.download_button(
+                '⬇️ Genel Gephi Analiz Notu',
+                _gpkg['analysis_docx'],
+                'Genel_Gephi_Analiz_Notu_V133.docx',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                use_container_width=True,
+                key='v133_general_analysis_docx'
+            )
+        if not _comments.empty:
+            n4.download_button(
+                '⬇️ Düğüm Açıklamaları CSV',
+                _comments.to_csv(index=False).encode('utf-8-sig'),
+                'Genel_Gephi_Dugum_Aciklamalari_V133.csv',
+                'text/csv',
+                use_container_width=True,
+                key='v133_general_node_comments_csv'
+            )
+
+        with st.expander('📐 Gephi’de nasıl görselleştirilecek?',False):
             st.markdown(
                 """
-    **Önerilen kullanım:**
+**Önerilen kullanım:**
 
-    1. Önce **Kaynak Ailesi ↔ Çerçeve** ağını GEXF olarak indirin ve Gephi'de açın.
-    2. **Layout → ForceAtlas 2** çalıştırın.
-    3. **Appearance → Nodes → Partition → ColorGroup** ile kaynak ailelerini ve çerçeveleri ayırın.
-    4. **Appearance → Nodes → Ranking → Degree / Weighted Degree** ile merkezî düğümleri büyütün.
-    5. **Statistics → Modularity** çalıştırarak doğal kümelenmeleri görün.
-    6. Kenar kalınlığında **Weight** kullanın. Kalın kenar, ilgili kaynak ailesinin o çerçeveyi daha yoğun kullandığını gösterir.
-    7. Daha ayrıntılı analiz için **Tekil Kaynak ↔ Çerçeve** ağını açın; örneğin Kurdistan24, Serbestiyet, Reuters veya belirli think tanklerin hangi çerçevelere yaklaştığını inceleyin.
+1. Genel ağ için önce **Genel_Gephi_Kaynak_Cerceve_V133.gexf** dosyasını açın.
+2. **Appearance → Nodes → Partition → ColorGroup** ile kaynak ve çerçeve gruplarını renklendirin.
+3. **Ranking → Degree / Weighted Degree** ile merkezî düğümleri büyütün.
+4. **Layout → ForceAtlas 2** çalıştırın; çok sıkışırsa LinLog mode ve Prevent Overlap açık kalabilir.
+5. Sosyal medya tepkilerini daha net görmek için **Genel_Gephi_Soylem_Cerceve_V133.gexf** dosyasını açın.
+6. Data Laboratory’de `SocialSubDiscourse`, `ActorOrAccount`, `ContentType`, `SourceRole`, `NodeExplanation` ve `AnalystEdgeNote` kolonlarını inceleyin.
 
-    **Analitik okuma:**  
-    Kürt Bölgesel Medyası düğümünün “Öcalan'ın Statüsü / Özgürlüğü” ve “Hukuki Güvence / Meclis” düğümlerine kalın kenarlarla bağlanması; buna karşılık Yerli Basın düğümünün “Silahsızlanma / Fesih”, “Taahhüt / İlerleme” veya “Siyasi Süreç / Diyalog” düğümlerine daha güçlü bağlanması, farklı medya ekosistemlerinin aynı süreci farklı çerçeveler üzerinden ele aldığını görsel olarak gösterecektir.
-
-    Bu ağ **nedensellik ölçmez**; açık kaynak içeriklerdeki ilişki, yoğunluk ve çerçeve yakınlığını gösterir.
-    """
+**Analitik okuma:**  
+Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bir özet değildir. Son 24 saatteki haberlerin hangi kaynak ailesi, hangi aktör/hesap, hangi içerik türü ve hangi alt-söylem üzerinden çerçeveye bağlandığını gösterir.
+"""
             )
-
-    st.markdown('---')
 
     st.markdown('---')
 
