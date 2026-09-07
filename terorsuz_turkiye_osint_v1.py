@@ -34317,409 +34317,738 @@ _v3_remove_analysis=_v136_daily_remove
 
 
 # ============================================================
-# V137 — KÜRT / HAREKET MEDYASI KAYNAK GENİŞLETME + ERİŞİM YEDEĞİ
+# V137 — KÜRT MEDYASI / PKK-KCK AÇIK KAYNAK ZENGİNLEŞTİRME
+#        + GÜNCEL/ÇALIŞAN LİNK NORMALİZASYONU
+#        + İKİ ANALİZ SEPETİ ARASINDA ÇİFT YÖNLÜ AKTARIM
 #
-# V136 korunur. Bu sürüm yalnız:
-# 1) Kürt bölgesel medya ve PKK/KCK açık kaynak havuzunu genişletir.
-# 2) Kullanıcının tarayıcısında ERR_CONNECTION_RESET veren kaynaklar için
-#    "Alternatif Aç" ve "Başlığı Ara" sütunları ekler.
-# 3) Orijinal URL hiçbir zaman silinmez/değiştirilmez.
+# V136 panel akışı ve Gephi motorları korunur.
 # ============================================================
 
-from urllib.parse import quote_plus as _v137_quote_plus
+# ------------------------------------------------------------
+# 1) KAYNAK HAVUZUNU ZENGİNLEŞTİR
+# ------------------------------------------------------------
 
 V137_KURDISH_REGIONAL_EXTRA = [
+    # Kullanıcının istediği / doğrulanmış Kürt odaklı kaynaklar
     'rupelanu.org',
+    'rupelanu.com',
     'nerinaazad2.com',
-    'rojnews.news',
-    'rojnews.video',
-    'npasyria.com',
-    'kurdistanchronicle.com',
-    'kurdpress.com',
-    'kurdpress.net',
+
+    # Ek Kürt odaklı / bölgesel haber ve yorum kaynakları
+    'krdnews.org',
+    'berwarnews.com',
+    'kurd-online.com',
+    'kurdishglobe.krd',
+    'kurdistantribune.com',
 ]
 
-V137_MOVEMENT_EXTRA = [
-    'sterktv.org',
-    'sterktv.eu',
-    'medyahabertv.digital',
-    'medyahabertv.com',
-    'hawarnews.com',
-    'hawarnews.net',
-    'jinnews.net',
-    'jinnews.org',
-    'jinnews21.com',
-    'firatnews.com',
+# Ana ailesi Yerli Basın olarak kalır; Kürt meselesi şemsiye taramasına eklenir.
+V137_KURDISH_UMBRELLA_EXTRA = [
+    'gazeteduvar.com.tr',
+]
+
+# Güncel, aktif alan adları. Eski alan adları sınıflandırma amacıyla tutulabilir,
+# fakat yeni hedefli taramalar bu güncel adresleri kullanır.
+V137_MOVEMENT_CURRENT = [
+    # ANF güncel alan adları
+    'anf-news.com',
     'english.anf-news.com',
     'deutsch.anf-news.com',
     'espanol.anf-news.com',
-    'anfenglish.com',
-    'anf-news.com',
-    'anfturkce.com',
-    'ozgurpolitika.com',
-    'medyanews.net',
+    'kurmanci.anf-news.com',
+    'sorani.anf-news.com',
+    'hawrami.anf-news.com',
+    'kirmancki.anf-news.com',
+    'arabic.anf-news.com',
+    'farsi.anf-news.com',
+    'russian.anf-news.com',
+
+    # ANHA / kadın haber ajansı / televizyon ve hareket çevresi açık kaynakları
+    'hawarnews.com',
+    'jinnews.net',
     'ronahi.tv',
+    'sterktv.org',
+    'medyahabertv.digital',
+
+    # Kararlı tabandaki diğer aktif kaynaklar
+    'medyanews.net',
+    'ozgurpolitika.com',
+    'rojnews.news',
+    'rojnews.video',
+    'nuceciwan101.com',
+    'ajansawelat1.com',
+    'mezopotamyaajansi35.com',
+    'yeniyasamgazetesi9.com',
 ]
 
-# Kaynak havuzlarını genişlet.
-try:
-    TT_KURDISH_REGIONAL_V9 = list(dict.fromkeys(TT_KURDISH_REGIONAL_V9 + V137_KURDISH_REGIONAL_EXTRA))
-except Exception:
-    pass
-try:
-    TT_MOVEMENT_V9 = list(dict.fromkeys(TT_MOVEMENT_V9 + V137_MOVEMENT_EXTRA))
-except Exception:
-    pass
-try:
-    TT_MOVEMENT_DIRECT_V9 = list(dict.fromkeys(TT_MOVEMENT_DIRECT_V9 + [
-        'sterktv.org','sterktv.eu','firatnews.com',
-        'english.anf-news.com','deutsch.anf-news.com','espanol.anf-news.com'
-    ]))
-except Exception:
-    pass
-try:
-    TT_MOVEMENT_OSINT = list(dict.fromkeys(TT_MOVEMENT_OSINT + V137_MOVEMENT_EXTRA))
-except Exception:
-    pass
-try:
-    TT_KURDISH_MEDIA = list(dict.fromkeys(
-        TT_KURDISH_MEDIA + V137_KURDISH_REGIONAL_EXTRA + V137_MOVEMENT_EXTRA
-    ))
-except Exception:
-    pass
-try:
-    V113_KURDISH_UMBRELLA = list(dict.fromkeys(
-        V113_KURDISH_UMBRELLA + V137_KURDISH_REGIONAL_EXTRA + V137_MOVEMENT_EXTRA
-    ))
-except Exception:
-    pass
-try:
-    V113_KURDISH_EXTRA_SCAN = list(dict.fromkeys(
-        V113_KURDISH_EXTRA_SCAN + V137_KURDISH_REGIONAL_EXTRA
-    ))
-except Exception:
-    pass
-try:
-    V113_MOVEMENT_EXTRA = list(dict.fromkeys(
-        V113_MOVEMENT_EXTRA + V137_MOVEMENT_EXTRA
-    ))
-except Exception:
-    pass
+V137_MOVEMENT_DIRECT_CURRENT = [
+    'anf-news.com',
+    'english.anf-news.com',
+    'deutsch.anf-news.com',
+    'espanol.anf-news.com',
+    'kurmanci.anf-news.com',
+    'sorani.anf-news.com',
+    'hawrami.anf-news.com',
+    'kirmancki.anf-news.com',
+    'arabic.anf-news.com',
+    'farsi.anf-news.com',
+    'russian.anf-news.com',
+    'sterktv.org',
+]
 
-# Gephi / analiz aile sözlüklerine de aynı kaynakları taşı.
+TT_KURDISH_REGIONAL_V9 = list(dict.fromkeys(
+    list(TT_KURDISH_REGIONAL_V9) + V137_KURDISH_REGIONAL_EXTRA
+))
+
+V113_KURDISH_EXTRA_SCAN = list(dict.fromkeys(
+    list(V113_KURDISH_EXTRA_SCAN) + V137_KURDISH_UMBRELLA_EXTRA
+))
+
+TT_MOVEMENT_V9 = list(dict.fromkeys(
+    list(TT_MOVEMENT_V9) + V137_MOVEMENT_CURRENT
+))
+TT_MOVEMENT_OSINT = list(dict.fromkeys(
+    list(TT_MOVEMENT_OSINT) + V137_MOVEMENT_CURRENT
+))
+TT_MOVEMENT_DIRECT_V9 = list(dict.fromkeys(
+    list(TT_MOVEMENT_DIRECT_V9) + V137_MOVEMENT_DIRECT_CURRENT
+))
+
+TT_KURDISH_MEDIA = list(dict.fromkeys(
+    list(TT_KURDISH_MEDIA)
+    + V137_KURDISH_REGIONAL_EXTRA
+    + V137_KURDISH_UMBRELLA_EXTRA
+    + V137_MOVEMENT_CURRENT
+))
+
+V113_KURDISH_UMBRELLA = list(dict.fromkeys(
+    list(TT_KURDISH_REGIONAL_V9)
+    + list(TT_MOVEMENT_V9)
+    + list(V113_KURDISH_EXTRA_SCAN)
+))
+
+V113_KURDISH_SOURCE_LABELS.update({
+    # Kürt bölgesel / Kürt odaklı
+    'rupelanu.org':'Rûpela Nû — Kürt/Kürdistan odaklı haber ve yorum',
+    'rupelanu.com':'Rûpela Nû Kurdî — Kürtçe yayın',
+    'nerinaazad2.com':'Nerina Azad — Kürt/Kürdistan gündemi',
+    'krdnews.org':'KRDNews — Kürdistan ve Kürt siyaseti odaklı haber',
+    'berwarnews.com':'Berwar News — Kürtçe bağımsız haber/analiz platformu',
+    'kurd-online.com':'Kurd Online — Kürt gündemi / Suriye-Kürt sahası',
+    'kurdishglobe.krd':'Kurdish Globe — Kürdistan Bölgesi / İngilizce',
+    'kurdistantribune.com':'Kurdistan Tribune — Kürt haber ve görüş platformu',
+    'gazeteduvar.com.tr':'Gazete Duvar — Türkiye merkezli / Kürt meselesi ve Kurdî içerik takibi',
+
+    # Güncel hareket çevresi / PKK-KCK söylemi açık kaynak alan adları
+    'anf-news.com':'ANF Türkçe — hareket çevresi açık kaynak',
+    'english.anf-news.com':'ANF English — hareket çevresi açık kaynak',
+    'deutsch.anf-news.com':'ANF Deutsch — hareket çevresi açık kaynak',
+    'espanol.anf-news.com':'ANF Español — hareket çevresi açık kaynak',
+    'kurmanci.anf-news.com':'ANF Kurmancî — hareket çevresi açık kaynak',
+    'sorani.anf-news.com':'ANF Soranî — hareket çevresi açık kaynak',
+    'hawrami.anf-news.com':'ANF Hewramî — hareket çevresi açık kaynak',
+    'kirmancki.anf-news.com':'ANF Kirmanckî — hareket çevresi açık kaynak',
+    'arabic.anf-news.com':'ANF Arabic — hareket çevresi açık kaynak',
+    'farsi.anf-news.com':'ANF Farsi — hareket çevresi açık kaynak',
+    'russian.anf-news.com':'ANF Russian — hareket çevresi açık kaynak',
+    'hawarnews.com':'ANHA / Hawar News — Rojava / Suriye Kürt alanı',
+    'jinnews.net':'JINNEWS — kadın/Kürt gündemi açık kaynak haber ajansı',
+    'ronahi.tv':'Ronahi TV — Rojava/Kürtçe televizyon açık kaynağı',
+    'sterktv.org':'Stêrk TV — Kürtçe televizyon / hareket çevresi açık kaynak',
+    'medyahabertv.digital':'Medya Haber TV — Kürtçe/Türkçe hareket çevresi açık kaynak',
+})
+
+
+# Gephi / rapor sınıflandırma sözlüklerini de yeni kaynaklarla genişlet.
 try:
     V128_KURDISH_REGIONAL_DOMAINS.update(V137_KURDISH_REGIONAL_EXTRA)
-    V128_MOVEMENT_DOMAINS.update(V137_MOVEMENT_EXTRA)
+except Exception:
+    pass
+try:
+    V128_MOVEMENT_DOMAINS.update(V137_MOVEMENT_CURRENT)
+except Exception:
+    pass
+try:
+    V121_KURDISH_DOMAINS.update(V137_KURDISH_REGIONAL_EXTRA)
+except Exception:
+    pass
+try:
+    V121_MOVEMENT_DOMAINS.update(V137_MOVEMENT_CURRENT)
+except Exception:
+    pass
+try:
+    V118_KURDISH_REPORT_DOMAINS.update(V137_KURDISH_REGIONAL_EXTRA)
 except Exception:
     pass
 try:
     V134_KURDISH_DOMAINS.update(V137_KURDISH_REGIONAL_EXTRA)
-    V134_MOVEMENT_DOMAINS.update(V137_MOVEMENT_EXTRA)
 except Exception:
     pass
 try:
-    V132_LABEL_FAMILY_MAP.update({
-        'rupelanu':'Kürt Bölgesel Medyası',
-        'nerina azad':'Kürt Bölgesel Medyası',
-        'nerinaazad':'Kürt Bölgesel Medyası',
-        'rojnews':'Kürt Bölgesel Medyası',
-        'sterk tv':'PKK/KCK Açık Kaynak',
-        'stêrk tv':'PKK/KCK Açık Kaynak',
-        'medya haber':'PKK/KCK Açık Kaynak',
-        'hawar news':'PKK/KCK Açık Kaynak',
-        'anha':'PKK/KCK Açık Kaynak',
-        'jinnews':'PKK/KCK Açık Kaynak',
-        'anf news':'PKK/KCK Açık Kaynak',
-        'firat haber ajansı':'PKK/KCK Açık Kaynak',
-        'fırat haber ajansı':'PKK/KCK Açık Kaynak',
-    })
+    V134_MOVEMENT_DOMAINS.update(V137_MOVEMENT_CURRENT)
 except Exception:
     pass
 
-# Kaynak etiketleri.
-try:
-    V113_KURDISH_SOURCE_LABELS.update({
-        'rupelanu.org':'Rûpela Nû — Kürt siyaseti / düşünce-yazı açık kaynağı',
-        'nerinaazad2.com':'Nerina Azad — Kürt gündemi / bölgesel açık kaynak',
-        'rojnews.news':'RojNews — Kürt gündemi / bölgesel açık kaynak',
-        'rojnews.video':'RojNews Video — Kürt gündemi / video açık kaynak',
-        'sterktv.org':'Stêrk TV — Kürtçe yayın / hareket çevresi açık kaynak',
-        'sterktv.eu':'Stêrk TV — alternatif alan adı',
-        'medyahabertv.digital':'Medya Haber TV — Kürtçe/Türkçe açık kaynak yayın',
-        'hawarnews.com':'ANHA / Hawar News — Kuzeydoğu Suriye / Kürt alanı',
-        'jinnews.org':'JINNEWS — kadın odaklı Kürtçe/Türkçe haber ajansı',
-        'jinnews21.com':'JINNEWS — alternatif alan adı',
-        'english.anf-news.com':'ANF News English — İngilizce açık kaynak',
-        'deutsch.anf-news.com':'ANF News Deutsch — Almanca açık kaynak',
-        'espanol.anf-news.com':'ANF News Español — İspanyolca açık kaynak',
-        'firatnews.com':'ANF / Fırat Haber Ajansı — Türkçe açık kaynak',
-        'npasyria.com':'North Press Agency — Kuzeydoğu Suriye saha haberciliği',
-    })
-except Exception:
-    pass
 
 # ------------------------------------------------------------
-# HEDEFLİ SORGULAR
+# 2) GÜNCEL / ÇALIŞAN ALAN ADLARINA LİNK NORMALİZASYONU
 # ------------------------------------------------------------
 
-try:
-    _V137_BASE_KURDISH_QUERIES = _v22_kurdish_queries
-except Exception:
-    _V137_BASE_KURDISH_QUERIES = None
+V137_URL_HOST_ALIASES = {
+    # ANF eski alan adları -> güncel anf-news.com yapısı
+    'anfenglish.com':'english.anf-news.com',
+    'anfenglishmobile.com':'english.anf-news.com',
+    'english.anf-news':'english.anf-news.com',
 
-def _v22_kurdish_queries():
-    q = list(_V137_BASE_KURDISH_QUERIES()) if _V137_BASE_KURDISH_QUERIES else []
+    'anfdeutsch.com':'deutsch.anf-news.com',
+    'deutsch.anf-news':'deutsch.anf-news.com',
 
-    extra_groups = [
-        ['rupelanu.org','nerinaazad2.com','rojnews.news','rojnews.video'],
-        ['npasyria.com','kurdistanchronicle.com','kurdpress.com','kurdpress.net'],
-    ]
-    for group in extra_groups:
-        sites='('+' OR '.join(f'site:{d}' for d in group)+')'
-        q.append(
-            f'(PKK OR KCK OR Ocalan OR Öcalan OR "Terörsüz Türkiye" OR '
-            f'"barış süreci" OR "çözüm süreci" OR SDF OR SDG OR YPG OR Kurdistan) {sites}'
-        )
+    'anfespanol.com':'espanol.anf-news.com',
+    'espanol.anf-news':'espanol.anf-news.com',
 
-    # Gazete Duvar'ın yalnız Kürt meselesi etiket/konu alanını hedefle.
-    q.append(
-        '(Kürt OR Kürtçe OR PKK OR Öcalan OR DEM Parti OR SDF OR YPG) '
-        'site:gazeteduvar.com.tr/etiket/kurt-medyasi'
-    )
-    return list(dict.fromkeys(q))
+    'anfturkce.com':'anf-news.com',
+    'anfarabic.com':'arabic.anf-news.com',
+    'anfrussian.com':'russian.anf-news.com',
+    'anfpersian.com':'farsi.anf-news.com',
+    'anfkurdi.com':'kurmanci.anf-news.com',
+    'anfsorani.com':'sorani.anf-news.com',
+    'anfkirmancki.com':'kirmancki.anf-news.com',
 
-try:
-    _V137_BASE_MOVEMENT_QUERIES = _v22_movement_queries
-except Exception:
-    _V137_BASE_MOVEMENT_QUERIES = None
+    # JINNEWS
+    'jinnews.org':'jinnews.net',
+    'jinnews21.com':'jinnews.net',
 
-def _v22_movement_queries():
-    q = list(_V137_BASE_MOVEMENT_QUERIES()) if _V137_BASE_MOVEMENT_QUERIES else []
+    # Yazım/alan adı değişimi
+    'rohani.tv':'ronahi.tv',
 
-    groups = [
-        ['sterktv.org','sterktv.eu','medyahabertv.digital','firatnews.com'],
-        ['hawarnews.com','jinnews.org','jinnews21.com'],
-        ['english.anf-news.com','deutsch.anf-news.com','espanol.anf-news.com'],
-    ]
-    for group in groups:
-        sites='('+' OR '.join(f'site:{d}' for d in group)+')'
-        q.append(
-            f'(PKK OR KCK OR Ocalan OR Öcalan OR "Peace and Democratic Society" '
-            f'OR "Barış ve Demokratik Toplum" OR disarmament OR silahsızlanma '
-            f'OR SDF OR SDG OR YPG) {sites}'
-        )
+    # Medya Haber'in güncel adresi
+    'medyahabertv.com':'medyahabertv.digital',
 
-    # Özgür Gündem aktif güncel domain olarak değil, söylem/atıf anahtar kelimesi olarak aranır.
-    q.append(
-        '("Özgür Gündem" OR "Yeni Özgür Politika") '
-        '(PKK OR KCK OR Öcalan OR "barış süreci" OR "Terörsüz Türkiye")'
-    )
-    return list(dict.fromkeys(q))
-
-# ------------------------------------------------------------
-# TARAYICI ERİŞİM YEDEĞİ
-# ------------------------------------------------------------
-
-V137_ALTERNATIVE_HOME = {
-    'hawarnews.com':'https://t.me/hawarnews',
-    'hawarnews.net':'https://t.me/hawarnews',
-
-    # JINNEWS domainleri dönemsel olarak değişebildiği için güncel alternatif liste.
-    'jinnews.net':'https://jinnews21.com/TUM-HABERLER',
-    'jinnews.org':'https://jinnews21.com/TUM-HABERLER',
-    'jinnews21.com':'https://jinnews21.com/TUM-HABERLER',
-
-    # ANF dil alanları kullanıcı ağında resetlenirse resmi Telegram akışı.
-    'anfenglish.com':'https://t.me/ANFTurkce',
-    'anf-news.com':'https://t.me/ANFTurkce',
-    'anfturkce.com':'https://t.me/ANFTurkce',
-    'english.anf-news.com':'https://t.me/ANFTurkce',
-    'deutsch.anf-news.com':'https://t.me/ANFTurkce',
-    'espanol.anf-news.com':'https://t.me/ANFTurkce',
-    'firatnews.com':'https://t.me/ANFTurkce',
-
-    'medyahabertv.digital':'https://t.me/medyahabertv1',
-    'medyahabertv.com':'https://t.me/medyahabertv1',
-
-    # Stêrk için iki doğrulanmış aktif host birbirine yedeklenir.
-    'sterktv.org':'https://sterktv.eu/',
-    'sterktv.eu':'https://sterktv.org/',
+    # ANHA için mümkün olduğunca www adresi kullan
+    'hawarnews.com':'www.hawarnews.com',
 }
 
-V137_CONNECTION_SENSITIVE = set(V137_ALTERNATIVE_HOME) | {
-    'ronahi.tv',
+
+V137_SOURCE_NAMES = {
+    'rupelanu.org':'Rûpela Nû',
+    'rupelanu.com':'Rûpela Nû Kurdî',
+    'nerinaazad2.com':'Nerina Azad',
+    'krdnews.org':'KRDNews',
+    'berwarnews.com':'Berwar News',
+    'kurd-online.com':'Kurd Online',
+    'kurdishglobe.krd':'Kurdish Globe',
+    'kurdistantribune.com':'Kurdistan Tribune',
+    'gazeteduvar.com.tr':'Gazete Duvar',
+
+    'anf-news.com':'ANF Türkçe',
+    'english.anf-news.com':'ANF English',
+    'deutsch.anf-news.com':'ANF Deutsch',
+    'espanol.anf-news.com':'ANF Español',
+    'kurmanci.anf-news.com':'ANF Kurmancî',
+    'sorani.anf-news.com':'ANF Soranî',
+    'hawrami.anf-news.com':'ANF Hewramî',
+    'kirmancki.anf-news.com':'ANF Kirmanckî',
+    'arabic.anf-news.com':'ANF Arabic',
+    'farsi.anf-news.com':'ANF Farsi',
+    'russian.anf-news.com':'ANF Russian',
+    'hawarnews.com':'ANHA / Hawar News',
+    'jinnews.net':'JINNEWS',
+    'ronahi.tv':'Ronahi TV',
+    'sterktv.org':'Stêrk TV',
+    'medyahabertv.digital':'Medya Haber TV',
 }
 
-def _v137_row_domain(row):
+
+def _v137_fix_url(url):
+    u=str(url or '').strip()
+    if not u:
+        return u
+
+    # Bazı indekslerde şema olmayabilir.
+    if not re.match(r'^https?://',u,re.I):
+        if re.match(r'^[A-Za-z0-9._-]+\.[A-Za-z]{2,}(?:/|$)',u):
+            u='https://'+u
+        else:
+            return u
+
     try:
-        return _tt_norm_domain(
-            row.get('URL','')
-            or row.get('Gerçek Bağlantı','')
-            or row.get('Domain','')
-            or row.get('Kaynak','')
-        )
+        p=urlparse(u)
+        host=(p.netloc or '').lower().strip()
+        host_no_www=host[4:] if host.startswith('www.') else host
+
+        new_host=V137_URL_HOST_ALIASES.get(host_no_www)
+        if not new_host:
+            new_host=V137_URL_HOST_ALIASES.get(host)
+
+        if not new_host:
+            return u
+
+        # ANHA için www korunur; diğerlerinde sözlükteki değer aynen kullanılır.
+        fixed=p._replace(
+            scheme='https',
+            netloc=new_host
+        ).geturl()
+        return fixed
+    except Exception:
+        return u
+
+
+def _v137_fixed_domain(url):
+    try:
+        d=domain(_v137_fix_url(url))
+        return d
     except Exception:
         return ''
 
-def _v137_title(row):
-    return re.sub(
-        r'\s+',' ',
-        str(row.get('Başlık','') or row.get('Gerçek İçerik','') or '').strip()
-    )
 
-def _v137_search_fallback(row):
-    d=_v137_row_domain(row)
-    title=_v137_title(row)
-    if not title and not d:
-        return ''
-    parts=[]
+def _v137_fix_record(rec):
+    r=dict(rec or {})
+
+    for col in ['URL','Gerçek Bağlantı','Yayıncı_URL']:
+        if col in r and r.get(col):
+            r[col]=_v137_fix_url(r.get(col))
+
+    d=''
+    for col in ['URL','Gerçek Bağlantı','Yayıncı_URL']:
+        if r.get(col):
+            d=_v137_fixed_domain(r.get(col))
+            if d:
+                break
+
+    # www temizlenmiş domain sınıflandırması
     if d:
-        parts.append(f'site:{d}')
-    if title:
-        parts.append(f'"{title[:180]}"')
-    return 'https://www.google.com/search?q='+_v137_quote_plus(' '.join(parts))
+        r['Domain']=d
 
-def _v137_alt_access(row):
-    d=_v137_row_domain(row)
-    if d in V137_ALTERNATIVE_HOME:
-        return V137_ALTERNATIVE_HOME[d]
-    return ''
+    if d in V137_SOURCE_NAMES:
+        # Google/Bing gibi ara kaynak adı varsa gerçek yayın adıyla değiştir.
+        current=str(r.get('Kaynak','') or '').strip()
+        if (
+            not current
+            or norm(current) in {'google news','news.google.com','bing','bing.com'}
+            or current.lower().startswith('http')
+        ):
+            r['Kaynak']=V137_SOURCE_NAMES[d]
 
-def _v137_access_note(row):
-    d=_v137_row_domain(row)
-    if d in V137_CONNECTION_SENSITIVE:
-        return 'Doğrudan site bağlantısı bazı ağlarda sıfırlanabilir; Alternatif Aç veya Başlığı Ara kullanılabilir.'
-    return ''
+    if d in V113_KURDISH_SOURCE_LABELS:
+        r['Kaynak Perspektifi']=V113_KURDISH_SOURCE_LABELS[d]
 
-def _v137_add_access_columns(data):
-    if data is None:
-        return data
-    x=data.copy()
-    if x.empty:
-        return x
+    return r
 
-    recs=x.to_dict('records')
-    x['Alternatif Aç']=[_v137_alt_access(r) for r in recs]
-    x['Başlığı Ara']=[_v137_search_fallback(r) if _v137_row_domain(r) in V137_CONNECTION_SENSITIVE else '' for r in recs]
-    x['Erişim Notu']=[_v137_access_note(r) for r in recs]
-    return x
 
-# Kaynak Bazlı İzleme ve devamındaki tablolarda mevcut davranışı koruyarak
-# yalnız alternatif erişim sütunlarını ekler.
-def _v3_source_table(section_key,data,columns=None,height=590):
-    if data is None or data.empty:
-        st.info('Bu bölümde eşleşen içerik bulunmamaktadır.')
+# Yeni taramalarda bütün normalize edilmiş kayıtların bağlantılarını düzelt.
+_V137_BASE_NORMALIZE_ROWS = normalize_rows
+def normalize_rows(raw,cutoff,mode,user_query):
+    rows,reasons=_V137_BASE_NORMALIZE_ROWS(raw,cutoff,mode,user_query)
+    rows=[_v137_fix_record(r) for r in (rows or [])]
+    return rows,reasons
+
+
+# Mevcut oturumdaki tarama sonuçlarına da anında uygula; yeniden tarama beklenmez.
+try:
+    if st.session_state.get('rows'):
+        st.session_state.rows=[
+            _v137_fix_record(r) for r in st.session_state.rows
+        ]
+except Exception:
+    pass
+
+
+# Rapor dipnot/link motorunda eski link kalmışsa güncel alan adına geçir.
+try:
+    _V137_BASE_V114_URL = _v114_url
+    def _v114_url(row,detail=None):
+        return _v137_fix_url(_V137_BASE_V114_URL(row,detail))
+except Exception:
+    pass
+
+
+# ------------------------------------------------------------
+# 3) YENİ KAYNAKLAR İÇİN HEDEFLİ TARAMA SORGULARI
+# ------------------------------------------------------------
+
+_V137_BASE_KURDISH_QUERIES = _v22_kurdish_queries
+def _v22_kurdish_queries():
+    q=list(_V137_BASE_KURDISH_QUERIES())
+
+    for sites in _v22_group_sites(V137_KURDISH_REGIONAL_EXTRA,6):
+        q.append(
+            f'(Öcalan OR Ocalan OR PKK OR KCK OR "Terörsüz Türkiye" '
+            f'OR "barış süreci" OR "Kürt meselesi" OR SDF OR SDG OR YPG '
+            f'OR "Mazlum Abdi" OR Barzani OR KDP) {sites}'
+        )
+
+    # Gazete Duvar genel bir yerli yayın; sadece Kürt meselesiyle ilişkili
+    # içeriklerde hedefli taramaya dahil edilir.
+    q.extend([
+        'site:gazeteduvar.com.tr ("Kürt medyası" OR "Kürt meselesi" OR Öcalan OR PKK OR KCK OR SDF OR SDG)',
+        '("Rûpela Nû" OR "Rupela Nu" OR "Nerina Azad" OR KRDNews) (Öcalan OR PKK OR KCK OR SDF OR Barzani)',
+        '("Berwar News" OR "Kurd Online" OR "Kurdish Globe" OR "Kurdistan Tribune") (Turkey OR Türkiye OR Öcalan OR PKK OR SDF)',
+    ])
+    return list(dict.fromkeys(q))
+
+
+_V137_BASE_MOVEMENT_QUERIES = _v22_movement_queries
+def _v22_movement_queries():
+    q=list(_V137_BASE_MOVEMENT_QUERIES())
+
+    for sites in _v22_group_sites(V137_MOVEMENT_CURRENT,6):
+        q.append(
+            f'(Öcalan OR Ocalan OR PKK OR KCK OR "Barış ve Demokratik Toplum" '
+            f'OR "barış süreci" OR "çerçeve yasa" OR SDF OR SDG OR YPG '
+            f'OR "Mazlum Abdi") {sites}'
+        )
+
+    q.extend([
+        '("ANF" OR "Firat News" OR "ANF English" OR "ANF Deutsch" OR "ANF Español") (Öcalan OR PKK OR KCK OR "peace process")',
+        '("ANHA" OR "Hawar News" OR JINNEWS OR "Ronahi TV") (Öcalan OR PKK OR KCK OR SDF OR SDG OR YPG)',
+        '("Stêrk TV" OR "Sterk TV" OR "Medya Haber TV") (Öcalan OR PKK OR KCK OR "Barış ve Demokratik Toplum")',
+        '("Yeni Özgür Politika" OR "Özgür Politika") (Öcalan OR PKK OR KCK OR süreç)',
+    ])
+    return list(dict.fromkeys(q))
+
+
+# ------------------------------------------------------------
+# 4) KALICI SEPETLERDEKİ ESKİ LİNKLERİ BİR KEZ GÜNCELLE
+# ------------------------------------------------------------
+
+def _v137_migrate_basket_table(table_name):
+    try:
+        ok=_v136_ensure_daily_table() if table_name==V136_DAILY_TABLE else _init_history_db()
+        if not ok:
+            return 0
+        changed=0
+        with _history_connect() as conn:
+            cur=conn.execute(f'SELECT id,record_json,url FROM {table_name}')
+            rows=cur.fetchall()
+            for rid,rec_json,old_url in rows:
+                try:
+                    rec=json.loads(rec_json)
+                except Exception:
+                    continue
+                fixed=_v137_fix_record(rec)
+                new_url=str(fixed.get('URL','') or '')
+                new_json=json.dumps(fixed,ensure_ascii=False,default=str)
+                if new_json!=rec_json or new_url!=str(old_url or ''):
+                    conn.execute(
+                        f'UPDATE {table_name} SET url=?, record_json=? WHERE id=?',
+                        (new_url,new_json,rid)
+                    )
+                    changed+=1
+            conn.commit()
+        return changed
+    except Exception:
+        return 0
+
+
+if not st.session_state.get('_v137_basket_link_migration_done'):
+    try:
+        _v137_migrate_basket_table(V136_DAILY_TABLE)
+        _v137_migrate_basket_table(V136_ARCHIVE_TABLE)
+
+        # Oturum önbellekleri varsa güncelle.
+        if 'v136_daily_analysis_basket' in st.session_state:
+            st.session_state['v136_daily_analysis_basket']=[
+                _v137_fix_record(r) for r in st.session_state['v136_daily_analysis_basket']
+            ]
+        if 'v136_archive_analysis_basket' in st.session_state:
+            st.session_state['v136_archive_analysis_basket']=[
+                _v137_fix_record(r) for r in st.session_state['v136_archive_analysis_basket']
+            ]
+    except Exception:
+        pass
+    st.session_state['_v137_basket_link_migration_done']=True
+
+
+# ------------------------------------------------------------
+# 5) GÜNLÜK ↔ ARŞİV ÇİFT YÖNLÜ AKTARIM
+# ------------------------------------------------------------
+
+def _v137_move_between_baskets(indices, source_getter, source_remover, target_adder, target_getter):
+    source=list(source_getter())
+    wanted=sorted({int(i) for i in indices if 0 <= int(i) < len(source)})
+    if not wanted:
+        return 0,0
+
+    records=[_v137_fix_record(source[i]) for i in wanted]
+    added=target_adder(records)
+
+    # Hedefte gerçekten bulunduğunu doğrula; hedefte zaten mevcutsa da güvenli biçimde
+    # kaynak sepetten kaldırılabilir.
+    target_keys={_v3_analysis_dedup_key(r) for r in target_getter()}
+    removable=[
+        i for i in wanted
+        if _v3_analysis_dedup_key(_v137_fix_record(source[i])) in target_keys
+    ]
+    removed=source_remover(removable) if removable else 0
+    return int(removed),int(added)
+
+
+# V136 render fonksiyonunu yalnız "Aktar" seçeneği ekleyerek yeniden tanımlıyoruz.
+# Rapor ve Gephi motorları V136'daki aynı fonksiyonlarla çalışmaya devam eder.
+def _v136_render_basket(title, description, getter, remover, table_name, session_key, key_prefix, file_prefix):
+    st.markdown(f'#### {title}')
+    st.caption(description)
+
+    transfer_msg=st.session_state.pop(f'{key_prefix}_transfer_msg',None)
+    if transfer_msg:
+        st.success(transfer_msg)
+
+    basket=[_v137_fix_record(r) for r in getter()]
+    if not basket:
+        st.info(f'{title} henüz boş.')
         return
 
-    x=_v137_add_access_columns(data.copy().reset_index(drop=True))
-
-    if 'Seç' in x.columns:
-        x['Seç']=False
-        cols=['Seç']+[c for c in x.columns if c!='Seç']
-        x=x[cols]
+    is_daily=(table_name==V136_DAILY_TABLE)
+    if is_daily:
+        target_label='Arşive'
+        target_adder=_v136_archive_add
+        target_getter=_v136_archive_basket
+        target_prefix='v136_archive'
     else:
-        x.insert(0,'Seç',False)
+        target_label='Günlük Sepete'
+        target_adder=_v136_daily_add
+        target_getter=_v136_daily_basket
+        target_prefix='v136_daily'
 
-    default_cols=[
-        'Seç','Tarih','Bölge','Kaynak','Kategori','Yaklaşım','Çerçeve','İçerik Türü',
-        'Başlık','İçerik_Özeti','Risk_Skoru','Doğrulama','URL',
-        'Alternatif Aç','Başlığı Ara','Erişim Notu'
+    bdf=pd.DataFrame(basket).reset_index(drop=True)
+    bdf.insert(0,'Aktar',False)
+    bdf.insert(0,'Çıkar',False)
+
+    show=[
+        c for c in [
+            'Çıkar','Aktar','Tarih','Bölge','Kaynak','Kategori','Yaklaşım',
+            'Çerçeve','Başlık','İçerik_Özeti','URL'
+        ]
+        if c in bdf.columns
     ]
 
-    requested=list(columns or default_cols)
-    # Özel kolon listesi verilmiş olsa bile erişim alanlarını sona ekle.
-    for c in ['Alternatif Aç','Başlığı Ara','Erişim Notu']:
-        if c not in requested:
-            requested.append(c)
+    edited=st.data_editor(
+        bdf[show],
+        column_config={
+            'Çıkar':st.column_config.CheckboxColumn('Çıkar'),
+            'Aktar':st.column_config.CheckboxColumn(f'{target_label} Aktar'),
+            'URL':st.column_config.LinkColumn('Kaynak / Haber'),
+            'İçerik_Özeti':st.column_config.TextColumn('Kısa İçerik',width='large')
+        },
+        disabled=[c for c in show if c not in {'Çıkar','Aktar'}],
+        hide_index=True,
+        use_container_width=True,
+        height=min(600,100+45*len(bdf)),
+        key=f'{key_prefix}_editor'
+    )
 
-    show=[c for c in requested if c in x.columns]
+    c1,c2,c3,c4=st.columns(4)
 
-    # Tamamen boş alternatif sütunları gereksiz yer kaplamasın.
-    for c in ['Alternatif Aç','Başlığı Ara','Erişim Notu']:
-        if c in show and x[c].astype(str).str.strip().eq('').all():
-            show.remove(c)
+    with c1:
+        if st.button(
+            '🗑️ Seçilenleri Çıkar',
+            use_container_width=True,
+            key=f'{key_prefix}_remove'
+        ):
+            idx=edited.index[edited['Çıkar'].astype(bool)].tolist()
+            if not idx:
+                st.warning('Önce çıkarılacak içerikleri seçin.')
+            else:
+                remover(idx)
+                st.session_state.pop(f'{key_prefix}_gephi',None)
+                st.session_state.pop(f'{key_prefix}_report_bytes',None)
+                st.rerun()
 
-    with st.form(f'v3_form_{section_key}',clear_on_submit=False):
-        edited=st.data_editor(
-            x[show],
-            column_config={
-                'Seç':st.column_config.CheckboxColumn('Seç'),
-                'URL':st.column_config.LinkColumn('Orijinal Kaynak / Haber',display_text='Aç'),
-                'Alternatif Aç':st.column_config.LinkColumn('Alternatif Aç',display_text='Aç'),
-                'Başlığı Ara':st.column_config.LinkColumn('Başlığı Ara',display_text='Ara'),
-                'Erişim Notu':st.column_config.TextColumn('Erişim Notu',width='medium'),
-                'İçerik_Özeti':st.column_config.TextColumn('Kısa İçerik',width='large'),
-                'Risk_Skoru':st.column_config.NumberColumn('Risk',format='%d/100')
-            },
-            disabled=[c for c in show if c!='Seç'],
-            hide_index=True,use_container_width=True,height=height,
-            key=f'v3_editor_{section_key}'
-        )
-        c1,c2=st.columns(2)
-        with c1:
-            do_note=st.form_submit_button('📝 Detaylı Bilgi Notu Oluştur',use_container_width=True)
-        with c2:
-            do_basket=st.form_submit_button('🧺 Günlük Analiz Sepetine Ekle',use_container_width=True)
+    with c2:
+        if st.button(
+            f'↔️ Seçilenleri {target_label} Taşı',
+            use_container_width=True,
+            key=f'{key_prefix}_transfer'
+        ):
+            idx=edited.index[edited['Aktar'].astype(bool)].tolist()
+            if not idx:
+                st.warning('Önce aktarılacak içerikleri seçin.')
+            else:
+                removed,added=_v137_move_between_baskets(
+                    idx,
+                    getter,
+                    remover,
+                    target_adder,
+                    target_getter
+                )
+                # İki sepetin de türetilmiş çıktıları değişti.
+                for pref in {key_prefix,target_prefix}:
+                    st.session_state.pop(f'{pref}_gephi',None)
+                    st.session_state.pop(f'{pref}_report_bytes',None)
+                    st.session_state.pop(f'{pref}_note_bytes',None)
 
-    mask=edited['Seç'].astype(bool).to_numpy() if 'Seç' in edited.columns else []
-    selected=x.loc[mask].drop(columns=['Seç'],errors='ignore') if len(mask) else pd.DataFrame()
+                st.session_state[f'{key_prefix}_transfer_msg']=(
+                    f'{removed} içerik {target_label.lower()} taşındı'
+                    + (f' ({added} yeni kayıt hedef sepete eklendi).' if added else ' (hedefte mevcut olan kayıtlar tekrar eklenmedi).')
+                )
+                st.rerun()
 
-    # Yardımcı erişim sütunları sepete/rapora kaynak veri olarak taşınmasın.
-    selected=selected.drop(columns=['Alternatif Aç','Başlığı Ara','Erişim Notu'],errors='ignore')
+    with c3:
+        if st.button(
+            '📝 Detaylı Bilgi Notu Oluştur',
+            use_container_width=True,
+            key=f'{key_prefix}_note'
+        ):
+            _v3_make_note(
+                pd.DataFrame([_v137_fix_record(r) for r in getter()]),
+                key_prefix
+            )
 
-    if do_note:
-        _v3_make_note(selected,section_key)
-    if do_basket:
-        if selected.empty:
-            st.warning('Önce en az bir haber seçin.')
-        else:
-            n=_v3_add_analysis(selected.to_dict('records'))
-            st.success(f'✅ {n} içerik Günlük Analiz Sepetine eklenmiştir.')
+    with c4:
+        if st.button(
+            '🧠 PDF TARZI SÖYLEM ANALİZİ OLUŞTUR',
+            type='primary',
+            use_container_width=True,
+            key=f'{key_prefix}_report'
+        ):
+            with st.spinner('Sepetteki içerikler analitik rapor motoruyla işleniyor...'):
+                try:
+                    st.session_state[f'{key_prefix}_report_bytes']=_v114_analysis_basket_report_docx(
+                        pd.DataFrame([_v137_fix_record(r) for r in getter()])
+                    )
+                except Exception as e:
+                    st.error(f'Rapor hazırlanamadı: {e}')
 
-    if st.session_state.get(section_key+'_note_bytes'):
+    if st.session_state.get(f'{key_prefix}_note_bytes'):
         st.download_button(
-            '⬇️ Hazırlanan Bilgi Notunu İndir',
-            st.session_state[section_key+'_note_bytes'],
-            file_name=f'Terorsuz_Turkiye_Bilgi_Notu_{section_key}_{date.today()}.docx',
+            '⬇️ Analiz Sepeti Bilgi Notunu İndir',
+            st.session_state[f'{key_prefix}_note_bytes'],
+            file_name=f'{file_prefix}_Bilgi_Notu_{date.today()}.docx',
             mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            use_container_width=True,key=f'v3_note_download_{section_key}'
+            use_container_width=True,
+            key=f'{key_prefix}_note_download'
         )
+
+    if st.session_state.get(f'{key_prefix}_report_bytes'):
+        st.download_button(
+            '⬇️ KAYNAKLI ANALİZ RAPORUNU İNDİR',
+            st.session_state[f'{key_prefix}_report_bytes'],
+            file_name=f'{file_prefix}_Soylem_Analizi_V137_{date.today()}.docx',
+            mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            use_container_width=True,
+            key=f'{key_prefix}_report_download'
+        )
+
+    with st.expander('🧹 Sepeti tamamen temizle'):
+        confirm=st.checkbox(
+            'Bu sepetteki tüm içerikleri silmeyi onaylıyorum.',
+            key=f'{key_prefix}_clear_confirm'
+        )
+        if st.button(
+            'TÜM SEPETİ TEMİZLE',
+            use_container_width=True,
+            key=f'{key_prefix}_clear_all',
+            disabled=not confirm
+        ):
+            _v136_clear_table(table_name,session_key)
+            st.session_state.pop(f'{key_prefix}_gephi',None)
+            st.session_state.pop(f'{key_prefix}_report_bytes',None)
+            st.session_state.pop(f'{key_prefix}_note_bytes',None)
+            st.rerun()
+
+    st.markdown('##### 🕸️ Analiz Sepeti Gephi Oluşturucusu')
+    st.caption(
+        'Bu sepet için kararlı Analiz Sepeti Gephi motoru aynen çalışır: '
+        'Kaynak ↔ Çerçeve ve Söylem Çevresi ↔ Çerçeve ağları, sosyal alt-söylemler, '
+        'düğüm açıklamaları ve Gephi Analiz Notu birlikte üretilir.'
+    )
+
+    if st.button(
+        '🕸️ BU SEPETTEN GEPHI OLUŞTUR',
+        use_container_width=True,
+        key=f'{key_prefix}_gephi_build'
+    ):
+        try:
+            fixed_df=pd.DataFrame([_v137_fix_record(r) for r in getter()])
+            st.session_state[f'{key_prefix}_gephi']=_v136_basket_gephi_package(fixed_df)
+        except Exception as e:
+            st.error(f'Analiz Sepeti Gephi ağı oluşturulamadı: {e}')
+
+    gp=st.session_state.get(f'{key_prefix}_gephi') or {}
+    if gp:
+        summary=pd.DataFrame(gp.get('discourse_summary') or [])
+        if not summary.empty:
+            st.dataframe(summary,hide_index=True,use_container_width=True)
+
+        g1,g2,g3,g4=st.columns(4)
+
+        if gp.get('source_gexf'):
+            g1.download_button(
+                '⬇️ Kaynak-Çerçeve GEXF',
+                gp['source_gexf'],
+                f'{file_prefix}_Kaynak_Cerceve_V137.gexf',
+                'application/xml',
+                use_container_width=True,
+                key=f'{key_prefix}_source_gexf'
+            )
+
+        if gp.get('discourse_gexf'):
+            g2.download_button(
+                '⬇️ Kesim-Çerçeve GEXF',
+                gp['discourse_gexf'],
+                f'{file_prefix}_Kesim_Cerceve_V137.gexf',
+                'application/xml',
+                use_container_width=True,
+                key=f'{key_prefix}_disc_gexf'
+            )
+
+        se_df=pd.DataFrame(gp.get('source_edges') or [])
+        if not se_df.empty:
+            g3.download_button(
+                '⬇️ Source Edges CSV',
+                se_df.to_csv(index=False).encode('utf-8-sig'),
+                f'{file_prefix}_Source_Edges_V137.csv',
+                'text/csv',
+                use_container_width=True,
+                key=f'{key_prefix}_source_edges'
+            )
+
+        de_df=pd.DataFrame(gp.get('discourse_edges') or [])
+        if not de_df.empty:
+            g4.download_button(
+                '⬇️ Discourse Edges CSV',
+                de_df.to_csv(index=False).encode('utf-8-sig'),
+                f'{file_prefix}_Discourse_Edges_V137.csv',
+                'text/csv',
+                use_container_width=True,
+                key=f'{key_prefix}_disc_edges'
+            )
+
+        comments=pd.DataFrame(gp.get('node_comments') or [])
+        if not comments.empty:
+            st.markdown('##### 🧭 Gephi Düğüm Açıklamaları')
+            st.dataframe(
+                comments,
+                hide_index=True,
+                use_container_width=True,
+                height=min(520,120+32*min(12,len(comments)))
+            )
+
+        n1,n2=st.columns(2)
+        if gp.get('analysis_docx'):
+            n1.download_button(
+                '⬇️ Gephi Analiz Notu (Word)',
+                gp['analysis_docx'],
+                f'{file_prefix}_Gephi_Analiz_Notu_V137.docx',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                use_container_width=True,
+                key=f'{key_prefix}_gephi_note'
+            )
+
+        if not comments.empty:
+            n2.download_button(
+                '⬇️ Düğüm Açıklamaları CSV',
+                comments.to_csv(index=False).encode('utf-8-sig'),
+                f'{file_prefix}_Gephi_Dugum_Aciklamalari_V137.csv',
+                'text/csv',
+                use_container_width=True,
+                key=f'{key_prefix}_node_comments'
+            )
+
 
 # ============================================================
 # /V137
 # ============================================================
-
-
-# V137 — Gephi/rapor aile sınıflandırmasında yeni domainleri kesinleştir.
-try:
-    _V137_PREV_V132_SOURCE_FAMILY = _v132_source_family
-except Exception:
-    _V137_PREV_V132_SOURCE_FAMILY = None
-
-def _v132_source_family(row):
-    try:
-        d=_v127_domain(row)
-    except Exception:
-        try:
-            d=_tt_norm_domain(row.get('URL','') or row.get('Domain','') or row.get('Kaynak',''))
-        except Exception:
-            d=''
-    d=str(d or '').lower().replace('www.','')
-
-    if _tt_domain_match(d,V137_KURDISH_REGIONAL_EXTRA):
-        return 'Kürt Bölgesel Medyası'
-    if _tt_domain_match(d,V137_MOVEMENT_EXTRA):
-        return 'PKK/KCK Açık Kaynak'
-
-    if _V137_PREV_V132_SOURCE_FAMILY:
-        try:
-            return _V137_PREV_V132_SOURCE_FAMILY(row)
-        except Exception:
-            pass
-    return 'Diğer'
-
-_v127_source_family = _v132_source_family
-_v23_source_family = _v132_source_family
 
 
 # V33 — SADE GÜNLÜK ANA PANEL
@@ -34869,22 +35198,7 @@ else:
             lambda _r:_v113_kurdish_umbrella_domain(_v113_row_domain(_r)),
             axis=1
         )
-        _v137_duvar_domain=df.apply(
-            lambda _r:_tt_norm_domain(_r.get('URL','') or _r.get('Domain','')).endswith('gazeteduvar.com.tr'),
-            axis=1
-        )
-        _v137_duvar_topic=(
-            df.get('Başlık',pd.Series('',index=df.index)).astype(str)
-            +' '+df.get('İçerik_Özeti',pd.Series('',index=df.index)).astype(str)
-        ).map(norm).str.contains(
-            r'kürt|kurd|öcalan|ocalan|pkk|kck|dem parti|sdf|sdg|ypg|kurdistan|barış süreci|baris sureci',
-            regex=True,na=False
-        )
-        kurdish_media_display_mask=(
-            kurdish_mask
-            | _v113_kurdish_domain_mask
-            | (_v137_duvar_domain & _v137_duvar_topic)
-        )
+        kurdish_media_display_mask=(kurdish_mask | _v113_kurdish_domain_mask)
 
         commentary_mask=df.get(
             'İçerik Türü',
