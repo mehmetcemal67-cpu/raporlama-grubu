@@ -19,6 +19,9 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import parse_xml, OxmlElement
 from docx.oxml.ns import qn
 
+# V139: ANF / JINNEWS / Yeni Özgür Politika için orijinal haber URL'si korunur.
+# Siteye uygulama sunucusundan erişilemezse başlık + mevcut özet/snippet ile analiz devam eder.
+
 
 # ============================================================
 # V104 — MEVCUT BÖLÜMLERİ OLGUNLAŞTIRMA
@@ -16419,6 +16422,84 @@ _v114_analysis_basket_report_docx = _v119_analysis_basket_report_docx
 
 
 # ============================================================
+# V139 — ORİJİNAL KAYNAK LİNKİNİ KORUMA
+#
+# Kullanıcı kuralı:
+# - ANF, JINNEWS ve Yeni Özgür Politika için tarama motorunun bulduğu
+#   doğrudan haber bağlantısı DEĞİŞTİRİLMEZ.
+# - Eski/yeni domain alias bilgisi yalnız kaynak sınıflandırmasında kullanılır.
+# - Site Streamlit sunucusundan açılamasa bile kayıt sepette tutulur;
+#   başlık + indeks/RSS özeti ile analiz devam eder.
+# - Analiz/bilgi notu kaynak bağlantısında doğrudan kaynak URL'si varsa
+#   aynı URL korunur; canonical/domain zorlaması yapılmaz.
+# ============================================================
+
+V139_PROTECTED_SOURCE_HOSTS = {
+    # ANF eski ve güncel alan adları
+    'anf-news.com','english.anf-news.com','deutsch.anf-news.com',
+    'espanol.anf-news.com','kurmanci.anf-news.com','sorani.anf-news.com',
+    'hawrami.anf-news.com','kirmancki.anf-news.com','arabic.anf-news.com',
+    'farsi.anf-news.com','russian.anf-news.com',
+    'anfenglish.com','anfenglishmobile.com','anfturkce.com','anfdeutsch.com',
+    'anfespanol.com','anfarabic.com','anfrussian.com','anfpersian.com',
+    'anfkurdi.com','anfsorani.com','anfkirmancki.com',
+    # JINNEWS
+    'jinnews.net','jinnews.org','jinnews21.com',
+    # Yeni Özgür Politika
+    'ozgurpolitika.com','www.ozgurpolitika.com',
+}
+
+V139_CLASSIFICATION_ALIASES = {
+    'anfenglish.com':'english.anf-news.com',
+    'anfenglishmobile.com':'english.anf-news.com',
+    'anfturkce.com':'anf-news.com',
+    'anfdeutsch.com':'deutsch.anf-news.com',
+    'anfespanol.com':'espanol.anf-news.com',
+    'anfarabic.com':'arabic.anf-news.com',
+    'anfrussian.com':'russian.anf-news.com',
+    'anfpersian.com':'farsi.anf-news.com',
+    'anfkurdi.com':'kurmanci.anf-news.com',
+    'anfsorani.com':'sorani.anf-news.com',
+    'anfkirmancki.com':'kirmancki.anf-news.com',
+    'jinnews.org':'jinnews.net',
+    'jinnews21.com':'jinnews.net',
+    'www.ozgurpolitika.com':'ozgurpolitika.com',
+}
+
+def _v139_url_host(value):
+    raw=str(value or '').strip()
+    if not raw:
+        return ''
+    try:
+        candidate=raw if '://' in raw else 'https://'+raw
+        host=(urlparse(candidate).netloc or '').lower().strip()
+        return host
+    except Exception:
+        return ''
+
+def _v139_is_protected_source_url(value):
+    host=_v139_url_host(value)
+    if not host:
+        return False
+    if host in V139_PROTECTED_SOURCE_HOSTS:
+        return True
+    # ANF'nin güncel dil alt alan adlarının tamamını koru.
+    if host=='anf-news.com' or host.endswith('.anf-news.com'):
+        return True
+    return False
+
+def _v139_classification_domain(value):
+    """URL'yi değiştirmeden yalnız sınıflandırma için kanonik domain döndürür."""
+    try:
+        d=_tt_norm_domain(value)
+    except Exception:
+        d=''
+    d=str(d or '').lower().strip()
+    if not d:
+        d=_v139_url_host(value)
+    return V139_CLASSIFICATION_ALIASES.get(d,d)
+
+# ============================================================
 # V138 — DOĞRUDAN KAYNAK ERİŞİMİ / PRE-SCAN PATCH
 #
 # Amaç:
@@ -16426,8 +16507,8 @@ _v114_analysis_basket_report_docx = _v119_analysis_basket_report_docx
 #    düzeltmelerinin tarama butonundan ÖNCE etkin olmasını sağlamak.
 # 2) ANF, JINNEWS ve Yeni Özgür Politika'yı yalnız arama motoru indeksine
 #    bırakmamak; ANF RSS + doğrudan ana sayfa keşfi ile yedeklemek.
-# 3) Eski ANF/JINNEWS adreslerini güncel alan adlarına tarama öncesinde
-#    normalize etmek; Yeni Özgür Politika'da www kanonik adresini kullanmak.
+# 3) V139 kuralı gereği ANF/JINNEWS/Yeni Özgür Politika URL'lerini DEĞİŞTİRMEMEK;
+#    eski/yeni domain bilgisini yalnız kaynak sınıflandırmasında kullanmak.
 #
 # V137 ve önceki katmanlar korunur; bu blok yalnız pre-scan uyumluluk katmanıdır.
 # ============================================================
@@ -16498,24 +16579,12 @@ V138_SOURCE_NAMES = {
 
 
 def _v138_fix_url(url):
-    u=str(url or '').strip()
-    if not u:
-        return u
-    if not re.match(r'^https?://',u,re.I):
-        if re.match(r'^[A-Za-z0-9._-]+\.[A-Za-z]{2,}(?:/|$)',u):
-            u='https://'+u
-        else:
-            return u
-    try:
-        p=urlparse(u)
-        host=(p.netloc or '').lower().strip()
-        host_no_www=host[4:] if host.startswith('www.') else host
-        new_host=V138_URL_HOST_ALIASES.get(host_no_www) or V138_URL_HOST_ALIASES.get(host)
-        if not new_host:
-            return u
-        return p._replace(scheme='https',netloc=new_host).geturl()
-    except Exception:
-        return u
+    """
+    V139: Bu fonksiyon artık URL dönüştürmez.
+    V138 alias sözlüğü geriye dönük kaynak tanıma için tutulur; bağlantının
+    host/path/query bölümleri aynen korunur.
+    """
+    return str(url or '').strip()
 
 
 def _v138_fix_raw_record(rec):
@@ -16536,7 +16605,7 @@ def normalize_rows(raw,cutoff,mode,user_query):
             for k in ('URL','RSS_URL','Yayıncı_URL'):
                 if r.get(k):
                     r[k]=_v138_fix_url(r.get(k))
-            d=_tt_norm_domain(r.get('Domain','') or r.get('URL',''))
+            d=_v139_classification_domain(r.get('Domain','') or r.get('URL',''))
             if d:
                 r['Domain']=d
             if d in V138_SOURCE_NAMES:
@@ -16548,16 +16617,26 @@ def normalize_rows(raw,cutoff,mode,user_query):
     return rows,reasons
 
 
-# Bilgi notu / rapor üretiminde eski URL kaldıysa gerçek sayfaya gitmeden önce düzelt.
+# V139: Bilgi notu / rapor üretiminde doğrudan kaynak URL'si korunur.
+# Sayfa okunabiliyorsa tam metin alınabilir; fakat ANF/JINNEWS/Yeni Özgür Politika
+# için satırdaki doğrudan URL canonical adresle değiştirilmez.
 _V138_BASE_ARTICLE_DETAIL = article_detail
 def article_detail(row):
     if isinstance(row,dict):
         rr=dict(row)
-        for k in ('URL','RSS_URL','Yayıncı_URL'):
-            if rr.get(k):
-                rr[k]=_v138_fix_url(rr.get(k))
-        return _V138_BASE_ARTICLE_DETAIL(rr)
-    return _V138_BASE_ARTICLE_DETAIL(_v138_fix_url(row))
+        original_url=str(rr.get('URL') or '').strip()
+        detail=_V138_BASE_ARTICLE_DETAIL(rr)
+        if isinstance(detail,dict) and _v139_is_protected_source_url(original_url):
+            detail=dict(detail)
+            detail['canonical']=original_url
+        return detail
+
+    original_url=str(row or '').strip()
+    detail=_V138_BASE_ARTICLE_DETAIL(original_url)
+    if isinstance(detail,dict) and _v139_is_protected_source_url(original_url):
+        detail=dict(detail)
+        detail['canonical']=original_url
+    return detail
 
 
 def _v138_topic_hit(text):
@@ -16923,13 +17002,13 @@ if run:
             except Exception:
                 pass
 
-    # V138 — ANF / JINNEWS / Yeni Özgür Politika doğrudan kaynak yedeği.
+    # V139 — ANF / JINNEWS / Yeni Özgür Politika doğrudan kaynak yedeği; orijinal link korunur.
     # Arama motoru indeksleri bu siteleri kaçırsa bile ana kaynaklardan veri toplanır.
     try:
         _v138_direct_rows=_v138_direct_movement_sources(movement_hours)
         for _item in _v138_direct_rows:
             if isinstance(_item,dict):
-                _item['_origin_query']='V138 direct source fallback'
+                _item['_origin_query']='V139 direct source fallback'
         raw_by_mode.setdefault('movement',[]).extend(_v138_direct_rows)
         stat['Ham sonuç']+=len(_v138_direct_rows)
         if _v138_direct_rows:
@@ -16938,7 +17017,7 @@ if run:
                 _src=str(_item.get('source') or 'Açık Kaynak')
                 _v138_counts[_src]=_v138_counts.get(_src,0)+1
             status_box.write(
-                '🛰️ V138 doğrudan kaynak yedeği: '+
+                '🛰️ V139 doğrudan kaynak yedeği (orijinal link korunur): '+
                 ', '.join(f'{k} {v}' for k,v in sorted(_v138_counts.items()))
             )
     except Exception:
@@ -34922,6 +35001,11 @@ def _v137_fix_url(url):
     if not u:
         return u
 
+    # V139: ANF / JINNEWS / Yeni Özgür Politika bağlantıları kaynakta
+    # nasıl geldiyse öyle kalır. Alias yalnız sınıflandırma içindir.
+    if _v139_is_protected_source_url(u):
+        return u
+
     # Bazı indekslerde şema olmayabilir.
     if not re.match(r'^https?://',u,re.I):
         if re.match(r'^[A-Za-z0-9._-]+\.[A-Za-z]{2,}(?:/|$)',u):
@@ -34953,8 +35037,8 @@ def _v137_fix_url(url):
 
 def _v137_fixed_domain(url):
     try:
-        d=domain(_v137_fix_url(url))
-        return d
+        # V139: URL'yi değiştirmeden yalnız sınıflandırma domainini normalize et.
+        return _v139_classification_domain(url)
     except Exception:
         return ''
 
@@ -35015,6 +35099,14 @@ except Exception:
 try:
     _V137_BASE_V114_URL = _v114_url
     def _v114_url(row,detail=None):
+        # V139: Sepetteki doğrudan ANF/JINNEWS/Yeni Özgür Politika linki
+        # analiz/Word kaynağında aynen korunur.
+        try:
+            original=str((row or {}).get('URL','') or '').strip()
+        except Exception:
+            original=''
+        if original and _v139_is_protected_source_url(original):
+            return original
         return _v137_fix_url(_V137_BASE_V114_URL(row,detail))
 except Exception:
     pass
