@@ -34685,7 +34685,7 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
         st.download_button(
             '⬇️ TERÖRSÜZ TÜRKİYE SON DURUM RAPORUNU İNDİR',
             st.session_state[f'{key_prefix}_report_bytes'],
-            file_name=f'{file_prefix}_Terorsuz_Turkiye_Son_Durum_V144_{date.today()}.docx',
+            file_name=f'{file_prefix}_Terorsuz_Turkiye_Son_Durum_V145_{date.today()}.docx',
             mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             use_container_width=True,
             key=f'{key_prefix}_report_download'
@@ -35373,7 +35373,7 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
         st.download_button(
             '⬇️ TERÖRSÜZ TÜRKİYE SON DURUM RAPORUNU İNDİR',
             st.session_state[f'{key_prefix}_report_bytes'],
-            file_name=f'{file_prefix}_Terorsuz_Turkiye_Son_Durum_V144_{date.today()}.docx',
+            file_name=f'{file_prefix}_Terorsuz_Turkiye_Son_Durum_V145_{date.today()}.docx',
             mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             use_container_width=True,
             key=f'{key_prefix}_report_download'
@@ -38169,6 +38169,583 @@ _v114_analysis_basket_report_docx = _v144_analysis_basket_report_docx
 
 # ============================================================
 # /V144 EVRENSEL ANALİZ PARAGRAF MOTORU
+# ============================================================
+
+
+# ============================================================
+# V145 — SABİT PARAGRAF KURGUSU / GENEL HABER ÖZET MOTORU
+#
+# AMAÇ:
+# - Haber/aktör değiştikçe yeni özel-case yazmadan aynı editoryal kurgu.
+# - 1 sepet kaydı = 1 kısa paragraf; hiçbir kayıt atlanmaz.
+# - "nan kaynağı", ham başlık, X yapılan, site promosyonu, yarım cümle yok.
+# - Önce gerçek içerik/snippet; yalnız zorunlu durumda başlık fallback.
+# - Paragraf düzeni: KİM/KAYNAK -> NE OLDU/NE DEDİ -> EN ÖNEMLİ İKİNCİ AYRINTI.
+# - Yorum üretmez; kaynakta olmayan hüküm eklemez.
+# - V140 kararlı tabanın link/sepet/Gephi/manuel havuz yapısına dokunmaz.
+# ============================================================
+
+V145_REPORT_TITLE='TERÖRSÜZ TÜRKİYE SÜRECİNDE SON DURUM'
+
+V145_BAD_VALUES={'','nan','none','null','n/a','na','-','—','bilinmiyor','unknown','açık kaynak'}
+V145_STOPWORDS={
+    've','veya','ile','için','icin','bir','bu','şu','su','da','de','ki','ise','olarak','olan','oldu','olduğu','oldugu',
+    'the','a','an','of','to','in','on','for','and','or','from','by','at','as','is','are','was','were','be','been',
+    'haber','haberi','içerik','icerik','sitesi','site','kaynak','yayımlanan','yayimlanan','başlıklı','baslikli'
+}
+V145_ACTION_CUES=(
+    'belirt','ifade','vurgula','kaydet','açıkla','acikla','öne sür','one sur','iddia','eleştir','elestir','uyar','duyur',
+    'savun','talep','çağrı','cagri','görüş','gorus','karar','başla','basla','teslim','ihraç','ihrac','süre','sure','anlaş',
+    'mutabakat','fesih','silah','özgür','ozgur','statü','statu','reform','yasa','kongre','ziyaret','katıl','katil','çekil','cekil',
+    'destek','tepki','kaldır','kaldir','an','öldür','oldur','seç','sec','görev','gorev','kur','dağıt','dagit','entegr','gözalt','gozalt',
+    'gerekti','olmazsa olmaz','zorunlu','şart','sart','koşul','kosul','kapsa','dışla','disla','hariç','haric','mümkün','mumkun'
+)
+V145_PROMO=(
+    'daha fazla haber için','daha fazla bilgi için','adresini ziyaret','sitemizi google','google aramalarında','tercih edilen kaynak',
+    'abone olun','abone ol','newsletter','sign up','read more','devamını oku','devamini oku','related article','related story',
+    'privacy policy','terms of use','all rights reserved','cookie','çerez','reklam','advertisement','ana sayfa','son dakika',
+    'facebook hesabım bloke','whatsapp (kullanmadığım)','whatsapp kod','kimlik istendi','show results with','missing:'
+)
+
+V145_SOURCE_LABELS={
+    'batmanburada.com.tr':'Batman Burada',
+    'medyahabertv.digital':'Medya Haber',
+    'jpost.com':'The Jerusalem Post',
+    'jerusalempost.com':'The Jerusalem Post',
+    't24.com.tr':'T24',
+    'haberalternatif.com':'Haber Alternatif',
+    'ozgurpolitika.com':'Yeni Özgür Politika',
+    'anf-news.com':'ANF News',
+    'english.anf-news.com':'ANF News',
+    'espanol.anf-news.com':'ANF News',
+    'deutsch.anf-news.com':'ANF News',
+    'kurmanci.anf-news.com':'ANF News',
+    'sorani.anf-news.com':'ANF News',
+    'rudaw.net':'Rûdaw',
+    'medyascope.tv':'Medyascope',
+    'serbestiyet.com':'Serbestiyet',
+    'yenicaggazetesi.com':'Yeniçağ',
+    'gazetepano.com':'Gazete Pano',
+    'darkamazi.site':'Darka Mazi',
+    'bosphorusnews.com':'Bosphorus News',
+    'alestiklal.net':'Al Estiklal',
+    'newsaboutturkey.com':'News About Turkey',
+}
+
+
+def _v145_clean(value):
+    try:
+        if value is None: return ''
+        if isinstance(value,float) and pd.isna(value): return ''
+    except Exception:
+        pass
+    try: s=_v144_clean(value)
+    except Exception: s=str(value or '')
+    s=html.unescape(str(s or '')).replace('\u00ad','').replace('\ufeff','')
+    s=s.replace('Için','İçin').replace('Içinde','İçinde').replace('ifad e','ifade')
+    s=re.sub(r'^\s*\d+\s+(?:minutes?|mins?|hours?|hrs?|days?)\s+ago\s*[·•|:\-–—]*\s*','',s,flags=re.I)
+    s=re.sub(r'^\s*(?:today|yesterday)\s*[·•|:\-–—]*\s*','',s,flags=re.I)
+    s=re.sub(r'\s+',' ',s).strip(' \t\r\n-–—|')
+    if s.lower().strip() in V145_BAD_VALUES: return ''
+    return s
+
+
+def _v145_norm(value):
+    s=_v145_clean(value).lower().replace('i\u0307','i')
+    return re.sub(r'\s+',' ',s).strip()
+
+
+def _v145_domain(rec):
+    try:
+        d=_v142_domain(rec)
+    except Exception:
+        try: d=_tt_norm_domain(rec.get('URL',''))
+        except Exception: d=''
+    return str(d or '').lower().replace('www.','').strip()
+
+
+def _v145_source(rec):
+    vals=[]
+    try: vals.append(_v141_source_name(rec))
+    except Exception: pass
+    vals.extend([rec.get('Kaynak',''), (rec.get('Satır') or {}).get('Kaynak','') if isinstance(rec.get('Satır'),dict) else ''])
+    for v in vals:
+        s=_v145_clean(v)
+        if s and _v145_norm(s) not in V145_BAD_VALUES:
+            # Google/Bing ara kaynak adı rapora gerçek kaynakmış gibi yazılmasın.
+            if _v145_norm(s) not in {'google news','news.google.com','google','bing','bing news'}:
+                for sep in (' — ',' – ',' | '):
+                    if sep in s: s=s.split(sep,1)[0].strip()
+                return s
+    d=_v145_domain(rec)
+    if d in V145_SOURCE_LABELS: return V145_SOURCE_LABELS[d]
+    # Alt alan adı için ana alan eşleşmesi.
+    for dom,label in V145_SOURCE_LABELS.items():
+        if d==dom or d.endswith('.'+dom): return label
+    if d:
+        stem=d.split('.')[0]
+        if stem in {'www','m','amp'} and len(d.split('.'))>1: stem=d.split('.')[1]
+        return stem.replace('-',' ').replace('_',' ').title()
+    return 'Kaynak'
+
+
+def _v145_title(rec):
+    t=_v145_clean(rec.get('Başlık',''))
+    source=_v145_source(rec)
+    if not t: return ''
+    # Arama motorlarının eklediği son kaynak adını temizle.
+    suffixes=[source,'ANF | Articles','ANF Articles']
+    for s in suffixes:
+        s=_v145_clean(s)
+        if not s: continue
+        t=re.sub(r'(?:\s*[-–—|]\s*|\s+)'+re.escape(s)+r'\s*$','',t,flags=re.I).strip()
+    return _v145_clean(t)
+
+
+def _v145_tokens(text):
+    return [w for w in re.findall(r'[a-zçğıöşü0-9]+',_v145_norm(text)) if len(w)>=3 and w not in V145_STOPWORDS]
+
+
+def _v145_similarity(a,b):
+    aa=set(_v145_tokens(a)); bb=set(_v145_tokens(b))
+    if not aa or not bb: return 0.0
+    return len(aa&bb)/max(1,len(aa|bb))
+
+
+def _v145_title_overlap(text,title):
+    a=set(_v145_tokens(text)); b=set(_v145_tokens(title))
+    if not a or not b: return 0.0
+    return len(a&b)/max(1,len(b))
+
+
+def _v145_is_promo(sentence):
+    n=_v145_norm(sentence)
+    if not n: return True
+    if any(x in n for x in V145_PROMO): return True
+    if re.fullmatch(r'https?://\S+',sentence.strip(),re.I): return True
+    # Menü / etiket / tarih kalıntıları.
+    if len(_v145_tokens(sentence))<5 and len(sentence)<55: return True
+    if sentence.count('http')>0 or sentence.count('www.')>0: return True
+    return False
+
+
+def _v145_title_echo(sentence,title):
+    s=_v145_clean(sentence); t=_v145_clean(title)
+    if not s or not t: return False
+    if _v145_norm(s).strip(' .:-–—|')==_v145_norm(t).strip(' .:-–—|'): return True
+    # Çok kısa ve başlığın kelimelerinin neredeyse tamamını tekrar eden cümle.
+    return len(s)<330 and _v145_title_overlap(s,t)>=0.90
+
+
+def _v145_split_sentences(text):
+    s=_v145_clean(text)
+    if not s: return []
+    # Önce önceki güçlü cümle ayırıcısını kullan.
+    try: raw=_v142_sentences(s)
+    except Exception: raw=re.split(r'(?<=[.!?])\s+(?=[A-ZÇĞİÖŞÜ0-9“"\'])',s)
+    out=[]; seen=[]
+    for x in raw:
+        x=_v145_clean(x).strip(' -–—')
+        if not x or _v145_is_promo(x): continue
+        # Başındaki tarih/kategori kalıntısı.
+        x=re.sub(r'^(?:September|October|August|July|June|May|April|March|February|January)\s+\d{1,2},\s+\d{4}\s+(?:Giriş|Introduction)?\s*','',x,flags=re.I)
+        x=_v145_clean(x)
+        if len(x)<35: continue
+        if any(_v145_similarity(x,y)>0.88 for y in seen): continue
+        seen.append(x); out.append(x)
+    return out
+
+
+def _v145_all_chunks(rec):
+    row=rec.get('Satır') if isinstance(rec.get('Satır'),dict) else {}
+    detail=rec.get('_detail') if isinstance(rec.get('_detail'),dict) else {}
+    fields=[
+        ('manual',row.get('Manuel_Not')),('manual',row.get('Manuel Not')),('manual',row.get('Kısa Not')),('manual',row.get('Kısa İçerik')),
+        ('summary',row.get('İçerik_Özeti')),('summary',row.get('İçerik / Özet')),('snippet',row.get('snippet')),('snippet',row.get('summary')),
+        ('detail',detail.get('text')),('detail',detail.get('description')),('detail',detail.get('summary')),('record',rec.get('Özet')),
+    ]
+    bonus={'manual':18,'summary':16,'snippet':15,'detail':12,'record':10}
+    chunks=[]; seen=set()
+    for origin,val in fields:
+        s=_v145_clean(val)
+        if not s: continue
+        # Yabancı dildeyse çeviri denenir; başarısızsa ham metin de saklanır.
+        tr=''
+        try:
+            if not _v143_is_turkishish(s): tr=_v143_translate_to_tr(s)
+        except Exception:
+            tr=''
+        if tr: s=_v145_clean(tr)
+        k=_v145_norm(s)[:1800]
+        if not k or k in seen: continue
+        seen.add(k); chunks.append((origin,s,bonus.get(origin,0)))
+    return chunks
+
+
+def _v145_action_score(sentence):
+    n=_v145_norm(sentence)
+    sc=sum(1 for x in V145_ACTION_CUES if x in n)
+    # Çekimli Türkçe fiil sonları için ek sinyal.
+    if re.search(r'\b[a-zçğıöşü]{4,}(?:miştir|mıştır|muştur|müştür|miştir|di|dı|du|dü|ti|tı|tu|tü|yor|acak|ecek)\b',n): sc+=1
+    return sc
+
+
+def _v145_sentence_score(sentence,title,origin_bonus,pos):
+    s=_v145_clean(sentence)
+    if not s or _v145_is_promo(s): return -10**6
+    score=origin_bonus
+    overlap=_v145_title_overlap(s,title)
+    score+=int(overlap*26)
+    score+=min(18,_v145_action_score(s)*5)
+    if re.search(r'\b\d+(?:[.,]\d+)?\b|milyon|milyar|yüzde|%',_v145_norm(s)): score+=5
+    if 65<=len(s)<=430: score+=9
+    elif len(s)>650: score-=8
+    if _v145_title_echo(s,title): score-=20
+    # İlk 4 cümleyi hafifçe öne çıkar; makale gövdesinin sonundaki related-content riskini azalt.
+    score+=max(0,6-pos)
+    # Aşırı genel/meta cümleler.
+    n=_v145_norm(s)
+    if any(x in n for x in ('bu yazıda','bu makalede','aşağıda','yukarıda','bu soruların cevabı','giriş olarak')): score-=7
+    return score
+
+
+def _v145_select_sentences(rec):
+    title=_v145_title(rec)
+    pool=[]
+    for ci,(origin,chunk,bonus) in enumerate(_v145_all_chunks(rec)):
+        sents=_v145_split_sentences(chunk)
+        for pos,s in enumerate(sents[:45]):
+            pool.append({
+                's':s,'origin':origin,'chunk':ci,'pos':pos,
+                'score':_v145_sentence_score(s,title,bonus,pos)
+            })
+    if not pool: return [],'title'
+    pool.sort(key=lambda x:(-x['score'],x['chunk'],x['pos']))
+    anchor=pool[0]
+    if anchor['score']<5: return [],'title'
+    chosen=[anchor]
+    # İkinci cümle yalnız aynı haber bağlamını tamamlıyorsa alınır.
+    candidates=[]
+    for x in pool[1:]:
+        if x['chunk']!=anchor['chunk']: continue
+        if abs(x['pos']-anchor['pos'])>2: continue
+        if x['score']<8: continue
+        if _v145_similarity(x['s'],anchor['s'])>0.62: continue
+        # Başlıkla veya ilk cümleyle en az bir anlam bağı olsun.
+        if _v145_title_overlap(x['s'],title)<0.12 and _v145_similarity(x['s'],anchor['s'])<0.10: continue
+        candidates.append(x)
+    if candidates:
+        candidates.sort(key=lambda x:(abs(x['pos']-anchor['pos']),-x['score']))
+        if len(anchor['s'])+len(candidates[0]['s'])<=650:
+            chosen.append(candidates[0])
+    chosen=sorted(chosen,key=lambda x:x['pos'])
+    return [x['s'] for x in chosen],anchor['origin']
+
+
+def _v145_formalize_sentence(sentence):
+    s=_v145_clean(sentence)
+    if not s: return ''
+    # Kaynakların öznel/örgütsel unvanlarını rapor dilinde olguya çevirmeden nötrleştir.
+    try: s=_v142_neutralize_loaded_labels(s)
+    except Exception: pass
+    s=re.sub(r'\bşehadete\s+ulaşan\b','öldürülen',s,flags=re.I)
+    s=re.sub(r'\bşehit\s+düşen\b','öldürülen',s,flags=re.I)
+    # Kaynak metninde yer alan doğrudan gazetecilik fiillerini resmî geçmiş zamanla kapat.
+    endings=[
+        (r'\s+dedi\.?$',' ifade etmiştir.'),(r'\s+söyledi\.?$',' belirtmiştir.'),(r'\s+belirtti\.?$',' belirtmiştir.'),
+        (r'\s+kaydetti\.?$',' kaydetmiştir.'),(r'\s+açıkladı\.?$',' açıklamıştır.'),(r'\s+duyurdu\.?$',' duyurmuştur.'),
+        (r'\s+savundu\.?$',' savunmuştur.'),(r'\s+eleştirdi\.?$',' eleştirmiştir.'),(r'\s+uyardı\.?$',' uyarıda bulunmuştur.'),
+        (r'\s+öne sürdü\.?$',' öne sürmüştür.'),(r'\s+iddia etti\.?$',' iddia etmiştir.'),(r'\s+ifade etti\.?$',' ifade etmiştir.'),
+        (r'\s+vurguladı\.?$',' vurgulamıştır.'),(r'\s+hatırlattı\.?$',' hatırlatmıştır.'),(r'\s+değerlendirdi\.?$',' değerlendirmiştir.')
+    ]
+    for pat,repl in endings:
+        if re.search(pat,s,flags=re.I):
+            s=re.sub(pat,repl,s,flags=re.I); break
+    s=re.sub(r'\s+,',',',s)
+    s=re.sub(r',\s*disiplin',', disiplin',s,flags=re.I)
+    if s and s[-1] not in '.!?': s+='.'
+    return s
+
+
+def _v145_has_clear_actor(sentence):
+    s=_v145_clean(sentence); n=_v145_norm(s)
+    if not s: return False
+    # Güçlü kurum/aktör adı veya özel isimle başlaması yeterli.
+    if re.match(r'^(?:PKK|KCK|SDG|SDF|YPG|YPJ|PYD|DEM Parti|DEVA Partisi|AK Parti|MHP|CHP|Halk Savunma Birlikleri|KCK Yürütme|KCK Yurutme|İçişleri|Icisisleri|Irak|Türkiye|Turkiye|Suriye|ABD|Avrupa Birliği|Avrupa Birligi)\b',s,re.I): return True
+    if re.match(r'^[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü’\'\-]+(?:\s+[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü’\'\-]+){1,5}[,\s]',s): return True
+    return False
+
+
+def _v145_first_person_to_indirect(sentence):
+    s=_v145_clean(sentence)
+    if not s: return ''
+    # En sık görülen birinci çoğul gazetecilik/siyasi açıklama biçimleri.
+    reps=[
+        (r'\bbiz\b\s*',''),(r'\bbizim\b\s*',''),
+        (r'\bdestek verdik\b','destek verildiği'),(r'\bdestekliyoruz\b','desteklendiği'),
+        (r'\bdüşünüyoruz\b','düşünüldüğü'),(r'\bdusunuyoruz\b','düşünüldüğü'),
+        (r'\bistiyoruz\b','istendiği'),(r'\bsavunuyoruz\b','savunulduğu'),
+        (r'\binanıyoruz\b','inanıldığı'),(r'\bbekliyoruz\b','beklenildiği'),
+        (r'\byaptık\b','yapıldığı'),(r'\byaptik\b','yapıldığı'),(r'\bsöyledik\b','ifade edildiği'),(r'\bbelirttik\b','belirtildiği')
+    ]
+    for pat,repl in reps: s=re.sub(pat,repl,s,flags=re.I)
+    return _v145_clean(s)
+
+
+def _v145_anf_prefix(rec):
+    d=_v145_domain(rec)
+    if not (d=='anf-news.com' or d.endswith('.anf-news.com')): return ''
+    try: lang=_v142_anf_language(d)
+    except Exception:
+        if d.startswith('english.'): lang='İngilizce'
+        elif d.startswith('espanol.'): lang='İspanyolca'
+        else: lang='Türkçe'
+    return f"PKK’nın görüşlerine yakınlığıyla bilinen ANF News’in {lang} sitesindeki içerikte"
+
+
+def _v145_wrap_evidence(rec,sentences):
+    source=_v145_source(rec); d=_v145_domain(rec)
+    sents=[_v145_formalize_sentence(x) for x in sentences if _v145_clean(x)]
+    sents=[x for x in sents if x and not _v145_is_promo(x)]
+    # Yinelenen ikinci cümleleri yeniden ele.
+    clean=[]
+    for s in sents:
+        if clean and _v145_similarity(s,clean[-1])>0.70: continue
+        clean.append(s)
+    sents=clean[:2]
+    if not sents: return ''
+    first=sents[0]
+    n=_v145_norm(first)
+    # Sosyal medya: hesap + platform bağlamı, ancak metin varsa gerçek içerik yazılır.
+    try: is_social=(_v141_family(rec)=='Sosyal Medya') or bool(_v115_social_platform(rec.get('URL','')))
+    except Exception: is_social=False
+    if is_social:
+        try: account=_v141_account(rec)
+        except Exception: account=''
+        account=_v145_clean(account)
+        platform='X' if d in {'x.com','twitter.com'} else (_v145_clean(_v141_platform(rec)) or 'sosyal medya')
+        first=_v145_first_person_to_indirect(first)
+        low=first[0].lower()+first[1:] if first and first[0].isupper() and not _v145_has_clear_actor(first) else first
+        if account:
+            first=f"{account} adlı {platform} hesabında yapılan paylaşımda, {low}"
+        else:
+            first=f"{platform} üzerinde yapılan paylaşımda, {low}"
+        first=_v145_formalize_sentence(first)
+    else:
+        # ANF ve JPost: kaynak pozisyonu raporda açık tutulur.
+        prefix=_v145_anf_prefix(rec)
+        if prefix:
+            low=first[0].lower()+first[1:] if first and first[0].isupper() else first
+            first=_v145_formalize_sentence(f"{prefix}, {low}")
+        elif d in {'jpost.com','jerusalempost.com'} or 'jerusalem post' in _v145_norm(source):
+            if 'jerusalem post' not in n:
+                low=first[0].lower()+first[1:] if first and first[0].isupper() else first
+                first=_v145_formalize_sentence(f"The Jerusalem Post sitesindeki içerikte, {low}")
+        elif re.search(r'\b(?:biz|bizim|verdik|destekliyoruz|düşünüyoruz|dusunuyoruz|istiyoruz|savunuyoruz|inanıyoruz|bekliyoruz|yaptık|yaptik)\b',n):
+            clause=_v145_first_person_to_indirect(first).rstrip('.!?')
+            first=_v145_formalize_sentence(f"{source} tarafından yapılan açıklamada, {clause} ifade edilmiştir")
+        elif not _v145_has_clear_actor(first) and source not in {'Kaynak','Açık Kaynak'}:
+            low=first[0].lower()+first[1:] if first and first[0].isupper() else first
+            first=_v145_formalize_sentence(f"{source} tarafından yayımlanan içerikte, {low}")
+    return ' '.join([first]+sents[1:])
+
+
+def _v145_deheadline_case(text):
+    """Başlık Biçimindeki Her Kelimeyi Büyük Başlatma alışkanlığını cümle biçimine indirger."""
+    s=_v145_clean(text)
+    words=s.split()
+    alpha=[w for w in words if re.search(r'[A-Za-zÇĞİÖŞÜçğıöşü]',w)]
+    titleish=sum(1 for w in alpha if w[:1].isupper() and not w.isupper())
+    if not alpha or titleish/max(1,len(alpha))<0.50:
+        return s
+    out=[]
+    for i,w in enumerate(words):
+        bare=re.sub(r'^[^A-Za-zÇĞİÖŞÜçğıöşü]+|[^A-Za-zÇĞİÖŞÜçğıöşü’\'’-]+$','',w)
+        # Kısaltmalar ve kesme işaretli özel adlar korunur.
+        if not bare or bare.isupper() or "'" in bare or '’' in bare or i==0:
+            out.append(w); continue
+        if bare[:1].isupper() and bare[1:].islower():
+            j=w.find(bare)
+            out.append(w[:j]+bare[:1].lower()+bare[1:]+w[j+len(bare):])
+        else:
+            out.append(w)
+    return ' '.join(out)
+
+
+def _v145_possessive_subject(subject):
+    s=_v145_clean(subject).strip(' ,:-')
+    if not s: return ''
+    # Tam Türkçe iyelik ünlü uyumu morfolojik olarak karmaşık; özel ad/ülke/kurum için güvenli kesme işareti.
+    # Son harfe göre yaklaşık ek seçimi.
+    low=s.lower()
+    vowels=[c for c in low if c in 'aeıioöuü']
+    last=vowels[-1] if vowels else 'i'
+    if last in 'aı': suf='ın'
+    elif last in 'ei': suf='in'
+    elif last in 'ou': suf='un'
+    else: suf='ün'
+    if s[-1].lower() in 'aeıioöuü': suf='n'+suf
+    return s+"'"+suf
+
+
+def _v145_headline_clause(title):
+    t=_v145_clean(title).rstrip(' .!?')
+    if not t: return ''
+    # Seri/sekme artıkları.
+    t=re.sub(r'\s*[-–—|:]?\s*(?:Part\s+(?:One|Two|Three|Four|Five)|Bölüm\s*\d+|Birinci Bölüm|İkinci Bölüm|Üçüncü Bölüm)\s*$','',t,flags=re.I).strip()
+    # Soru + iddia başlıkları: "X geldi mi? Y görüştüğü iddiası" gibi.
+    if '?' in t and re.search(r'iddia',t,flags=re.I):
+        left,right=t.split('?',1)
+        left=_v145_clean(left); right=_v145_clean(right)
+        # Soru fiillerini olgu değil iddia biçiminde adlaştır.
+        left=re.sub(r'\bGeldi\s+mi$','geldiği',left,flags=re.I)
+        left=re.sub(r'\bGörüştü\s+mü$','görüştüğü',left,flags=re.I)
+        right=re.sub(r'\bİddiası$','',right,flags=re.I).strip(' :-')
+        right=re.sub(r'\biddiası$','',right,flags=re.I).strip(' :-')
+        if left and right:
+            return f"{left} ve {right[0].lower()+right[1:] if right else right} öne sürülmüştür."
+    # İddia/görüş biçimindeki yabancı başlık çevirilerinde başlığı ham bırakma.
+    n=_v145_norm(t)
+    m=re.match(r'(.+?)\s+olmadan\s+(.+?)\s+(?:olmaz|mümkün değildir|mumkun degildir)$',t,flags=re.I)
+    if m:
+        return f"{m.group(1).strip()} olmadan {m.group(2).strip().lower()} mümkün olmadığı savunulmuştur."
+    # "X: Y" başlıklarında iki noktayı normal cümleye çevir.
+    if ':' in t:
+        left,right=t.split(':',1)
+        if len(left.strip())>2 and len(right.strip())>10:
+            t=f"{left.strip()}, {right.strip()}"
+    # Haber başlığının son fiilini dolaylı anlatıma çevir.
+    verbmap=[
+        ('süre verdi','süre verdiği'),('verdi','verdiği'),('açıkladı','açıkladığı'),('belirtti','belirttiği'),
+        ('söyledi','ifade ettiği'),('duyurdu','duyurduğu'),('uyardı','uyarıda bulunduğu'),('eleştirdi','eleştirdiği'),
+        ('savundu','savunduğu'),('iddia etti','iddia ettiği'),('öne sürdü','öne sürdüğü'),('görüştü','görüştüğü'),
+        ('geldi','geldiği'),('başladı','başladığı'),('çekildi','çekildiği'),('çıkarıldı','çıkarıldığı'),('ihraç edildi','ihraç edildiği'),
+        ('karar verdi','karar verdiği'),('çağrı yaptı','çağrıda bulunduğu')
+    ]
+    # "X, ... verdi" -> "X'ın ... verdiği"
+    if ',' in t:
+        subject,rest=t.split(',',1)
+        for src,dst in sorted(verbmap,key=lambda x:len(x[0]),reverse=True):
+            if re.search(r'\b'+re.escape(src)+r'$',rest,flags=re.I):
+                rest=re.sub(r'\b'+re.escape(src)+r'$',dst,rest,flags=re.I)
+                rest=_v145_deheadline_case(rest.strip())
+                return f"{_v145_possessive_subject(subject)} {rest} belirtilmiştir."
+    # Özne virgülsüz başlıklarda sadece fiili dolaylılaştırıp kaynak atfıyla kullan.
+    for src,dst in sorted(verbmap,key=lambda x:len(x[0]),reverse=True):
+        if re.search(r'\b'+re.escape(src)+r'$',t,flags=re.I):
+            return re.sub(r'\b'+re.escape(src)+r'$',dst,t,flags=re.I)+' belirtilmiştir.'
+    # "... iddiası" güvenli fallback.
+    if re.search(r'\biddiası$',t,flags=re.I):
+        core=re.sub(r'\biddiası$','',t,flags=re.I).strip(' :-')
+        return f"{core} yönünde iddiada bulunulmuştur."
+    return ''
+
+
+def _v145_fallback(rec):
+    source=_v145_source(rec); title=_v145_title(rec)
+    d=_v145_domain(rec)
+    # Yabancı başlığı Türkçeleştirmeyi dene.
+    try:
+        if title and not _v143_is_turkishish(title):
+            tr=_v143_translate_to_tr(title)
+            if tr: title=_v145_clean(tr)
+    except Exception:
+        pass
+    # Sosyal kayıtta başlık yalnız hesap adıysa anlamsız "X yapılan" üretme.
+    try: is_social=(_v141_family(rec)=='Sosyal Medya') or bool(_v115_social_platform(rec.get('URL','')))
+    except Exception: is_social=False
+    if is_social:
+        try: account=_v145_clean(_v141_account(rec))
+        except Exception: account=''
+        if title and account and _v145_similarity(title,account)>0.70:
+            platform='X' if d in {'x.com','twitter.com'} else 'sosyal medya'
+            return _v145_formalize_sentence(f"{account} adlı {platform} hesabında Terörsüz Türkiye sürecine ilişkin bir paylaşım yapılmıştır")
+    clause=_v145_headline_clause(title)
+    if clause:
+        # ANF/JPost bağlamı korunabilir.
+        if _v145_anf_prefix(rec):
+            low=clause[0].lower()+clause[1:] if clause else clause
+            return _v145_formalize_sentence(f"{_v145_anf_prefix(rec)}, {low}")
+        if _v145_domain(rec) in {'jpost.com','jerusalempost.com'}:
+            low=clause[0].lower()+clause[1:] if clause else clause
+            return _v145_formalize_sentence(f"The Jerusalem Post sitesindeki içerikte, {low}")
+        return _v145_formalize_sentence(clause)
+    if title:
+        # Başlığı aynen yapıştırmak yerine açıkça bunun yalnız başlık düzeyi bilgi olduğunu belirt.
+        return _v145_formalize_sentence(f"{source} tarafından yayımlanan içerikte, {title.rstrip(' .!?')} başlıklı gelişmeye yer verilmiştir")
+    return _v145_formalize_sentence(f"{source} kaynağında Terörsüz Türkiye süreciyle bağlantılı bir gelişmeye yer verilmiştir")
+
+
+def _v145_generate_paragraph(rec):
+    sents,level=_v145_select_sentences(rec)
+    if sents:
+        out=_v145_wrap_evidence(rec,sents)
+        if out and len(_v145_tokens(out))>=7:
+            return out,level
+    # İndeks kurtarma: yalnız o kayıt için, sonra aynı evrensel motorla işle.
+    try: recovered=_v143_recover_from_index(rec)
+    except Exception: recovered=''
+    recovered=_v145_clean(recovered)
+    if recovered:
+        # Geçici kayıtta recovered metni manuel not gibi yüksek öncelikli kullan.
+        tmp=dict(rec); row=dict(rec.get('Satır') or {}); row['Manuel_Not']=recovered; tmp['Satır']=row
+        sents,_=_v145_select_sentences(tmp)
+        if sents:
+            out=_v145_wrap_evidence(rec,sents)
+            if out and len(_v145_tokens(out))>=7: return out,'index'
+    return _v145_fallback(rec),'title'
+
+
+def _v145_add_body(doc,text):
+    p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+    p.paragraph_format.first_line_indent=Cm(1.0); p.paragraph_format.line_spacing=1.0
+    p.paragraph_format.space_before=Pt(0); p.paragraph_format.space_after=Pt(7)
+    r=p.add_run(_v145_clean(text)); r.font.name='Times New Roman'; r.font.size=Pt(10.5)
+    return p
+
+
+def _v145_analysis_basket_report_docx(df):
+    doc=Document(); sec=doc.sections[0]
+    sec.top_margin=Cm(2.0); sec.bottom_margin=Cm(2.0); sec.left_margin=Cm(2.3); sec.right_margin=Cm(2.3)
+    normal=doc.styles['Normal']; normal.font.name='Times New Roman'; normal.font.size=Pt(10.5)
+    normal._element.rPr.rFonts.set(qn('w:eastAsia'),'Times New Roman')
+
+    title=doc.add_paragraph(); title.alignment=WD_ALIGN_PARAGRAPH.CENTER; title.paragraph_format.space_after=Pt(0)
+    tr=title.add_run(V145_REPORT_TITLE); tr.bold=True; tr.font.name='Times New Roman'; tr.font.size=Pt(12)
+    datep=doc.add_paragraph(); datep.alignment=WD_ALIGN_PARAGRAPH.RIGHT; datep.paragraph_format.space_after=Pt(4)
+    dr=datep.add_run(datetime.now(timezone(timedelta(hours=3))).strftime('%d.%m.%Y')); dr.font.name='Times New Roman'; dr.font.size=Pt(9)
+
+    rows,details=_v142_resolve_preserve_order(df)
+    records=[_v142_record(row,detail,i+1) for i,(row,detail) in enumerate(zip(rows,details))]
+    footnotes=[]; diag={'total':len(records),'written':0,'content':0,'index':0,'title':0}
+    for rec in records:  # skip/dedup YOK
+        paragraph,level=_v145_generate_paragraph(rec)
+        if not paragraph: paragraph=_v145_fallback(rec); level='title'
+        p=_v145_add_body(doc,paragraph); diag['written']+=1; diag['content' if level not in {'index','title'} else level]+=1
+        url=str(rec.get('URL','') or '').strip()
+        if url.startswith('http'):
+            fid=len(footnotes)+1; p.add_run(' ')
+            try: _v124_add_body_footnote(p,fid)
+            except Exception:
+                try: _v123_add_footnote_reference(p,fid)
+                except Exception:
+                    rr=p.add_run(str(fid)); rr.font.superscript=True
+            footnotes.append({'id':fid,'url':url})
+    if not records: _v145_add_body(doc,'Analiz sepetinde raporlanacak içerik bulunmamaktadır.')
+    try: st.session_state['_v145_last_report_diag']=diag
+    except Exception: pass
+    bio=BytesIO(); doc.save(bio); raw=bio.getvalue()
+    try: return _v124_patch_docx_footnotes(raw,footnotes)
+    except Exception:
+        try: return _v123_patch_docx_footnotes(raw,footnotes)
+        except Exception: return raw
+
+
+# V145 sabit paragraf motoru aktif rapor üreticisidir.
+_v114_analysis_basket_report_docx = _v145_analysis_basket_report_docx
+
+# ============================================================
+# /V145 SABİT PARAGRAF KURGUSU
 # ============================================================
 
 rows=st.session_state.rows
