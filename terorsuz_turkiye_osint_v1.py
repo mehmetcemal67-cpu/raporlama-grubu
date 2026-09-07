@@ -34665,8 +34665,8 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
         if st.button('📝 Detaylı Bilgi Notu Oluştur',use_container_width=True,key=f'{key_prefix}_note'):
             _v3_make_note(pd.DataFrame(getter()),key_prefix)
     with c3:
-        if st.button('🧠 PDF TARZI SÖYLEM ANALİZİ OLUŞTUR',type='primary',use_container_width=True,key=f'{key_prefix}_report'):
-            with st.spinner('Sepetteki içerikler analitik rapor motoruyla işleniyor...'):
+        if st.button('📝 SON DURUM RAPORU OLUŞTUR',type='primary',use_container_width=True,key=f'{key_prefix}_report'):
+            with st.spinner('Sepetteki içerikler yeni Son Durum raporu formatında hazırlanıyor...'):
                 try:
                     st.session_state[f'{key_prefix}_report_bytes']=_v114_analysis_basket_report_docx(pd.DataFrame(getter()))
                 except Exception as e:
@@ -34683,9 +34683,9 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
         )
     if st.session_state.get(f'{key_prefix}_report_bytes'):
         st.download_button(
-            '⬇️ KAYNAKLI ANALİZ RAPORUNU İNDİR',
+            '⬇️ TERÖRSÜZ TÜRKİYE SON DURUM RAPORUNU İNDİR',
             st.session_state[f'{key_prefix}_report_bytes'],
-            file_name=f'{file_prefix}_Soylem_Analizi_V136_{date.today()}.docx',
+            file_name=f'{file_prefix}_Terorsuz_Turkiye_Son_Durum_V141_{date.today()}.docx',
             mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             use_container_width=True,
             key=f'{key_prefix}_report_download'
@@ -35346,12 +35346,12 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
 
     with c4:
         if st.button(
-            '🧠 PDF TARZI SÖYLEM ANALİZİ OLUŞTUR',
+            '📝 SON DURUM RAPORU OLUŞTUR',
             type='primary',
             use_container_width=True,
             key=f'{key_prefix}_report'
         ):
-            with st.spinner('Sepetteki içerikler analitik rapor motoruyla işleniyor...'):
+            with st.spinner('Sepetteki içerikler yeni Son Durum raporu formatında hazırlanıyor...'):
                 try:
                     st.session_state[f'{key_prefix}_report_bytes']=_v114_analysis_basket_report_docx(
                         pd.DataFrame([_v137_fix_record(r) for r in getter()])
@@ -35371,9 +35371,9 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
 
     if st.session_state.get(f'{key_prefix}_report_bytes'):
         st.download_button(
-            '⬇️ KAYNAKLI ANALİZ RAPORUNU İNDİR',
+            '⬇️ TERÖRSÜZ TÜRKİYE SON DURUM RAPORUNU İNDİR',
             st.session_state[f'{key_prefix}_report_bytes'],
-            file_name=f'{file_prefix}_Soylem_Analizi_V137_{date.today()}.docx',
+            file_name=f'{file_prefix}_Terorsuz_Turkiye_Son_Durum_V141_{date.today()}.docx',
             mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             use_container_width=True,
             key=f'{key_prefix}_report_download'
@@ -35498,6 +35498,534 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
 
 # ============================================================
 # /V137
+# ============================================================
+
+
+# ============================================================
+# V141 — "TERÖRSÜZ TÜRKİYE SÜRECİNDE SON DURUM" RAPOR FORMATI
+#
+# KARARLI TABAN: V140.
+# V140'ın tarama, manuel link havuzu, orijinal URL koruma, sepet ve Gephi
+# mantığına dokunmaz. Yalnız Analiz Sepeti Word raporunun anlatım biçimini
+# kullanıcının sağladığı örnek raporun kurumsal/özetleyici formuna çevirir.
+#
+# Hedef biçim:
+#   Tarih
+#   TERÖRSÜZ TÜRKİYE SÜRECİNDE SON DURUM
+#   1. Dış Basın
+#   2. İç Basın
+#   3. Sosyal Medya
+#   4. Değerlendirme
+#
+# Yazım ilkeleri:
+# - Kaynak/aktör önce verilir; haber 1-3 kısa cümlede özetlenir.
+# - "İçerik türü bakımından...", "bu içerik raporda..." gibi mekanik
+#   analiz cümleleri kullanılmaz.
+# - İddia, görüş, eleştiri ve değerlendirmeler kaynağa/aktöre atfedilir;
+#   rapor bunları doğrulanmış olgu gibi sahiplenmez.
+# - Kurumsal haber dili: "belirtmiştir", "vurgulamıştır", "savunulmuştur",
+#   "ifade etmiştir", "yer almıştır", "gündeme taşınmıştır",
+#   "değerlendirilmiştir" kalıpları ölçülü biçimde kullanılır.
+# - Uzun kaynak özeti en fazla iki anlamlı cümleye sıkıştırılır.
+# - Orijinal haber URL'si kaybolmaz; görünümü bozmamak için Word dipnotunda
+#   kaynak bağlantısı olarak korunur.
+# ============================================================
+
+V141_REPORT_TITLE = 'TERÖRSÜZ TÜRKİYE SÜRECİNDE SON DURUM'
+V141_SECTION_ORDER = ['Dış Basın', 'İç Basın', 'Sosyal Medya']
+
+
+def _v141_clean(value):
+    try:
+        s=_v116_clean_original_text(value)
+    except Exception:
+        s=str(value or '')
+    s=html.unescape(str(s or ''))
+    s=re.sub(r'\s+',' ',s).strip()
+    return s
+
+
+def _v141_domain(rec):
+    try:
+        return _v127_domain(rec)
+    except Exception:
+        try:
+            return _tt_norm_domain(rec.get('URL','')).replace('www.','')
+        except Exception:
+            return ''
+
+
+def _v141_family(rec):
+    try:
+        return _v127_source_family(rec)
+    except Exception:
+        try:
+            return _v23_source_family(rec)
+        except Exception:
+            return str(rec.get('Kaynak_Grubu','') or rec.get('Kaynak Ailesi','') or 'Diğer')
+
+
+def _v141_section(rec):
+    fam=_v141_family(rec)
+    d=_v141_domain(rec)
+    try:
+        if _v127_platform(rec):
+            return 'Sosyal Medya'
+    except Exception:
+        pass
+    try:
+        if _v115_social_platform(rec.get('URL','')):
+            return 'Sosyal Medya'
+    except Exception:
+        pass
+    if fam=='Sosyal Medya':
+        return 'Sosyal Medya'
+    if fam in {'Yabancı Basın','Think Tank / Analiz','Kürt Bölgesel Medyası','PKK/KCK Açık Kaynak'}:
+        return 'Dış Basın'
+    # Alan adı açık biçimde dış/bölgesel/hareket kaynağıysa aile etiketi bozuk olsa da dış bölümde tut.
+    try:
+        if _v127_domain_in(d,V127_FOREIGN_DOMAINS) or _v127_domain_in(d,V127_THINK_DOMAINS) \
+           or _v127_domain_in(d,V127_KURDISH_REGIONAL_DOMAINS) or _v127_domain_in(d,V127_MOVEMENT_DOMAINS):
+            return 'Dış Basın'
+    except Exception:
+        pass
+    return 'İç Basın'
+
+
+def _v141_source_name(rec):
+    try:
+        s=_v126_site_name(rec)
+    except Exception:
+        try:
+            s=_v124_source(rec)
+        except Exception:
+            s=str(rec.get('Kaynak','') or '')
+    s=_v141_clean(s)
+    # Analitik açıklama eklerinden yalnız görünen mecra adını bırak.
+    for sep in [' — ',' – ',' | ']:
+        if sep in s:
+            s=s.split(sep,1)[0].strip()
+    return s or (_v141_domain(rec).replace('www.','') if _v141_domain(rec) else 'Açık Kaynak')
+
+
+def _v141_content_kind(rec):
+    try:
+        return _v126_content_kind(rec)
+    except Exception:
+        return 'haber içeriği'
+
+
+def _v141_platform(rec):
+    try:
+        p=_v127_platform(rec)
+        if p:
+            return p
+    except Exception:
+        pass
+    try:
+        p=_v126_platform(rec)
+        if p:
+            return p
+    except Exception:
+        pass
+    return 'sosyal medya'
+
+
+def _v141_account(rec):
+    try:
+        a=_v126_social_account(rec)
+        if a:
+            return _v141_clean(a)
+    except Exception:
+        pass
+    return ''
+
+
+def _v141_author(rec):
+    try:
+        a,ctx=_v126_author(rec)
+        a=_v141_clean(a)
+        if a:
+            return a
+    except Exception:
+        pass
+    title=_v141_clean(rec.get('Başlık',''))
+    # "X yazdı/kaleme aldı" gibi açık başlık yapıları dışında kişi tahmini yapma.
+    m=re.search(r'([A-ZÇĞİÖŞÜ][a-zçğıöşü]+(?:\s+[A-ZÇĞİÖŞÜ][a-zçğıöşü]+){1,3})\s+(?:yazdı|kaleme aldı)',title)
+    return m.group(1).strip() if m else ''
+
+
+def _v141_actor(rec):
+    source=_v141_source_name(rec)
+    try:
+        actor=_v141_clean(_v119_actor_from_text(rec))
+    except Exception:
+        actor=''
+    if not actor:
+        return ''
+    ns=norm(source); na=norm(actor)
+    if not na or na==ns or na in {'açık kaynak','acik kaynak'}:
+        return ''
+    # Kaynak adı fallback olarak aktör diye dönmüşse kullanma.
+    if ns and (na in ns or ns in na) and len(actor.split())<=4:
+        return ''
+    return actor
+
+
+def _v141_sentence_parts(text):
+    s=_v141_clean(text)
+    if not s:
+        return []
+    # Nokta sonrası yeni cümle; kısaltmalar için aşırı parçalamamaya dikkat et.
+    parts=re.split(r'(?<=[.!?])\s+(?=[A-ZÇĞİÖŞÜ0-9“\"])',s)
+    out=[]
+    seen=set()
+    for part in parts:
+        p=_v141_clean(part).strip(' -–—')
+        if len(p)<24:
+            continue
+        key=norm(p)[:260]
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+    return out
+
+
+def _v141_is_turkish(text):
+    t=' '+norm(text)+' '
+    clues=[
+        ' ve ',' bir ',' olarak ',' olduğu',' olduğunu',' gerekti',' belirt',' vurgula',
+        ' ifade ',' süreç',' surec',' türkiye',' turkiye',' örgüt',' orgut',' açıklama',
+        ' degerlend',' değerlendir',' savun',' dikkat çek',' tepki',' görüş',' gorus'
+    ]
+    return sum(1 for x in clues if x in t)>=2
+
+
+def _v141_frame_fallback(rec):
+    frames=[]
+    raw=rec.get('Çerçeveler',[]) or []
+    if isinstance(raw,str):
+        raw=[x.strip() for x in re.split(r'[,;|]',raw) if x.strip()]
+    for x in raw:
+        x=_v141_clean(x)
+        if x and x not in frames:
+            frames.append(x)
+    if not frames:
+        try:
+            raw2=rec.get('Satır',{}).get('Çerçeve','') if isinstance(rec.get('Satır'),dict) else ''
+            frames=[_v141_clean(x) for x in re.split(r'[,;|]',str(raw2)) if _v141_clean(x)]
+        except Exception:
+            frames=[]
+    if frames:
+        chosen=frames[:2]
+        if len(chosen)==1:
+            return f"Terörsüz Türkiye sürecinin {chosen[0].lower()} çerçevesinde ele alındığı belirtilmiştir"
+        return f"Terörsüz Türkiye sürecinin {chosen[0].lower()} ve {chosen[1].lower()} başlıkları üzerinden ele alındığı belirtilmiştir"
+    title=_v141_clean(rec.get('Başlık',''))
+    if title:
+        return f'“{title[:210]}” başlığıyla Terörsüz Türkiye gündemine ilişkin bir değerlendirmeye yer verilmiştir'
+    return 'Terörsüz Türkiye sürecine ilişkin değerlendirmelere yer verilmiştir'
+
+
+def _v141_fact(rec):
+    # 1) Önce mevcut kaynak-güvenli kısa olgu motorunu dene.
+    try:
+        fact=_v141_clean(_v126_fact_brief(rec))
+    except Exception:
+        fact=''
+    if fact and _v141_is_turkish(fact):
+        if not re.search(r'bu içerik|raporda konumlandır|içerik türü bakımından',norm(fact)):
+            fact=re.sub(r'^(Haberde|İçerikte|Paylaşımda|Yazıda|Makalede)\s*','',fact,flags=re.I).strip(' ,;:-')
+            if len(fact)>520:
+                fact=fact[:517].rstrip()+'…'
+            return fact.rstrip(' .;')
+
+    # 2) Doğrudan doğrulanmış/eldeki özetten ilk iki anlamlı cümleyi kullan.
+    summary=_v141_clean(rec.get('Özet',''))
+    parts=_v141_sentence_parts(summary)
+    picked=[]
+    title_n=norm(_v141_clean(rec.get('Başlık','')))
+    for p in parts:
+        if title_n and norm(p)==title_n:
+            continue
+        if not _v141_is_turkish(p):
+            continue
+        picked.append(p)
+        if len(picked)>=2:
+            break
+    if picked:
+        fact=' '.join(picked)
+        fact=re.sub(r'^(Haberde|İçerikte|Paylaşımda|Yazıda|Makalede)\s*','',fact,flags=re.I).strip(' ,;:-')
+        if len(fact)>560:
+            fact=fact[:557].rstrip()+'…'
+        return fact.rstrip(' .;')
+
+    # 3) Türkçe başlık varsa onu nötr kurumsal cümleye çevir.
+    title=_v141_clean(rec.get('Başlık',''))
+    if title and _v141_is_turkish(title):
+        return f'“{title[:220]}” başlığıyla konu gündeme taşınmıştır'
+
+    # 4) Yabancı dil içerikte uydurma çeviri yapma; mevcut çerçevelerden temkinli özet üret.
+    return _v141_frame_fallback(rec)
+
+
+def _v141_medium_phrase(rec):
+    d=_v141_domain(rec)
+    fam=_v141_family(rec)
+    source=norm(_v141_source_name(rec))
+    if d in {'foreignpolicy.com'} or 'foreign policy' in source:
+        return 'dergide'
+    if d in {'warontherocks.com'} or 'war on the rocks' in source:
+        return 'analiz platformunda'
+    if any(x in d for x in ['ilketv','medyahabertv','channel8','ronahi.tv','sterktv']):
+        return 'kanalda'
+    if 'bbc' in d or source.startswith('bbc'):
+        return 'yayın kuruluşunda'
+    if fam=='Think Tank / Analiz':
+        return 'düşünce kuruluşunda'
+    if fam in {'Kürt Bölgesel Medyası','PKK/KCK Açık Kaynak'}:
+        return 'internet sitesinde'
+    if fam=='Yabancı Basın':
+        return 'yayın organında'
+    return 'haber sitesinde'
+
+
+def _v141_lower_start(text):
+    s=_v141_clean(text)
+    if not s:
+        return s
+    # Özel adla başlayan cümleleri zorla küçültme; yalnız tipik fiil/isim başlangıçlarını küçült.
+    first=s.split(' ',1)[0]
+    if first in {'Süreç','Terörsüz','Haberde','Yazıda','Makalede','Paylaşımda','Konu','Türkiye’de','Türkiye\'de'}:
+        return s[0].lower()+s[1:]
+    return s
+
+
+def _v141_paragraph_text(rec,section):
+    source=_v141_source_name(rec)
+    fact=_v141_fact(rec)
+    fact=_v141_lower_start(fact).rstrip(' .;')
+    kind=_v141_content_kind(rec)
+
+    if section=='Sosyal Medya':
+        platform=_v141_platform(rec)
+        account=_v141_account(rec)
+        if account:
+            lead=f"{platform}'da {account} tarafından yapılan paylaşımda"
+        else:
+            lead=f"{platform}'da yapılan paylaşımda"
+        return f"{lead}, {fact}."
+
+    actor=_v141_actor(rec)
+    author=_v141_author(rec)
+    medium=_v141_medium_phrase(rec)
+
+    if 'röportaj' in kind or 'açıklama' in kind:
+        if actor:
+            return f"{actor}, {source} isimli yayın organına yaptığı açıklamada, {fact}."
+        return f"{source} isimli {medium} yayımlanan röportaj/açıklama haberinde, {fact}."
+
+    if author:
+        if 'köşe' in kind or 'yorum' in kind:
+            noun='köşe yazısında'
+        elif 'analiz' in kind:
+            noun='analiz yazısında'
+        else:
+            noun='makalede'
+        return f"{source} isimli {medium} yayımlanan {author} imzalı {noun} özetle, {fact}."
+
+    if 'köşe' in kind or 'yorum' in kind:
+        return f"{source} isimli {medium} yayımlanan köşe yazısında, {fact}."
+    if 'analiz' in kind:
+        return f"{source} isimli {medium} yayımlanan analiz yazısında, {fact}."
+    return f"{source} isimli {medium} yayımlanan haberde, {fact}."
+
+
+def _v141_frame_counts(records):
+    counts={}
+    for rec in records:
+        raw=rec.get('Çerçeveler',[]) or []
+        if isinstance(raw,str):
+            raw=[x.strip() for x in re.split(r'[,;|]',raw) if x.strip()]
+        for x in raw:
+            x=_v141_clean(x)
+            if not x:
+                continue
+            counts[x]=counts.get(x,0)+1
+    return sorted(counts.items(),key=lambda kv:(-kv[1],kv[0]))
+
+
+def _v141_join_names(items):
+    vals=[_v141_clean(x) for x in items if _v141_clean(x)]
+    vals=list(dict.fromkeys(vals))
+    if not vals:
+        return ''
+    if len(vals)==1:
+        return vals[0]
+    if len(vals)==2:
+        return vals[0]+' ve '+vals[1]
+    return ', '.join(vals[:-1])+' ve '+vals[-1]
+
+
+def _v141_assessment(records,sections):
+    dış=sections.get('Dış Basın',[])
+    iç=sections.get('İç Basın',[])
+    sosyal=sections.get('Sosyal Medya',[])
+    sentences=[]
+
+    arenas=[]
+    if iç: arenas.append('ulusal basında')
+    if dış: arenas.append('uluslararası ve bölgesel medya mecralarında')
+    if sosyal: arenas.append('sosyal medyada')
+    if arenas:
+        sentences.append(
+            'Terörsüz Türkiye sürecinin '+_v141_join_names(arenas)+' yoğun biçimde takip edildiği anlaşılmaktadır.'
+        )
+
+    top=_v141_frame_counts(records)[:3]
+    if top:
+        names=[x[0].lower() for x in top]
+        sentences.append(
+            'Genel söylemde '+_v141_join_names(names)+' başlıklarının öne çıktığı görülmektedir.'
+        )
+
+    # Dış basın: yabancı/think tank ile Kürt bölgesel/hareket çevresini aynı torbaya atmadan özetle.
+    if dış:
+        foreign=[r for r in dış if _v141_family(r) in {'Yabancı Basın','Think Tank / Analiz'}]
+        regional=[r for r in dış if _v141_family(r) in {'Kürt Bölgesel Medyası','PKK/KCK Açık Kaynak'}]
+        if foreign:
+            ftop=_v141_frame_counts(foreign)[:2]
+            if ftop:
+                sentences.append(
+                    'Uluslararası basın ve analiz kuruluşlarının süreci '+
+                    _v141_join_names([x[0].lower() for x in ftop])+
+                    ' ekseninde ele aldığı değerlendirilmektedir.'
+                )
+        if regional:
+            rtop=_v141_frame_counts(regional)[:2]
+            if rtop:
+                sentences.append(
+                    'Kürt bölgesel ve hareket çevresi kaynaklarında ise '+
+                    _v141_join_names([x[0].lower() for x in rtop])+
+                    ' vurgularının daha belirgin olduğu anlaşılmaktadır.'
+                )
+
+    if sosyal:
+        stop=_v141_frame_counts(sosyal)[:2]
+        if stop:
+            sentences.append(
+                'Sosyal medya paylaşımlarında '+_v141_join_names([x[0].lower() for x in stop])+
+                ' başlıkları etrafındaki tepkilerin öne çıktığı görülmektedir.'
+            )
+
+    # Örnek rapor kısa değerlendirme kullanıyor; en fazla dört cümle tut.
+    return ' '.join(sentences[:4]) or 'Seçili açık kaynak içeriklerde Terörsüz Türkiye sürecinin farklı medya ve söylem çevrelerince yakından takip edildiği görülmektedir.'
+
+
+def _v141_add_heading(doc,text):
+    p=doc.add_paragraph()
+    p.paragraph_format.space_before=Pt(5)
+    p.paragraph_format.space_after=Pt(4)
+    p.paragraph_format.keep_with_next=True
+    r=p.add_run(text)
+    r.bold=True
+    r.font.name='Times New Roman'
+    r.font.size=Pt(11)
+    return p
+
+
+def _v141_add_body(doc,text):
+    p=doc.add_paragraph()
+    p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+    p.paragraph_format.first_line_indent=Cm(0)
+    p.paragraph_format.line_spacing=1.0
+    p.paragraph_format.space_before=Pt(0)
+    p.paragraph_format.space_after=Pt(5)
+    p.paragraph_format.keep_together=False
+    r=p.add_run(_v141_clean(text))
+    r.font.name='Times New Roman'
+    r.font.size=Pt(10.5)
+    return p
+
+
+def _v141_analysis_basket_report_docx(df):
+    doc=Document()
+    sec=doc.sections[0]
+    sec.top_margin=Cm(1.6)
+    sec.bottom_margin=Cm(1.6)
+    sec.left_margin=Cm(2.2)
+    sec.right_margin=Cm(2.2)
+
+    normal=doc.styles['Normal']
+    normal.font.name='Times New Roman'
+    normal.font.size=Pt(10.5)
+    normal._element.rPr.rFonts.set(qn('w:eastAsia'),'Times New Roman')
+
+    # Örnek formata uygun olarak tarih üstte sağda, başlık ortada.
+    datep=doc.add_paragraph()
+    datep.alignment=WD_ALIGN_PARAGRAPH.RIGHT
+    datep.paragraph_format.space_after=Pt(8)
+    dr=datep.add_run(datetime.now().astimezone().strftime('%d.%m.%Y'))
+    dr.font.name='Times New Roman'; dr.font.size=Pt(9.5)
+
+    title=doc.add_paragraph()
+    title.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    title.paragraph_format.space_after=Pt(8)
+    tr=title.add_run(V141_REPORT_TITLE)
+    tr.bold=True; tr.font.name='Times New Roman'; tr.font.size=Pt(12)
+
+    rows,details=_v114_resolve_basket_rows(df)
+    records=_v116_citation_records(rows,details)
+    footnotes=[]
+
+    sections={name:[] for name in V141_SECTION_ORDER}
+    for rec in records:
+        sections.setdefault(_v141_section(rec),[]).append(rec)
+
+    for idx,name in enumerate(V141_SECTION_ORDER,1):
+        _v141_add_heading(doc,f'{idx}. {name}')
+        items=sections.get(name,[])
+        if not items:
+            _v141_add_body(doc,'Bu bölümde raporlamaya değer seçili içerik bulunmamaktadır.')
+            continue
+        for rec in items:
+            p=_v141_add_body(doc,_v141_paragraph_text(rec,name))
+            url=str(rec.get('URL','') or '').strip()
+            if url.startswith('http'):
+                fid=len(footnotes)+1
+                p.add_run(' ')
+                try:
+                    _v124_add_body_footnote(p,fid)
+                except Exception:
+                    try:
+                        _v123_add_footnote_reference(p,fid)
+                    except Exception:
+                        rr=p.add_run(str(fid)); rr.font.superscript=True
+                footnotes.append({'id':fid,'url':url})
+
+    _v141_add_heading(doc,'4. Değerlendirme')
+    _v141_add_body(doc,_v141_assessment(records,sections))
+
+    bio=BytesIO()
+    doc.save(bio)
+    raw=bio.getvalue()
+    # Mevcut gerçek Word dipnot motoru korunur. Böylece görünüm örnek rapor gibi
+    # kalırken kaynak bağlantıları kaybolmaz.
+    try:
+        return _v124_patch_docx_footnotes(raw,footnotes)
+    except Exception:
+        try:
+            return _v123_patch_docx_footnotes(raw,footnotes)
+        except Exception:
+            return raw
+
+
+# V141, Analiz Sepeti raporunun aktif üreticisidir. Gephi ve bilgi notu motorları değişmez.
+_v114_analysis_basket_report_docx = _v141_analysis_basket_report_docx
+
+# ============================================================
+# /V141 SON DURUM RAPOR FORMATI
 # ============================================================
 
 
