@@ -34314,6 +34314,446 @@ _v3_remove_analysis=_v136_daily_remove
 # /V136
 # ============================================================
 
+
+
+# ============================================================
+# V137 — KÜRT MEDYASI / PKK-KCK AÇIK KAYNAK ZENGİNLEŞTİRME
+#        + GÜNCEL DOMAIN / TIKLANABİLİR LİNK DÜZELTMESİ
+#
+# V136 korunur. Bu sürüm yalnız:
+# 1) Kürt medyası şemsiye izlemesini genişletir.
+# 2) PKK/KCK açık kaynak / hareket çevresi taramasını güncel aktif
+#    domainlerle genişletir.
+# 3) Eski/yanlış domainlerden gelen sonuç linklerini bilinen güncel
+#    domainlere çevirir.
+# 4) ANF dil sürümlerini güncel *.anf-news.com yapısına taşır.
+#
+# Özgür Gündem aktif yayın olarak eklenmez; tarihsel marka/anahtar kelime
+# olarak sorgularda tutulur. Güncel yayınlar ayrıca hedeflenir.
+# ============================================================
+
+# ------------------------------------------------------------
+# 1) GÜNCEL AKTİF KAYNAK HAVUZLARI
+# ------------------------------------------------------------
+
+V137_KURDISH_REGIONAL_ACTIVE = [
+    'rupelanu.org',          # Rûpela Nû
+    'nerinaazad2.com',       # Nerina Azad
+    'rojmedia.com',          # Roj Media
+]
+
+# Gazete Duvar genel yerli medya ailesinde kalır; yalnız Kürt medyası
+# şemsiye görünümü ve hedefli Kürt meselesi sorgularına dahil edilir.
+V137_KURDISH_UMBRELLA_ONLY = [
+    'gazeteduvar.com.tr',
+]
+
+# ANF'nin güncel dil alanları.
+V137_ANF_ACTIVE = [
+    'anf-news.com',
+    'english.anf-news.com',
+    'kurmanci.anf-news.com',
+    'sorani.anf-news.com',
+    'hawrami.anf-news.com',
+    'kirmancki.anf-news.com',
+    'arabic.anf-news.com',
+    'farsi.anf-news.com',
+    'espanol.anf-news.com',
+    'deutsch.anf-news.com',
+    'russian.anf-news.com',
+]
+
+# Hareket/PKK-KCK açık kaynak izlemesinde güncel ve doğrudan erişilebilen
+# kaynaklar. Bu bir hukuki statü tespiti değil, uygulamanın açık kaynak
+# söylem izleme kategorisidir.
+V137_MOVEMENT_ACTIVE = [
+    *V137_ANF_ACTIVE,
+    'hawarnews.com',             # ANHA / Hawar News
+    'jinnews.net',               # JINNEWS
+    'sterk.tv',                  # Stêrk TV
+    'ronahi.tv',                 # Ronahî TV
+    'medyahabertv.digital',      # Medya Haber TV
+    'ozgurpolitika.com',         # Yeni Özgür Politika
+    'medyanews.net',             # Medya News
+    'politikahaber.com',
+    'mezopotamyaajansi.org',
+    'mezopotamyaajansi.com',
+    'mezopotamyaajansi.net',
+    'ma-mobil.com',
+]
+
+# Eski sonuçların sınıflandırılabilmesi için listelerde tutulabilen ancak
+# yeni hedefli sorgularda kullanılmaması gereken domainler.
+V137_LEGACY_SEARCH_DOMAINS = {
+    'anfenglish.com',
+    'anfenglishmobile.com',
+    'anfmobile.com',
+    'anfdeutsch.com',
+    'anfespanol.com',
+    'anfarabic.com',
+    'anfrussian.com',
+    'anfpersian.com',
+    'anfkurdi.com',
+    'anfsorani.com',
+    'anfkirmancki.com',
+    'sterktv.org',
+    'rohani.tv',
+    'hawarnews.net',
+    'jinnews.org',
+    'jinnews21.com',
+}
+
+# Eski/yanlış host -> güncel host.
+V137_HOST_REDIRECTS = {
+    'anfenglish.com':'english.anf-news.com',
+    'anfenglishmobile.com':'english.anf-news.com',
+    'anfmobile.com':'anf-news.com',
+    'anfdeutsch.com':'deutsch.anf-news.com',
+    'anfespanol.com':'espanol.anf-news.com',
+    'anfarabic.com':'arabic.anf-news.com',
+    'anfrussian.com':'russian.anf-news.com',
+    'anfpersian.com':'farsi.anf-news.com',
+    'anfkurdi.com':'kurmanci.anf-news.com',
+    'anfsorani.com':'sorani.anf-news.com',
+    'anfkirmancki.com':'kirmancki.anf-news.com',
+    'sterktv.org':'sterk.tv',
+    'rohani.tv':'ronahi.tv',
+    'hawarnews.net':'hawarnews.com',
+    'jinnews.org':'jinnews.net',
+    'jinnews21.com':'jinnews.net',
+    'medyahabertv.com':'medyahabertv.digital',
+}
+
+# Kaynak havuzlarını genişlet.
+try:
+    TT_KURDISH_REGIONAL_V9 = list(dict.fromkeys(
+        list(TT_KURDISH_REGIONAL_V9) + V137_KURDISH_REGIONAL_ACTIVE
+    ))
+except Exception:
+    pass
+
+try:
+    TT_MOVEMENT_V9 = list(dict.fromkeys(
+        list(TT_MOVEMENT_V9) + V137_MOVEMENT_ACTIVE
+    ))
+    TT_MOVEMENT_OSINT = list(dict.fromkeys(
+        list(TT_MOVEMENT_OSINT) + V137_MOVEMENT_ACTIVE
+    ))
+    TT_MOVEMENT_DIRECT_V9 = list(dict.fromkeys(
+        list(TT_MOVEMENT_DIRECT_V9)
+        + V137_ANF_ACTIVE
+        + ['sterk.tv','ronahi.tv','medyahabertv.digital']
+    ))
+except Exception:
+    pass
+
+try:
+    V113_KURDISH_EXTRA_SCAN = list(dict.fromkeys(
+        list(V113_KURDISH_EXTRA_SCAN)
+        + V137_KURDISH_REGIONAL_ACTIVE
+        + V137_KURDISH_UMBRELLA_ONLY
+    ))
+    V113_KURDISH_UMBRELLA = list(dict.fromkeys(
+        list(V113_KURDISH_UMBRELLA)
+        + V137_KURDISH_REGIONAL_ACTIVE
+        + V137_KURDISH_UMBRELLA_ONLY
+        + V137_MOVEMENT_ACTIVE
+    ))
+    TT_KURDISH_MEDIA = list(dict.fromkeys(
+        list(TT_KURDISH_MEDIA)
+        + V137_KURDISH_REGIONAL_ACTIVE
+        + V137_KURDISH_UMBRELLA_ONLY
+        + V137_MOVEMENT_ACTIVE
+    ))
+except Exception:
+    pass
+
+# Gephi ve rapor sınıflandırma setlerini de aynı kaynaklarla uyumlu hale getir.
+for _set_name, _values in [
+    ('V127_KURDISH_REGIONAL_DOMAINS', V137_KURDISH_REGIONAL_ACTIVE),
+    ('V128_KURDISH_REGIONAL_DOMAINS', V137_KURDISH_REGIONAL_ACTIVE),
+    ('V134_KURDISH_DOMAINS', V137_KURDISH_REGIONAL_ACTIVE),
+    ('V121_KURDISH_DOMAINS', V137_KURDISH_REGIONAL_ACTIVE),
+    ('V127_MOVEMENT_DOMAINS', V137_MOVEMENT_ACTIVE),
+    ('V128_MOVEMENT_DOMAINS', V137_MOVEMENT_ACTIVE),
+    ('V134_MOVEMENT_DOMAINS', V137_MOVEMENT_ACTIVE),
+    ('V121_MOVEMENT_DOMAINS', V137_MOVEMENT_ACTIVE),
+]:
+    try:
+        _obj=globals().get(_set_name)
+        if isinstance(_obj,set):
+            _obj.update(_values)
+    except Exception:
+        pass
+
+# Gazete Duvar genel Gephi'de Yerli Basın kalmalı.
+try:
+    if isinstance(globals().get('V127_LOCAL_DOMAINS'),set):
+        V127_LOCAL_DOMAINS.add('gazeteduvar.com.tr')
+    if isinstance(globals().get('V134_LOCAL_DOMAINS'),set):
+        V134_LOCAL_DOMAINS.add('gazeteduvar.com.tr')
+except Exception:
+    pass
+
+# ------------------------------------------------------------
+# 2) OKUNUR KAYNAK ETİKETLERİ / SOURCE INFERENCE
+# ------------------------------------------------------------
+
+V137_SOURCE_LABELS = {
+    'rupelanu.org':'Rûpela Nû — Kürt/Kürdistan gündemi',
+    'nerinaazad2.com':'Nerina Azad — Kürt/Kürdistan gündemi',
+    'rojmedia.com':'Roj Media — Avrupa/Kürt diasporası dijital medya',
+    'gazeteduvar.com.tr':'Gazete Duvar — Kürt meselesi odaklı etiket/yorum takibi',
+
+    'anf-news.com':'ANF Türkçe',
+    'english.anf-news.com':'ANF English',
+    'kurmanci.anf-news.com':'ANF Kurmancî',
+    'sorani.anf-news.com':'ANF Soranî',
+    'hawrami.anf-news.com':'ANF Hewramî',
+    'kirmancki.anf-news.com':'ANF Kirmanckî',
+    'arabic.anf-news.com':'ANF Arabic',
+    'farsi.anf-news.com':'ANF Farsî',
+    'espanol.anf-news.com':'ANF Español',
+    'deutsch.anf-news.com':'ANF Deutsch',
+    'russian.anf-news.com':'ANF Russian',
+
+    'hawarnews.com':'ANHA / Hawar News — Kuzeydoğu Suriye/Rojava açık kaynak',
+    'jinnews.net':'JINNEWS — kadın/Kürt meselesi açık kaynak',
+    'sterk.tv':'Stêrk TV — Kürtçe yayın / açık kaynak',
+    'ronahi.tv':'Ronahî TV — Kuzeydoğu Suriye/Kürtçe yayın',
+    'medyahabertv.digital':'Medya Haber TV — Kürtçe/Türkçe açık kaynak yayın',
+    'ozgurpolitika.com':'Yeni Özgür Politika — Avrupa/Kürt diasporası ve hareket çevresi',
+    'medyanews.net':'Medya News — Kürt meselesi/Ortadoğu İngilizce açık kaynak',
+    'politikahaber.com':'Politika Haber — hareket çevresi açık kaynak',
+    'mezopotamyaajansi.org':'Mezopotamya Ajansı',
+    'mezopotamyaajansi.com':'Mezopotamya Ajansı',
+    'mezopotamyaajansi.net':'Mezopotamya Ajansı',
+    'ma-mobil.com':'Mezopotamya Ajansı Mobil',
+}
+
+try:
+    V113_KURDISH_SOURCE_LABELS.update(V137_SOURCE_LABELS)
+except Exception:
+    pass
+
+try:
+    TT_SOURCE_NAME_TO_DOMAIN.update({
+        'rûpela nû':'rupelanu.org',
+        'rupela nu':'rupelanu.org',
+        'nerina azad':'nerinaazad2.com',
+        'roj media':'rojmedia.com',
+
+        'anf':'anf-news.com',
+        'anf türkçe':'anf-news.com',
+        'anf turkce':'anf-news.com',
+        'anf english':'english.anf-news.com',
+        'anf deutsch':'deutsch.anf-news.com',
+        'anf español':'espanol.anf-news.com',
+        'anf espanol':'espanol.anf-news.com',
+        'anf kurmancî':'kurmanci.anf-news.com',
+        'anf kurmanci':'kurmanci.anf-news.com',
+
+        'anha':'hawarnews.com',
+        'hawar news':'hawarnews.com',
+        'jinnews':'jinnews.net',
+        'jin news':'jinnews.net',
+        'stêrk tv':'sterk.tv',
+        'sterk tv':'sterk.tv',
+        'ronahî tv':'ronahi.tv',
+        'ronahi tv':'ronahi.tv',
+        'rohani tv':'ronahi.tv',
+        'medya haber':'medyahabertv.digital',
+        'medya haber tv':'medyahabertv.digital',
+        'yeni özgür politika':'ozgurpolitika.com',
+        'ozgur politika':'ozgurpolitika.com',
+        'özgür politika':'ozgurpolitika.com',
+        'mezopotamya ajansı':'mezopotamyaajansi.org',
+        'mezopotamya ajansi':'mezopotamyaajansi.org',
+    })
+except Exception:
+    pass
+
+# ------------------------------------------------------------
+# 3) GÜNCEL DOMAIN HEDEFLİ SORGULAR
+# ------------------------------------------------------------
+
+try:
+    _V137_BASE_KURDISH_QUERIES = _v22_kurdish_queries
+
+    def _v22_kurdish_queries():
+        q=list(_V137_BASE_KURDISH_QUERIES())
+
+        # Yeni aktif Kürt/Kürdistan odaklı kaynaklar.
+        for sites in _v22_group_sites(
+            V137_KURDISH_REGIONAL_ACTIVE + V137_KURDISH_UMBRELLA_ONLY,
+            5
+        ):
+            q.append(
+                f'(PKK OR KCK OR Ocalan OR Öcalan OR "Terörsüz Türkiye" '
+                f'OR "barış süreci" OR "çözüm süreci" OR Kürt OR Kurdistan '
+                f'OR SDF OR SDG OR YPG OR "Mazlum Abdi") {sites}'
+            )
+
+        # Gazete Duvar'ın genel sitesinden yalnız ilgili etiket/konu alanları.
+        q.extend([
+            'site:gazeteduvar.com.tr/etiket/kurt-medyasi (Kürt OR medya OR gazeteci)',
+            'site:gazeteduvar.com.tr/etiket/kurt-sorunu (Öcalan OR PKK OR DEM OR süreç)',
+            'site:gazeteduvar.com.tr/etiket/kurt-meselesi (Öcalan OR PKK OR DEM OR barış)',
+            '("Rûpela Nû" OR "Rupela Nu" OR "Nerina Azad" OR "Roj Media") (Öcalan OR PKK OR DEM OR SDF OR Kürt)',
+        ])
+
+        # Eski, artık hedeflenmemesi gereken site: sorgularını çıkar.
+        clean=[]
+        for item in q:
+            low=str(item).lower()
+            if any(f'site:{d}' in low for d in V137_LEGACY_SEARCH_DOMAINS):
+                continue
+            clean.append(item)
+        return list(dict.fromkeys(clean))
+except Exception:
+    pass
+
+try:
+    _V137_BASE_MOVEMENT_QUERIES = _v22_movement_queries
+
+    def _v22_movement_queries():
+        q=list(_V137_BASE_MOVEMENT_QUERIES())
+
+        # Eski domain hedeflerini temizle.
+        clean=[]
+        for item in q:
+            low=str(item).lower()
+            if any(f'site:{d}' in low for d in V137_LEGACY_SEARCH_DOMAINS):
+                continue
+            clean.append(item)
+        q=clean
+
+        # Güncel aktif domainleri doğrudan hedefle.
+        for sites in _v22_group_sites(V137_MOVEMENT_ACTIVE,6):
+            q.append(
+                f'(PKK OR KCK OR Ocalan OR Öcalan OR "Barış ve Demokratik Toplum" '
+                f'OR "barış süreci" OR "çerçeve yasa" OR silahsızlanma OR fesih '
+                f'OR SDF OR SDG OR YPG OR "Mazlum Abdi") {sites}'
+            )
+
+        # Marka kurtarma sorguları. Özgür Gündem aktif site olarak değil,
+        # tarihsel yayın adı/anahtar kelime olarak tutulur.
+        q.extend([
+            '("ANF" OR "ANF News" OR "Firat News") (Öcalan OR PKK OR KCK OR süreç OR SDF)',
+            '("ANHA" OR "Hawar News") (Öcalan OR PKK OR KCK OR SDF OR SDG)',
+            '("JINNEWS" OR "Jin News") (Öcalan OR barış OR demokratik OR Kürt)',
+            '("Stêrk TV" OR "Sterk TV" OR "Ronahî TV" OR "Ronahi TV") (Öcalan OR PKK OR KCK OR SDF)',
+            '("Medya Haber TV" OR "Medya Haber") (Öcalan OR PKK OR KCK OR "barış süreci")',
+            '("Mezopotamya Ajansı" OR "Mezopotamya Ajansi") (Öcalan OR PKK OR DEM OR süreç OR SDF)',
+            '("Yeni Özgür Politika" OR "Özgür Politika" OR "Özgür Gündem") (Öcalan OR PKK OR KCK OR süreç)',
+        ])
+        return list(dict.fromkeys(q))
+except Exception:
+    pass
+
+# ------------------------------------------------------------
+# 4) ESKİ / YANLIŞ DOMAIN SONUÇLARINDA TIKLANABİLİR LİNK DÜZELTMESİ
+# ------------------------------------------------------------
+
+def _v137_rewrite_known_url(value):
+    """
+    Bilinen eski domainleri güncel hosta taşır.
+    Path/query korunur; yalnız host ve http->https düzeltilir.
+    """
+    s=str(value or '').strip()
+    if not s:
+        return s
+    if not re.match(r'^https?://',s,re.I):
+        return s
+    try:
+        from urllib.parse import urlsplit, urlunsplit
+        p=urlsplit(s)
+        host=(p.hostname or '').lower().replace('www.','')
+        new_host=V137_HOST_REDIRECTS.get(host,host)
+
+        # Aktif kaynaklarda https tercih edilir.
+        active=set(V137_KURDISH_REGIONAL_ACTIVE + V137_KURDISH_UMBRELLA_ONLY + V137_MOVEMENT_ACTIVE)
+        scheme='https' if new_host in active or new_host in V137_HOST_REDIRECTS.values() else (p.scheme or 'https')
+
+        # Preserve explicit port only when host was not rewritten.
+        netloc=new_host
+        if host==new_host and p.port:
+            netloc=f'{new_host}:{p.port}'
+
+        return urlunsplit((scheme,netloc,p.path or '',p.query or '',p.fragment or ''))
+    except Exception:
+        return s
+
+def _v137_fix_row_links(row):
+    if not isinstance(row,dict):
+        return row
+
+    for c in ['URL','Yayıncı_URL','Gerçek Bağlantı','Gerçek Link','RSS_URL']:
+        if c in row and row.get(c):
+            row[c]=_v137_rewrite_known_url(row.get(c))
+
+    # Domain alanını da güncel hosta çek.
+    d=_tt_norm_domain(
+        row.get('URL','')
+        or row.get('Yayıncı_URL','')
+        or row.get('Domain','')
+    )
+    if d:
+        d=V137_HOST_REDIRECTS.get(d,d)
+        row['Domain']=d
+
+        # Bilinen kaynaklarda okunur kaynak etiketi.
+        if d in V137_SOURCE_LABELS:
+            current=str(row.get('Kaynak','') or '').strip()
+            generic=norm(current) in {
+                '', 'google', 'google news', 'google haberler',
+                'bing', 'bing news', 'açık kaynak', 'acik kaynak'
+            }
+            if generic:
+                row['Kaynak']=V137_SOURCE_LABELS[d].split(' — ')[0]
+
+        try:
+            if d in V137_SOURCE_LABELS:
+                row['Kaynak Perspektifi']=V137_SOURCE_LABELS[d]
+        except Exception:
+            pass
+    return row
+
+# Bütün yeni tarama sonuçları normalize edildikten sonra linkleri düzelt.
+try:
+    _V137_BASE_NORMALIZE_ROWS = normalize_rows
+
+    def normalize_rows(raw,cutoff,mode,user_query):
+        rows,reasons=_V137_BASE_NORMALIZE_ROWS(raw,cutoff,mode,user_query)
+        fixed=[]
+        for r in rows:
+            try:
+                fixed.append(_v137_fix_row_links(r))
+            except Exception:
+                fixed.append(r)
+        return fixed,reasons
+except Exception:
+    pass
+
+# Daha sonra sepet/kronoloji gibi bölümlerde URL tekrar okunursa da bilinen
+# eski domainleri güncellemek için row-domain helper'ını güçlendir.
+try:
+    _V137_BASE_V113_ROW_DOMAIN = _v113_row_domain
+
+    def _v113_row_domain(row):
+        try:
+            d=_V137_BASE_V113_ROW_DOMAIN(row)
+            return V137_HOST_REDIRECTS.get(d,d)
+        except Exception:
+            return ''
+except Exception:
+    pass
+
+# ============================================================
+# /V137
+# ============================================================
+
+
 # V33 — SADE GÜNLÜK ANA PANEL
 #
 # TARMA ÖNCESİ:
