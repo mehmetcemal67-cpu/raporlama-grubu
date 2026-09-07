@@ -31923,6 +31923,104 @@ def _v128_gephi_analysis_docx(nodes, edges):
 # ============================================================
 
 
+
+
+# ============================================================
+# V129 — GEPHI min_weight UYUMLULUK HATASI DÜZELTMESİ
+#
+# Hata:
+#   _v23_gephi_network() got an unexpected keyword argument 'min_weight'
+#
+# Çözüm:
+# - _v23_gephi_network ve _v30_event_network artık min_weight, *args ve
+#   **kwargs kabul eder.
+# - Eski temel fonksiyon min_weight kabul etmiyorsa otomatik güvenli çağrıya
+#   düşer.
+# - V128 Gephi kolon zenginleştirmesi korunur.
+# ============================================================
+
+try:
+    _V129_BASE_V23_GEPHI_NETWORK = _V128_BASE_GEPHI_NETWORK
+except Exception:
+    try:
+        _V129_BASE_V23_GEPHI_NETWORK = _v23_gephi_network
+    except Exception:
+        _V129_BASE_V23_GEPHI_NETWORK = None
+
+def _v129_apply_min_weight(nodes, edges, min_weight=None):
+    try:
+        if min_weight is None:
+            return nodes, edges
+        mw = float(min_weight)
+        if edges is not None and not edges.empty and 'Weight' in edges.columns:
+            edges = edges.copy()
+            edges['_v129_w'] = pd.to_numeric(edges['Weight'], errors='coerce').fillna(0)
+            edges = edges[edges['_v129_w'] >= mw].drop(columns=['_v129_w'], errors='ignore').reset_index(drop=True)
+            if nodes is not None and not nodes.empty and {'Source','Target'}.issubset(edges.columns) and 'Id' in nodes.columns:
+                keep = set(edges['Source'].astype(str)) | set(edges['Target'].astype(str))
+                nodes = nodes[nodes['Id'].astype(str).isin(keep)].reset_index(drop=True)
+    except Exception:
+        pass
+    return nodes, edges
+
+def _v23_gephi_network(df, network_type='source', min_weight=None, *args, **kwargs):
+    if _V129_BASE_V23_GEPHI_NETWORK is None:
+        return pd.DataFrame(), pd.DataFrame()
+    call_kwargs = dict(kwargs or {})
+    if min_weight is not None:
+        call_kwargs.setdefault('min_weight', min_weight)
+    try:
+        result = _V129_BASE_V23_GEPHI_NETWORK(df, network_type=network_type, *args, **call_kwargs)
+    except TypeError as e:
+        if 'unexpected keyword argument' in str(e) or 'positional' in str(e):
+            result = _V129_BASE_V23_GEPHI_NETWORK(df, network_type=network_type)
+        else:
+            raise
+    if isinstance(result, tuple) and len(result) >= 2:
+        nodes, edges = result[0], result[1]
+    else:
+        nodes, edges = pd.DataFrame(), pd.DataFrame()
+    nodes, edges = _v129_apply_min_weight(nodes, edges, min_weight)
+    try:
+        nodes, edges = _v128_enrich_gephi_tables(nodes, edges)
+    except Exception:
+        pass
+    return nodes, edges
+
+try:
+    _V129_BASE_V30_EVENT_NETWORK = _v30_event_network
+except Exception:
+    _V129_BASE_V30_EVENT_NETWORK = None
+
+def _v30_event_network(df, min_weight=None, *args, **kwargs):
+    if _V129_BASE_V30_EVENT_NETWORK is None:
+        return pd.DataFrame(), pd.DataFrame()
+    call_kwargs = dict(kwargs or {})
+    if min_weight is not None:
+        call_kwargs.setdefault('min_weight', min_weight)
+    try:
+        result = _V129_BASE_V30_EVENT_NETWORK(df, *args, **call_kwargs)
+    except TypeError as e:
+        if 'unexpected keyword argument' in str(e) or 'positional' in str(e):
+            result = _V129_BASE_V30_EVENT_NETWORK(df)
+        else:
+            raise
+    if isinstance(result, tuple) and len(result) >= 2:
+        nodes, edges = result[0], result[1]
+    else:
+        nodes, edges = pd.DataFrame(), pd.DataFrame()
+    nodes, edges = _v129_apply_min_weight(nodes, edges, min_weight)
+    try:
+        nodes, edges = _v128_enrich_gephi_tables(nodes, edges)
+    except Exception:
+        pass
+    return nodes, edges
+
+# ============================================================
+# /V129
+# ============================================================
+
+
 # V33 — SADE GÜNLÜK ANA PANEL
 #
 # TARMA ÖNCESİ:
@@ -33113,7 +33211,7 @@ else:
                 g1.download_button(
                     '⬇️ Kaynak-Çerçeve GEXF',
                     _v118_gp['source_gexf'],
-                    'Analiz_Sepeti_Kaynak_Cerceve_V127.gexf',
+                    'Analiz_Sepeti_Kaynak_Cerceve_V129.gexf',
                     'application/xml',
                     use_container_width=True,
                     key='v118_basket_source_gexf'
@@ -33123,7 +33221,7 @@ else:
                 g2.download_button(
                     '⬇️ Kesim-Çerçeve GEXF',
                     _v118_gp['discourse_gexf'],
-                    'Analiz_Sepeti_Kesim_Cerceve_V127.gexf',
+                    'Analiz_Sepeti_Kesim_Cerceve_V129.gexf',
                     'application/xml',
                     use_container_width=True,
                     key='v118_basket_discourse_gexf'
@@ -33134,7 +33232,7 @@ else:
                 g3.download_button(
                     '⬇️ Source Edges CSV',
                     _v118_se_df.to_csv(index=False).encode('utf-8-sig'),
-                    'Analiz_Sepeti_Source_Edges_V127.csv',
+                    'Analiz_Sepeti_Source_Edges_V129.csv',
                     'text/csv',
                     use_container_width=True,
                     key='v118_basket_source_edges'
@@ -33145,7 +33243,7 @@ else:
                 g4.download_button(
                     '⬇️ Discourse Edges CSV',
                     _v118_de_df.to_csv(index=False).encode('utf-8-sig'),
-                    'Analiz_Sepeti_Discourse_Edges_V127.csv',
+                    'Analiz_Sepeti_Discourse_Edges_V129.csv',
                     'text/csv',
                     use_container_width=True,
                     key='v118_basket_discourse_edges'
@@ -33166,7 +33264,7 @@ else:
                 n1.download_button(
                     '⬇️ Gephi Analiz Notu (Word)',
                     _v118_gp['analysis_docx'],
-                    'Analiz_Sepeti_Gephi_Analiz_Notu_V127.docx',
+                    'Analiz_Sepeti_Gephi_Analiz_Notu_V129.docx',
                     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                     use_container_width=True,
                     key='v127_basket_gephi_analysis_docx'
