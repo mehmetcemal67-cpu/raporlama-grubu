@@ -16833,6 +16833,120 @@ def _v22_movement_queries():
 # /V138 PRE-SCAN PATCH
 # ============================================================
 
+
+# ============================================================
+# V147 — PRE-SCAN SOSYAL GERİLİM / ETNİK HEDEF GÖSTERME RADARI
+#
+# KARARLI TABAN: V146
+# Amaç:
+# - Terörsüz Türkiye ifadesini açıkça kullanmayan fakat Kürt kimliği,
+#   DEM Parti veya PKK ile şiddet, yaralanma, kundaklama, yangın,
+#   linç, tehdit ve hedef gösterme söylemini ilişkilendiren kamuya açık
+#   sosyal medya içeriklerini de tarama havuzuna almak.
+# - Sosyal medya iddiasını olguya çevirmemek; risk/teyit niteliğini açık
+#   biçimde işaretlemek.
+# - Arama motoru indeksine bağımlılık devam eder; Manuel Link Havuzu
+#   indekslenmeyen tekil sosyal içerikler için yedek kanaldır.
+# ============================================================
+
+V147_SOCIAL_IDENTITY_TERMS=(
+    'kürt','kürtler','kürtçe','kürdistan','kürt kökenli','kürt kokenli',
+    'dem parti','hdp','pkk','kck','ypg','ypj','sdg','sdf'
+)
+V147_SOCIAL_HARM_TERMS=(
+    'saldırı','saldiri','yaralandı','yaralandi','yaralı','yarali','darp','dövüldü','dovuldu',
+    'bıçaklandı','bicaklandi','öldürüldü','olduruldu','linç','linc','tehdit','hedef göster',
+    'hedef goster','nefret','ırkçı','irkci','ayrımcılık','ayrimcilik','provokasyon','gerilim'
+)
+V147_SOCIAL_FIRE_TERMS=(
+    'yangın','yangin','orman yangını','orman yangini','kundak','kundaklama','kundaklandı','kundaklandi',
+    'ateşe ver','atese ver','yakıyor','yakiyor','yaktı','yakti','yakıldı','yakildi'
+)
+V147_SOCIAL_TARGET_TERMS=(
+    'sorumlusu kürt','sorumlusu kurt','kürtlerdir','kurtlerdir','kürtler yaktı','kurtler yakti',
+    'kürtler yakıyor','kurtler yakiyor','kürtçü','kurtcu','bölücü','bolucu','temizleyin','kovun','defol'
+)
+
+
+def _v147_social_tension_flags(text):
+    n=norm(text)
+    identity=any(norm(x) in n for x in V147_SOCIAL_IDENTITY_TERMS)
+    harm=any(norm(x) in n for x in V147_SOCIAL_HARM_TERMS)
+    fire=any(norm(x) in n for x in V147_SOCIAL_FIRE_TERMS)
+    target=any(norm(x) in n for x in V147_SOCIAL_TARGET_TERMS)
+    return {
+        'identity':identity,
+        'harm':harm,
+        'fire':fire,
+        'target':target,
+        'hit':bool(identity and (harm or fire or target)),
+        'high':bool(identity and (target or fire or any(norm(x) in n for x in ('linç','linc','öldür','oldur','saldır','saldir','bıçak','bicak')))),
+    }
+
+
+_V147_BASE_SOCIAL_QUERIES=_v22_social_queries
+def _v22_social_queries():
+    q=list(_V147_BASE_SOCIAL_QUERIES())
+    # Her sorguda PKK bir OR terimi olarak da bulunur. Böylece V22'nin origin-query
+    # konu doğrulaması yalnız "Terörsüz Türkiye" ifadesine bağımlı kalmaz.
+    q.extend([
+        '((Kürt OR Kürtler OR "Kürt kökenli" OR "DEM Parti" OR PKK) (saldırı OR yaralandı OR yaralı OR darp OR linç OR bıçaklandı OR öldürüldü OR tehdit OR "hedef gösterme" OR nefret)) (site:x.com OR site:twitter.com)',
+        '((Kürt OR Kürtler OR "DEM Parti" OR PKK) (yangın OR "orman yangını" OR kundaklama OR kundaklandı OR yakıyor OR yaktı OR "ateşe verildi")) (site:x.com OR site:twitter.com)',
+        '((Kürt OR Kürtler OR "DEM Parti" OR PKK) (provokasyon OR "etnik gerilim" OR "nefret söylemi" OR "hedef göster" OR bölücü OR Kürtçü)) (site:x.com OR site:twitter.com)',
+        '((Kürt OR Kürtler OR "Kürt kökenli" OR "DEM Parti" OR PKK) (saldırı OR yaralandı OR darp OR linç OR tehdit OR nefret)) site:facebook.com',
+        '((Kürt OR Kürtler OR "Kürt kökenli" OR "DEM Parti" OR PKK) (saldırı OR yaralandı OR darp OR linç OR tehdit OR nefret)) site:instagram.com',
+        '((Kürt OR Kürtler OR "DEM Parti" OR PKK) (yangın OR kundaklama OR saldırı OR yaralanma OR "hedef gösterme")) (site:tiktok.com OR site:youtube.com)',
+        '("sorumlusu Kürtlerdir" OR "Kürtler yaktı" OR "Kürtler yakıyor" OR "Kürtçü bölücü" OR "Kürtleri hedef") (site:x.com OR site:twitter.com) PKK',
+    ])
+    return list(dict.fromkeys(q))
+
+
+# V139/V138 pre-scan normalize zincirinin SONUNA sosyal gerilim etiketlemesi ekle.
+_V147_BASE_NORMALIZE_ROWS=normalize_rows
+def normalize_rows(raw,cutoff,mode,user_query):
+    rows,reasons=_V147_BASE_NORMALIZE_ROWS(raw,cutoff,mode,user_query)
+    if mode!='social':
+        return rows,reasons
+    for r in rows or []:
+        try:
+            full=f"{r.get('Başlık','')} {r.get('İçerik_Özeti','')}"
+            flags=_v147_social_tension_flags(full)
+            if not flags['hit']:
+                continue
+            r['Kategori']='Toplumsal Gerilim / Etnik Hedef Gösterme'
+            r['Çerçeve']='Toplumsal Gerilim / Etnik Hedef Gösterme'
+            r['Duygu']='Negatif'
+            r['Yaklaşım']='Karma / Tartışmalı'
+            score=max(int(r.get('Risk_Skoru',r.get('Skor',0)) or 0), 74 if flags['high'] else 58)
+            r['Risk_Skoru']=score
+            r['Skor']=max(int(r.get('Skor',0) or 0),score)
+            r['Risk_Durumu']='Yüksek Risk' if flags['high'] else 'Negatif'
+            reason='etnik kimliği şiddet/yangın/yaralanma veya hedef gösterme söylemiyle ilişkilendiren sosyal medya içeriği'
+            old=str(r.get('Risk_Gerekçesi','') or '').strip()
+            r['Risk_Gerekçesi']='; '.join(dict.fromkeys([x for x in [old,reason] if x]))
+            neg=list(r.get('Negatif_Sinyaller') or []) if isinstance(r.get('Negatif_Sinyaller'),(list,tuple,set)) else []
+            risk=list(r.get('Risk_Sinyalleri') or []) if isinstance(r.get('Risk_Sinyalleri'),(list,tuple,set)) else []
+            if 'etnik gerilim / hedef gösterme' not in neg: neg.append('etnik gerilim / hedef gösterme')
+            if flags['high'] and 'provokasyon / şiddet riski' not in risk: risk.append('provokasyon / şiddet riski')
+            r['Negatif_Sinyaller']=neg
+            r['Risk_Sinyalleri']=risk
+            r['Sosyal_Risk_Türü']='Etnik hedef gösterme / provokasyon' if flags['target'] or flags['fire'] else 'Şiddet / yaralanma / etnik gerilim'
+            r['Kaynak Perspektifi']='Kamuya açık / indekslenmiş sosyal içerik — etnik gerilim/provokasyon sinyali'
+        except Exception:
+            pass
+    return rows,reasons
+
+# Gephi'de bu yeni sosyal risk dili mevcut risk/gerilim çerçevesine dahil olsun.
+try:
+    _extra=['hedef göster','hedef goster','nefret','ırkçı','irkci','linç','linc','kundak','yangın','yangin','yaralan','etnik gerilim','provokasyon']
+    V23_GEPHI_FRAMES['Eleştiri / Risk / Gerilim']=list(dict.fromkeys(V23_GEPHI_FRAMES.get('Eleştiri / Risk / Gerilim',[])+_extra))
+except Exception:
+    pass
+
+# ============================================================
+# /V147 PRE-SCAN SOSYAL GERİLİM RADARI
+# ============================================================
+
 if run:
     st.session_state.pop('_v20_frame_cmp_rows',None)
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
@@ -34665,8 +34779,8 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
         if st.button('📝 Detaylı Bilgi Notu Oluştur',use_container_width=True,key=f'{key_prefix}_note'):
             _v3_make_note(pd.DataFrame(getter()),key_prefix)
     with c3:
-        if st.button('📝 SON DURUM RAPORU OLUŞTUR',type='primary',use_container_width=True,key=f'{key_prefix}_report'):
-            with st.spinner('Sepetteki içerikler yeni Son Durum raporu formatında hazırlanıyor...'):
+        if st.button('🧠 YÖNETİCİ ÖZET RAPORU OLUŞTUR',type='primary',use_container_width=True,key=f'{key_prefix}_report'):
+            with st.spinner('Sepetteki içerikler TL;DR + 3 etki/sonuç yönetici özeti formatında hazırlanıyor...'):
                 try:
                     st.session_state[f'{key_prefix}_report_bytes']=_v114_analysis_basket_report_docx(pd.DataFrame(getter()))
                 except Exception as e:
@@ -34683,9 +34797,9 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
         )
     if st.session_state.get(f'{key_prefix}_report_bytes'):
         st.download_button(
-            '⬇️ TERÖRSÜZ TÜRKİYE SON DURUM RAPORUNU İNDİR',
+            '⬇️ TERÖRSÜZ TÜRKİYE YÖNETİCİ ÖZETİNİ İNDİR',
             st.session_state[f'{key_prefix}_report_bytes'],
-            file_name=f'{file_prefix}_Terorsuz_Turkiye_Son_Durum_V145_{date.today()}.docx',
+            file_name=f'{file_prefix}_Terorsuz_Turkiye_Yonetici_Ozeti_V147_{date.today()}.docx',
             mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             use_container_width=True,
             key=f'{key_prefix}_report_download'
@@ -35346,12 +35460,12 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
 
     with c4:
         if st.button(
-            '📝 SON DURUM RAPORU OLUŞTUR',
+            '🧠 YÖNETİCİ ÖZET RAPORU OLUŞTUR',
             type='primary',
             use_container_width=True,
             key=f'{key_prefix}_report'
         ):
-            with st.spinner('Sepetteki içerikler yeni Son Durum raporu formatında hazırlanıyor...'):
+            with st.spinner('Sepetteki içerikler TL;DR + 3 etki/sonuç yönetici özeti formatında hazırlanıyor...'):
                 try:
                     st.session_state[f'{key_prefix}_report_bytes']=_v114_analysis_basket_report_docx(
                         pd.DataFrame([_v137_fix_record(r) for r in getter()])
@@ -35371,9 +35485,9 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
 
     if st.session_state.get(f'{key_prefix}_report_bytes'):
         st.download_button(
-            '⬇️ TERÖRSÜZ TÜRKİYE SON DURUM RAPORUNU İNDİR',
+            '⬇️ TERÖRSÜZ TÜRKİYE YÖNETİCİ ÖZETİNİ İNDİR',
             st.session_state[f'{key_prefix}_report_bytes'],
-            file_name=f'{file_prefix}_Terorsuz_Turkiye_Son_Durum_V145_{date.today()}.docx',
+            file_name=f'{file_prefix}_Terorsuz_Turkiye_Yonetici_Ozeti_V147_{date.today()}.docx',
             mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             use_container_width=True,
             key=f'{key_prefix}_report_download'
@@ -39055,6 +39169,280 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
 
 # ============================================================
 # /V146 HABER DURUMU + GÜN GÜN ANALİZ ARŞİVİ
+# ============================================================
+
+# ============================================================
+# V147 — YÖNETİCİ ÖZETİ (TL;DR + 3 ETKİ/SONUÇ) RAPOR MOTORU
+#
+# Amaç:
+# - Analiz Sepetindeki HER kayıt için tek cümlelik "Özetin Özeti" üretmek.
+# - Hemen altında yöneticinin karar/takip ihtiyacına dönük en büyük 3
+#   etki veya sonucu kısa maddeler halinde vermek.
+# - 1 sepet kaydı = 1 yönetici özeti bloğu; kayıt atlanmaz.
+# - Sosyal medya iddiaları ve etnik hedef gösterme içerikleri olgu gibi
+#   yazılmaz; teyit ihtiyacı açıkça belirtilir.
+# - V146 günlük sepet / tarih bazlı arşiv kapsamı aynen korunur.
+# ============================================================
+
+V147_REPORT_TITLE='TERÖRSÜZ TÜRKİYE SÜRECİNDE YÖNETİCİ ÖZETİ'
+
+
+def _v147_family(rec):
+    try:
+        row=rec.get('Satır') if isinstance(rec.get('Satır'),dict) else {}
+        return _v23_source_family(row)
+    except Exception:
+        try: return _v141_family(rec)
+        except Exception: return 'Diğer'
+
+
+def _v147_blob(rec):
+    row=rec.get('Satır') if isinstance(rec.get('Satır'),dict) else {}
+    detail=rec.get('_detail') if isinstance(rec.get('_detail'),dict) else {}
+    vals=[
+        rec.get('Başlık',''), rec.get('Özet',''), row.get('İçerik_Özeti',''),
+        row.get('İçerik / Özet',''), row.get('Manuel_Not',''), row.get('Manuel Not',''),
+        detail.get('text',''), detail.get('description',''), detail.get('summary','')
+    ]
+    return _v145_clean(' '.join(_v145_clean(v) for v in vals if _v145_clean(v)))
+
+
+def _v147_is_claim(text):
+    n=_v145_norm(text)
+    return any(x in n for x in (
+        'iddia','öne sür','one sur','öne sürül','one surul','iddia edil','claimed','alleged','allegedly',
+        'öne sürdü','one surdu','ileri sürdü','ileri surdu','söylenti','soylenti'
+    ))
+
+
+def _v147_compact(text,max_chars=430):
+    s=_v145_clean(text)
+    if not s: return ''
+    # Tırnak içindeki çok uzun doğrudan alıntıları raporda kısalt.
+    s=re.sub(r'[“"]([^”"]{220,})[”"]',lambda m:'“'+m.group(1)[:200].rstrip()+'…”',s)
+    if len(s)<=max_chars: return s
+    # Önce noktalı virgül / iki nokta / virgülde güvenli kırılma ara.
+    cut=-1
+    for sep in ['; ',': ', ', ']:
+        pos=s.rfind(sep,160,max_chars)
+        if pos>cut: cut=pos+1
+    if cut<160:
+        pos=s.rfind(' ',160,max_chars)
+        cut=pos if pos>0 else max_chars
+    s=s[:cut].rstrip(' ,;:-–—')
+    if s and s[-1] not in '.!?': s+='.'
+    return s
+
+
+def _v147_social_exec_tldr(rec,base_text):
+    family=_v147_family(rec)
+    if family!='Sosyal Medya': return ''
+    flags=_v147_social_tension_flags(_v147_blob(rec)+' '+base_text)
+    if not flags['hit']: return ''
+    try: account=_v145_clean(_v141_account(rec))
+    except Exception: account=''
+    d=_v145_domain(rec)
+    platform='X' if d in {'x.com','twitter.com'} else 'sosyal medya'
+    actor=(account+' adlı '+platform+' hesabında') if account else (platform+' üzerinde')
+    n=_v145_norm(_v147_blob(rec)+' '+base_text)
+    if flags['fire']:
+        theme='yangın/kundaklama olaylarının Kürt kimliği, DEM Parti veya PKK ile ilişkilendirildiği'
+    elif flags['harm']:
+        theme='Kürt kimliğiyle ilişkilendirilen saldırı, yaralanma veya tehdit iddialarının gündeme taşındığı'
+    else:
+        theme='Kürt kimliği üzerinden hedef gösterme veya provokatif söylemin dolaşıma sokulduğu'
+    return _v145_formalize_sentence(
+        f"{actor}, {theme} bir paylaşım yapılmış; paylaşımda yer alan fail ve neden iddiaları bağımsız kaynaklarla teyit edilmiş değildir"
+    )
+
+
+def _v147_exec_tldr(rec):
+    # V145'in gerçek içerik seçme motorunu kullan, fakat yönetici için tek cümlede tut.
+    try:
+        selected,level=_v145_select_sentences(rec)
+    except Exception:
+        selected=[]; level='title'
+    base=''
+    if selected:
+        try: base=_v145_wrap_evidence(rec,[selected[0]])
+        except Exception: base=_v145_formalize_sentence(selected[0])
+    if not base:
+        try: base,_level=_v145_generate_paragraph(rec); level=_level
+        except Exception: base=''
+    social=_v147_social_exec_tldr(rec,base)
+    if social: return _v147_compact(social),level
+    if not base:
+        base=_v145_fallback(rec)
+    return _v147_compact(base),level
+
+
+def _v147_topic_flags(rec,tldr=''):
+    row=rec.get('Satır') if isinstance(rec.get('Satır'),dict) else {}
+    txt=_v145_norm(_v147_blob(rec)+' '+tldr+' '+str(row.get('Kategori',''))+' '+str(row.get('Çerçeve','')))
+    def hit(*terms): return any(_v145_norm(x) in txt for x in terms)
+    return {
+        'social_risk':_v147_social_tension_flags(txt)['hit'],
+        'fire':hit('yangın','yangin','kundak','yakıldı','yakildi'),
+        'violence':hit('saldırı','saldiri','yaralan','linç','linc','darp','bıçak','bicak','öldür','oldur','tehdit'),
+        'law':hit('çerçeve yasa','cerceve yasa','kanun','yasa','hukuk','legal framework','meclis','tbmm','parliament'),
+        'disarm':hit('silahsızlan','silah bırak','silah birak','fesih','tasfiye','disarm','dissolution','silah teslim'),
+        'ocalan':hit('öcalan','ocalan','imralı','imrali','umut hakk','fiziki özgür','fiziksel özgür','statü','statu'),
+        'syria':hit('suriye','syria','sdg','sdf','ypg','ypj','pyd','şam','damascus','entegrasyon'),
+        'iraq':hit('ırak','iraq','ikby','krg','kandil','qandil','şengal','sengal','erbil','süleymaniye'),
+        'politics':hit('dem parti','mhp','ak parti','chp','deva','seçim','secim','kongre','ittifak','siyasi'),
+        'rights':hit('hak','rights','demokrasi','democratic','eşit yurttaş','esit yurttas','kürt kimliği','kurt kimligi'),
+        'international':_v147_family(rec) in {'Yabancı Basın','Think Tank / Analiz','Kürt Bölgesel Medyası'},
+        'claim':_v147_is_claim(txt),
+    }
+
+
+def _v147_impacts(rec,tldr):
+    f=_v147_topic_flags(rec,tldr)
+    row=rec.get('Satır') if isinstance(rec.get('Satır'),dict) else {}
+    family=_v147_family(rec)
+    source=_v145_source(rec)
+    impacts=[]
+
+    def add(s):
+        s=_v145_clean(s)
+        if s and all(_v145_similarity(s,x)<0.55 for x in impacts): impacts.append(s)
+
+    if f['social_risk']:
+        add('Etnik kimlik ile şiddet, yaralanma veya yangın arasında doğrudan bağ kurulması toplumsal gerilim ve hedef gösterme riskini artırabilir.')
+        add('Söylemin DEM Parti, PKK veya Kürt kimliği üzerinden siyasallaştırılması, Terörsüz Türkiye sürecine ilişkin kutuplaştırıcı ve provokatif anlatıları besleyebilir.')
+        add('İçerik sosyal medya kaynağına dayandığından fail, neden ve olayın kapsamı resmî açıklama veya bağımsız kaynaklarla doğrulanmadan olgu kabul edilmemelidir.')
+    else:
+        if f['disarm']:
+            add('Silahsızlanma, fesih veya silah teslimiyle ilgili bu gelişme sürecin sahadaki somut ilerleme düzeyini doğrudan etkileyebilir.')
+        if f['law']:
+            add('Hukuki çerçevenin kapsamı ve uygulanma biçimi, silahsızlanma sonrası statü ve siyasi entegrasyonun uygulanabilirliği açısından belirleyicidir.')
+        if f['ocalan']:
+            add('Abdullah Öcalan’ın statüsü, iletişim imkânları veya sürece katılımı, ilgili aktörlerin süreçten beklentilerinde merkezî başlıklardan biri olmaya devam etmektedir.')
+        if f['syria']:
+            add('Suriye’de SDG/YPG/YPJ’nin silah, kurumsal yapı ve entegrasyonuna ilişkin gelişmeler Türkiye’deki sürecin bölgesel güvenlik boyutunu doğrudan etkileyebilir.')
+        if f['iraq']:
+            add('Irak/IKBY/Şengal/Kandil hattındaki gelişme, PKK’nın saha varlığı ve bölgesel güvenlik denklemi bakımından sürecin dış boyutuna yansıyabilir.')
+        if f['politics']:
+            add('Açıklama veya gelişme, Türkiye’deki siyasi aktörlerin sürece ilişkin pozisyonlarının ve olası iş birliği/ayrışma alanlarının yeniden şekillenmesine yol açabilir.')
+        if f['rights']:
+            add('Haklar, demokratikleşme veya kimlik taleplerinin öne çıkması, sürecin yalnız güvenlik değil siyasi ve toplumsal düzenleme boyutuyla da ele alındığını göstermektedir.')
+        if f['international']:
+            add('Konunun yabancı/bölgesel medya veya analiz kuruluşlarında görünürlük kazanması, sürecin uluslararası algısını ve dış aktörlerin değerlendirmelerini etkileyebilir.')
+
+        # Kaynak/aktör etkisi: mevcut sınıflandırmayı kullan, yeni siyasi kimlik atfetme.
+        stance=str(row.get('Yaklaşım','') or '').strip()
+        if stance=='Eleştirel / Şüpheci':
+            add('İçerikteki eleştirel yaklaşım, sürecin mevcut uygulamasına ilişkin güven, yeterlilik veya karşılıklılık sorunlarının gündemde kaldığını göstermektedir.')
+        elif stance=='Destekleyici / Olumlu':
+            add('Destekleyici yaklaşım, ilgili çevrede sürecin devamına yönelik siyasi veya toplumsal meşruiyet üretme potansiyeli bulunduğunu göstermektedir.')
+        elif stance=='Karma / Tartışmalı':
+            add('Karma/tartışmalı çerçeve, sürece desteğin koşulsuz olmadığını ve belirli hukuki, siyasi veya güvenlik şartlarına bağlandığını göstermektedir.')
+
+        if f['claim'] or family=='Sosyal Medya':
+            add('İddia niteliğindeki hususların karar alma sürecinde kullanılabilmesi için resmî açıklama veya en az bir bağımsız kaynakla teyit edilmesi gerekmektedir.')
+        else:
+            add('Gelişmenin kalıcı sonuç üretip üretmeyeceği, ilgili aktörlerin sonraki açıklamaları ve somut uygulama adımlarıyla netleşecektir.')
+
+    generic=[
+        'Gelişme, Terörsüz Türkiye sürecinin güvenlik, siyaset ve toplumsal meşruiyet boyutlarından en az birini etkileyebilecek yeni bir veri noktası oluşturmaktadır.',
+        f'{source} kaynağındaki içerik, ilgili aktörün veya yayın çevresinin süreci hangi öncelik üzerinden okuduğunu görünür kılmaktadır.',
+        'Kısa vadeli etkinin yönü, açıklamanın sahadaki uygulama ve diğer aktörlerin tepkileriyle desteklenip desteklenmemesine bağlı olacaktır.'
+    ]
+    for g in generic: add(g)
+    return impacts[:3]
+
+
+def _v147_add_item(doc,rec,tldr,impacts,footnotes):
+    no=int(rec.get('No',0) or 0)
+    source=_v145_source(rec)
+    # Kısa kaynak satırı
+    hp=doc.add_paragraph()
+    hp.paragraph_format.space_before=Pt(7)
+    hp.paragraph_format.space_after=Pt(2)
+    hr=hp.add_run(f'{no}. {source}')
+    hr.bold=True; hr.font.name='Times New Roman'; hr.font.size=Pt(10.5)
+
+    p=doc.add_paragraph()
+    p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+    p.paragraph_format.first_line_indent=Cm(0)
+    p.paragraph_format.line_spacing=1.0
+    p.paragraph_format.space_after=Pt(2)
+    r=p.add_run('Özetin Özeti: '); r.bold=True; r.font.name='Times New Roman'; r.font.size=Pt(10.5)
+    rr=p.add_run(_v145_clean(tldr)); rr.font.name='Times New Roman'; rr.font.size=Pt(10.5)
+    url=str(rec.get('URL','') or '').strip()
+    if url.startswith('http'):
+        fid=len(footnotes)+1; p.add_run(' ')
+        try: _v124_add_body_footnote(p,fid)
+        except Exception:
+            try: _v123_add_footnote_reference(p,fid)
+            except Exception:
+                fr=p.add_run(str(fid)); fr.font.superscript=True
+        footnotes.append({'id':fid,'url':url})
+
+    ep=doc.add_paragraph()
+    ep.paragraph_format.space_before=Pt(0); ep.paragraph_format.space_after=Pt(1)
+    er=ep.add_run('En büyük 3 etki/sonuç:')
+    er.bold=True; er.font.name='Times New Roman'; er.font.size=Pt(10)
+
+    for impact in impacts[:3]:
+        bp=doc.add_paragraph()
+        bp.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+        bp.paragraph_format.left_indent=Cm(0.55)
+        bp.paragraph_format.first_line_indent=Cm(-0.3)
+        bp.paragraph_format.space_before=Pt(0)
+        bp.paragraph_format.space_after=Pt(1)
+        br=bp.add_run('• '); br.font.name='Times New Roman'; br.font.size=Pt(10)
+        bt=bp.add_run(_v145_clean(impact)); bt.font.name='Times New Roman'; bt.font.size=Pt(10)
+
+
+def _v147_analysis_basket_report_docx(df):
+    doc=Document(); sec=doc.sections[0]
+    sec.top_margin=Cm(1.8); sec.bottom_margin=Cm(1.8); sec.left_margin=Cm(2.2); sec.right_margin=Cm(2.2)
+    normal=doc.styles['Normal']; normal.font.name='Times New Roman'; normal.font.size=Pt(10.5)
+    normal._element.rPr.rFonts.set(qn('w:eastAsia'),'Times New Roman')
+
+    title=doc.add_paragraph(); title.alignment=WD_ALIGN_PARAGRAPH.CENTER; title.paragraph_format.space_after=Pt(0)
+    tr=title.add_run(V147_REPORT_TITLE); tr.bold=True; tr.font.name='Times New Roman'; tr.font.size=Pt(12)
+    datep=doc.add_paragraph(); datep.alignment=WD_ALIGN_PARAGRAPH.RIGHT; datep.paragraph_format.space_after=Pt(4)
+    dr=datep.add_run(datetime.now(timezone(timedelta(hours=3))).strftime('%d.%m.%Y')); dr.font.name='Times New Roman'; dr.font.size=Pt(9)
+
+    note=doc.add_paragraph()
+    note.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+    note.paragraph_format.space_after=Pt(5)
+    nr=note.add_run('Yönetici notu: '); nr.bold=True; nr.font.name='Times New Roman'; nr.font.size=Pt(9)
+    nt=note.add_run('Her kayıt için tek cümlelik özet ve karar/takip açısından öne çıkan üç etki/sonuç verilmiştir. Sosyal medya ve iddia niteliğindeki içerikler teyit durumu korunarak aktarılır.')
+    nt.font.name='Times New Roman'; nt.font.size=Pt(9)
+
+    rows,details=_v142_resolve_preserve_order(df)
+    records=[_v142_record(row,detail,i+1) for i,(row,detail) in enumerate(zip(rows,details))]
+    footnotes=[]; diag={'total':len(records),'written':0,'fallback':0,'social_risk':0}
+    for rec in records:
+        tldr,level=_v147_exec_tldr(rec)
+        if not tldr:
+            tldr=_v145_fallback(rec); diag['fallback']+=1
+        impacts=_v147_impacts(rec,tldr)
+        if _v147_topic_flags(rec,tldr).get('social_risk'): diag['social_risk']+=1
+        _v147_add_item(doc,rec,tldr,impacts,footnotes)
+        diag['written']+=1
+
+    if not records:
+        p=doc.add_paragraph('Analiz sepetinde raporlanacak içerik bulunmamaktadır.')
+        p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+
+    try: st.session_state['_v147_last_report_diag']=diag
+    except Exception: pass
+    bio=BytesIO(); doc.save(bio); raw=bio.getvalue()
+    try: return _v124_patch_docx_footnotes(raw,footnotes)
+    except Exception:
+        try: return _v123_patch_docx_footnotes(raw,footnotes)
+        except Exception: return raw
+
+
+# V147 yönetici özeti rapor motoru aktif.
+_v114_analysis_basket_report_docx=_v147_analysis_basket_report_docx
+
+# ============================================================
+# /V147 YÖNETİCİ ÖZETİ RAPOR MOTORU
 # ============================================================
 
 rows=st.session_state.rows
