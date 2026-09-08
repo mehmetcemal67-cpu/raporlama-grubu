@@ -34781,7 +34781,7 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
     with c3:
         if st.button('🧠 YÖNETİCİ ÖZET RAPORU OLUŞTUR',type='primary',use_container_width=True,key=f'{key_prefix}_report'):
             try:
-                st.session_state[f'{key_prefix}_report_bytes']=_v149_generate_manager_report(
+                st.session_state[f'{key_prefix}_report_bytes']=_v150_generate_manager_report(
                     pd.DataFrame(getter()), key_prefix
                 )
             except Exception as e:
@@ -34800,7 +34800,7 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
         st.download_button(
             '⬇️ TERÖRSÜZ TÜRKİYE YÖNETİCİ ÖZETİNİ İNDİR',
             st.session_state[f'{key_prefix}_report_bytes'],
-            file_name=f'{file_prefix}_Terorsuz_Turkiye_Yonetici_Ozeti_V149_{date.today()}.docx',
+            file_name=f'{file_prefix}_Terorsuz_Turkiye_Yonetici_Ozeti_V150_{date.today()}.docx',
             mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             use_container_width=True,
             key=f'{key_prefix}_report_download'
@@ -35467,7 +35467,7 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
             key=f'{key_prefix}_report'
         ):
             try:
-                st.session_state[f'{key_prefix}_report_bytes']=_v149_generate_manager_report(
+                st.session_state[f'{key_prefix}_report_bytes']=_v150_generate_manager_report(
                     pd.DataFrame([_v137_fix_record(r) for r in getter()]), key_prefix
                 )
             except Exception as e:
@@ -35487,7 +35487,7 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
         st.download_button(
             '⬇️ TERÖRSÜZ TÜRKİYE YÖNETİCİ ÖZETİNİ İNDİR',
             st.session_state[f'{key_prefix}_report_bytes'],
-            file_name=f'{file_prefix}_Terorsuz_Turkiye_Yonetici_Ozeti_V149_{date.today()}.docx',
+            file_name=f'{file_prefix}_Terorsuz_Turkiye_Yonetici_Ozeti_V150_{date.today()}.docx',
             mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             use_container_width=True,
             key=f'{key_prefix}_report_download'
@@ -39722,6 +39722,201 @@ def _v149_generate_manager_report(df,key_prefix='manager'):
 
 # ============================================================
 # /V149 YÖNETİCİ ÖZETİ PERFORMANS + GÖRÜNÜR İLERLEME
+# ============================================================
+
+
+# ============================================================
+# V150 — GERÇEK HIZLANDIRMA / MEVCUT ÖZETİ ÖNCE KULLAN
+#
+# KARARLI TABAN: V146
+# RAPOR İÇERİĞİ: V148 kaynak-türüne duyarlı TL;DR + 3 etki/sonuç aynen korunur.
+#
+# V149'DAKİ SORUN:
+# - Her raporda hemen hemen her URL yeniden okunmaya çalışıldığı için 8→12 worker
+#   değişikliği pratikte beklemeyi belirgin azaltmıyordu.
+# - İlerleme bileşeni de Streamlit'in tam sayfa rerun davranışını değiştirmiyordu.
+#
+# V150:
+# 1) Tarama sırasında zaten elde edilmiş yeterli bir İçerik_Özeti varsa HABER SAYFASINA
+#    tekrar gitmez. Yönetici özeti doğrudan bu kanıttan üretilir.
+# 2) Yalnız özet zayıf / başlık tekrarından ibaretse gerçek sayfa çözümü yapılır.
+# 3) Sosyal platform URL'leri canlı sayfadan okunmaya zorlanmaz; indeks/snippet korunur.
+# 4) Zayıf kayıtlar paralel çözülür ve sonuçlar oturum önbelleğinde tutulur.
+# 5) Kullanıcının alışık olduğu standart spinner geri getirilir.
+# ============================================================
+
+V150_MIN_SUMMARY_CHARS=150
+V150_MIN_SUMMARY_WORDS=18
+
+
+def _v150_best_row_summary(row):
+    vals=[]
+    for key in ('Manuel_Not','Manuel Not','İçerik_Özeti','İçerik / Özet','Özet','snippet','description'):
+        try:
+            v=_v145_clean(row.get(key,''))
+        except Exception:
+            v=str(row.get(key,'') or '').strip()
+        if v and v not in vals:
+            vals.append(v)
+    # En bilgi yoğun mevcut özeti kullan.
+    vals.sort(key=lambda s:(len(s.split()),len(s)),reverse=True)
+    return vals[0] if vals else ''
+
+
+def _v150_summary_is_sufficient(row):
+    summary=_v150_best_row_summary(row)
+    title=_v145_clean(row.get('Başlık',''))
+    if not summary:
+        return False
+
+    n=_v145_norm(summary)
+    if len(summary)<V150_MIN_SUMMARY_CHARS or len(summary.split())<V150_MIN_SUMMARY_WORDS:
+        return False
+
+    # Başlığın aynısı / neredeyse aynısı ise tam metin kurtarmaya çalış.
+    if title:
+        try:
+            if _v145_similarity(summary,title)>=0.84:
+                return False
+        except Exception:
+            pass
+
+    bad=(
+        'daha fazla haber için','read more','devamını oku','google aramalarında',
+        'show results with','missing:','ana sayfa','sitemizi ziyaret','cookie','çerez'
+    )
+    if any(x in n for x in bad):
+        return False
+    return True
+
+
+def _v150_is_social_row(row):
+    try:
+        d=_v145_domain({'URL':row.get('URL',''),'Satır':row})
+    except Exception:
+        try: d=_tt_norm_domain(row.get('URL',''))
+        except Exception: d=''
+    return d in {'x.com','twitter.com','facebook.com','instagram.com','tiktok.com','youtube.com','reddit.com'}
+
+
+def _v150_detail_from_existing_summary(row):
+    summary=_v150_best_row_summary(row)
+    try:
+        sents=_v142_sentences(summary)
+    except Exception:
+        sents=[]
+    return {
+        'title':_v145_clean(row.get('Başlık','')),
+        'canonical':str(row.get('URL','') or '').strip(),
+        'published':str(row.get('Tarih',row.get('Tarih_Orijinal','')) or ''),
+        'source':str(row.get('Kaynak',row.get('Yayıncı','')) or ''),
+        'text':summary,
+        '_validated':False,
+        '_sentences':sents,
+        '_sequence':sents[:8] if len(sents)>=3 else [],
+        '_v150_from_existing_summary':True,
+    }
+
+
+def _v142_resolve_preserve_order(df):
+    """V150: yalnız gerçekten gerekli kayıtlarda ağdan tam metin çöz; sepet sırasını koru."""
+    x=df.copy() if df is not None else pd.DataFrame()
+    if x.empty:
+        st.session_state['_v150_last_resolution_stats']={'total':0,'local':0,'cached':0,'fetched':0,'failed':0}
+        return [],[]
+
+    rows=x.to_dict('records')
+    details=[{} for _ in rows]
+    cache=st.session_state.setdefault('_v150_manager_detail_cache',{})
+    pending=[]
+    stats={'total':len(rows),'local':0,'cached':0,'fetched':0,'failed':0}
+
+    for i,row in enumerate(rows):
+        key=_v149_report_row_key(row)
+
+        # X/Facebook/Instagram vb. için canlı sayfayı açmaya çalışmak çoğunlukla yavaş ve
+        # verimsizdir. Tarama indeksinde gelen içerik varsa doğrudan onu kullan.
+        if _v150_is_social_row(row) and _v150_best_row_summary(row):
+            details[i]=_v150_detail_from_existing_summary(row)
+            stats['local']+=1
+            continue
+
+        # Tarama aşamasında yeterli içerik zaten alınmışsa ikinci kez web isteği YOK.
+        if _v150_summary_is_sufficient(row):
+            details[i]=_v150_detail_from_existing_summary(row)
+            stats['local']+=1
+            continue
+
+        if key and key in cache:
+            details[i]=cache.get(key) or {}
+            stats['cached']+=1
+            continue
+
+        pending.append((i,row,key))
+
+    # Ağ erişimi yalnız zayıf kayıtlar için. Çok yüksek worker sayısı bazı sitelerde
+    # bağlantı kuyruğu/timeout yarattığı için dengeli 6 worker kullanılır.
+    if pending:
+        workers=min(6,max(1,len(pending)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+            fmap={ex.submit(article_detail,row):(i,key,row) for i,row,key in pending}
+            for fut in concurrent.futures.as_completed(fmap):
+                i,key,row=fmap[fut]
+                try:
+                    detail=fut.result() or {}
+                except Exception:
+                    detail={}
+                if not detail:
+                    detail=_v150_detail_from_existing_summary(row)
+                    stats['failed']+=1
+                else:
+                    stats['fetched']+=1
+                details[i]=detail
+                if key:
+                    cache[key]=detail
+
+    if len(cache)>320:
+        for old in list(cache.keys())[:80]:
+            cache.pop(old,None)
+    st.session_state['_v150_manager_detail_cache']=cache
+    st.session_state['_v150_last_resolution_stats']=stats
+    return rows,details
+
+
+def _v150_generate_manager_report(df,key_prefix='manager'):
+    """V148 içerik motorunu koruyup ağ erişimini seçici hale getirir."""
+    x=df.copy() if df is not None else pd.DataFrame()
+    fingerprint=_v149_report_fingerprint(x)
+    report_cache=st.session_state.setdefault('_v150_manager_report_cache',{})
+
+    if fingerprint in report_cache:
+        st.success('✅ Yönetici özeti hazır. Sepet değişmediği için mevcut Word tekrar kullanıldı.')
+        return report_cache[fingerprint]
+
+    # Kullanıcının alışık olduğu standart dönen spinner. Asıl hız kazancı aşağıdaki
+    # seçici çözümleyiciden gelir; yalnız UI efektiyle hızlanmış gibi gösterilmez.
+    with st.spinner(f'🧠 Yönetici özeti hazırlanıyor… {len(x)} kayıt değerlendiriliyor'):
+        result=_v114_analysis_basket_report_docx(x)
+
+    report_cache[fingerprint]=result
+    if len(report_cache)>8:
+        for old in list(report_cache.keys())[:-8]:
+            report_cache.pop(old,None)
+    st.session_state['_v150_manager_report_cache']=report_cache
+
+    stats=st.session_state.get('_v150_last_resolution_stats') or {}
+    local=int(stats.get('local',0) or 0)
+    cached=int(stats.get('cached',0) or 0)
+    fetched=int(stats.get('fetched',0) or 0)
+    failed=int(stats.get('failed',0) or 0)
+    extra=(f' • {local} kayıt mevcut tarama özetinden, {cached} önbellekten, {fetched} gerçek sayfadan işlendi')
+    if failed:
+        extra+=f' • {failed} erişilemeyen kayıt mevcut özetle korundu'
+    st.success('✅ Yönetici özeti hazır'+extra+'.')
+    return result
+
+# ============================================================
+# /V150 GERÇEK HIZLANDIRMA
 # ============================================================
 
 # ============================================================
