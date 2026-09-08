@@ -34780,11 +34780,12 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
             _v3_make_note(pd.DataFrame(getter()),key_prefix)
     with c3:
         if st.button('🧠 YÖNETİCİ ÖZET RAPORU OLUŞTUR',type='primary',use_container_width=True,key=f'{key_prefix}_report'):
-            with st.spinner('Sepetteki içerikler TL;DR + 3 etki/sonuç yönetici özeti formatında hazırlanıyor...'):
-                try:
-                    st.session_state[f'{key_prefix}_report_bytes']=_v114_analysis_basket_report_docx(pd.DataFrame(getter()))
-                except Exception as e:
-                    st.error(f'Rapor hazırlanamadı: {e}')
+            try:
+                st.session_state[f'{key_prefix}_report_bytes']=_v149_generate_manager_report(
+                    pd.DataFrame(getter()), key_prefix
+                )
+            except Exception as e:
+                st.error(f'Rapor hazırlanamadı: {e}')
 
     if st.session_state.get(f'{key_prefix}_note_bytes'):
         st.download_button(
@@ -34799,7 +34800,7 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
         st.download_button(
             '⬇️ TERÖRSÜZ TÜRKİYE YÖNETİCİ ÖZETİNİ İNDİR',
             st.session_state[f'{key_prefix}_report_bytes'],
-            file_name=f'{file_prefix}_Terorsuz_Turkiye_Yonetici_Ozeti_V147_{date.today()}.docx',
+            file_name=f'{file_prefix}_Terorsuz_Turkiye_Yonetici_Ozeti_V149_{date.today()}.docx',
             mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             use_container_width=True,
             key=f'{key_prefix}_report_download'
@@ -35465,13 +35466,12 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
             use_container_width=True,
             key=f'{key_prefix}_report'
         ):
-            with st.spinner('Sepetteki içerikler TL;DR + 3 etki/sonuç yönetici özeti formatında hazırlanıyor...'):
-                try:
-                    st.session_state[f'{key_prefix}_report_bytes']=_v114_analysis_basket_report_docx(
-                        pd.DataFrame([_v137_fix_record(r) for r in getter()])
-                    )
-                except Exception as e:
-                    st.error(f'Rapor hazırlanamadı: {e}')
+            try:
+                st.session_state[f'{key_prefix}_report_bytes']=_v149_generate_manager_report(
+                    pd.DataFrame([_v137_fix_record(r) for r in getter()]), key_prefix
+                )
+            except Exception as e:
+                st.error(f'Rapor hazırlanamadı: {e}')
 
     if st.session_state.get(f'{key_prefix}_note_bytes'):
         st.download_button(
@@ -35487,7 +35487,7 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
         st.download_button(
             '⬇️ TERÖRSÜZ TÜRKİYE YÖNETİCİ ÖZETİNİ İNDİR',
             st.session_state[f'{key_prefix}_report_bytes'],
-            file_name=f'{file_prefix}_Terorsuz_Turkiye_Yonetici_Ozeti_V147_{date.today()}.docx',
+            file_name=f'{file_prefix}_Terorsuz_Turkiye_Yonetici_Ozeti_V149_{date.today()}.docx',
             mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             use_container_width=True,
             key=f'{key_prefix}_report_download'
@@ -39557,6 +39557,172 @@ def _v147_analysis_basket_report_docx(df):
 
 # V148 kaynak türüne duyarlı yönetici özeti rapor motoru aktif.
 _v114_analysis_basket_report_docx=_v147_analysis_basket_report_docx
+
+# ============================================================
+# V149 — YÖNETİCİ ÖZETİ PERFORMANS + GÖRÜNÜR İLERLEME
+#
+# KARARLI TABAN: V146
+# V148'de beğenilen TL;DR + 3 etki/sonuç içeriği DEĞİŞTİRİLMEZ.
+# Yalnız rapor üretim deneyimi ve bekleme süresi iyileştirilir:
+# - Tam metin çözme sonuçları oturum içinde ayrıca cache'lenir.
+# - İlk üretimde 8 yerine en fazla 12 paralel haber çözümü kullanılır.
+# - Sepet değişmediyse aynı rapor ikinci kez sıfırdan üretilmez.
+# - Butona basıldığında görünür durum kutusu + ilerleme çubuğu gösterilir.
+# ============================================================
+
+_V149_REPORT_PROGRESS_CB=None
+
+def _v149_report_row_key(row):
+    try:
+        k=_v3_analysis_dedup_key(row)
+        if k:
+            return str(k)
+    except Exception:
+        pass
+    return (str(row.get('URL','') or '').strip()+'|'+title_key(str(row.get('Başlık','') or '')))
+
+def _v149_report_fingerprint(df):
+    import hashlib
+    x=df.copy() if df is not None else pd.DataFrame()
+    if x.empty:
+        return 'empty'
+    payload=[]
+    for r in x.to_dict('records'):
+        payload.append({
+            'k':_v149_report_row_key(r),
+            'title':str(r.get('Başlık','') or ''),
+            'summary':str(r.get('İçerik_Özeti',r.get('İçerik / Özet','')) or ''),
+            'source':str(r.get('Kaynak','') or ''),
+            'date':str(r.get('Tarih',r.get('Tarih_Orijinal','')) or ''),
+            'frame':str(r.get('Çerçeve','') or ''),
+            'stance':str(r.get('Yaklaşım','') or ''),
+        })
+    raw=json.dumps(payload,ensure_ascii=False,sort_keys=True,default=str).encode('utf-8')
+    return hashlib.sha1(raw).hexdigest()
+
+# V142 çözümleyicisini aynı içerik mantığıyla, yalnız cache + daha yüksek paralellik ekleyerek güçlendir.
+def _v142_resolve_preserve_order(df):
+    """Sepet sırasını korur; article_detail çıktısını değiştirmeden hızlandırır."""
+    x=df.copy() if df is not None else pd.DataFrame()
+    if x.empty:
+        return [],[]
+    rows=x.to_dict('records')
+    details=[{} for _ in rows]
+    cache=st.session_state.setdefault('_v149_manager_detail_cache',{})
+    pending=[]
+    for i,row in enumerate(rows):
+        key=_v149_report_row_key(row)
+        if key and key in cache:
+            details[i]=cache.get(key) or {}
+        else:
+            pending.append((i,row,key))
+
+    cb=globals().get('_V149_REPORT_PROGRESS_CB')
+    total=len(rows)
+    done=total-len(pending)
+    if callable(cb):
+        try: cb(done,total,done)
+        except Exception: pass
+
+    if pending:
+        workers=min(12,max(1,len(pending)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+            fmap={ex.submit(article_detail,row):(i,key) for i,row,key in pending}
+            for fut in concurrent.futures.as_completed(fmap):
+                i,key=fmap[fut]
+                try:
+                    detail=fut.result() or {}
+                except Exception:
+                    detail={}
+                details[i]=detail
+                if key:
+                    cache[key]=detail
+                done+=1
+                if callable(cb):
+                    try: cb(done,total,total-len(pending))
+                    except Exception: pass
+
+    # Cache'i sınırlı tut.
+    if len(cache)>300:
+        try:
+            for old in list(cache.keys())[:80]:
+                cache.pop(old,None)
+        except Exception:
+            pass
+    st.session_state['_v149_manager_detail_cache']=cache
+    return rows,details
+
+def _v149_generate_manager_report(df,key_prefix='manager'):
+    """V148 rapor metnini değiştirmeden görünür ilerleme ve cache ile üretir."""
+    global _V149_REPORT_PROGRESS_CB
+    x=df.copy() if df is not None else pd.DataFrame()
+    fingerprint=_v149_report_fingerprint(x)
+    report_cache=st.session_state.setdefault('_v149_manager_report_cache',{})
+
+    # Aynı sepet için daha önce üretilmiş rapor varsa tekrar web çözümü yapma.
+    if fingerprint in report_cache:
+        try:
+            st.success('✅ Yönetici özeti hazır. Sepet değişmediği için önceki üretim anında getirildi.')
+        except Exception:
+            pass
+        return report_cache[fingerprint]
+
+    status=None; progress=None; msg=None
+    try:
+        status=st.status('🧠 Yönetici özeti hazırlanıyor…',expanded=True)
+        status.write(f'1/3 — {len(x)} sepet kaydı hazırlanıyor.')
+        progress=st.progress(4)
+        msg=st.empty()
+    except Exception:
+        status=None
+        progress=st.progress(4)
+        msg=st.empty()
+        msg.info(f'🧠 Yönetici özeti hazırlanıyor — {len(x)} kayıt işlenecek.')
+
+    def _progress(done,total,cached_count=0):
+        total=max(1,int(total or 1)); done=max(0,min(int(done or 0),total))
+        pct=8+int(72*(done/total))
+        try:
+            if progress is not None: progress.progress(min(80,max(8,pct)))
+            if msg is not None:
+                cache_txt=f' • {cached_count} kayıt önbellekten' if cached_count else ''
+                msg.caption(f'2/3 — Haber içerikleri çözülüyor: {done}/{total}{cache_txt}')
+        except Exception:
+            pass
+
+    _V149_REPORT_PROGRESS_CB=_progress
+    try:
+        result=_v114_analysis_basket_report_docx(x)
+        try:
+            if progress is not None: progress.progress(94)
+            if msg is not None: msg.caption('3/3 — Word belgesi ve dipnotlar hazırlanıyor…')
+        except Exception:
+            pass
+        report_cache[fingerprint]=result
+        # Son 8 farklı sepet çıktısını tutmak yeterli.
+        if len(report_cache)>8:
+            try:
+                for old in list(report_cache.keys())[:-8]:
+                    report_cache.pop(old,None)
+            except Exception:
+                pass
+        st.session_state['_v149_manager_report_cache']=report_cache
+        try:
+            if progress is not None: progress.progress(100)
+            if msg is not None: msg.empty()
+            if status is not None:
+                status.update(label='✅ Yönetici özeti hazır — aşağıdaki indirme düğmesini kullanabilirsiniz.',state='complete',expanded=False)
+            else:
+                st.success('✅ Yönetici özeti hazır — aşağıdaki indirme düğmesini kullanabilirsiniz.')
+        except Exception:
+            pass
+        return result
+    finally:
+        _V149_REPORT_PROGRESS_CB=None
+
+# ============================================================
+# /V149 YÖNETİCİ ÖZETİ PERFORMANS + GÖRÜNÜR İLERLEME
+# ============================================================
 
 # ============================================================
 # /V147 YÖNETİCİ ÖZETİ RAPOR MOTORU
