@@ -38748,6 +38748,315 @@ _v114_analysis_basket_report_docx = _v145_analysis_basket_report_docx
 # /V145 SABİT PARAGRAF KURGUSU
 # ============================================================
 
+# ============================================================
+# V146 — HABER DURUMU + GÜN GÜN ANALİZ ARŞİVİ
+#
+# KARARLI TABAN: V145
+# Yalnız iki çalışma-akışı geliştirmesi eklenir:
+# 1) Haber tablolarında "Durum" sütunu: Günlük sepette / Arşivde görünürlüğü.
+# 2) Arşiv, kaydın arşive eklendiği güne göre tarih sekmelerine ayrılır.
+#    Her tarih sekmesindeki Word ve Gephi yalnız o günün kayıtlarını kullanır.
+# V145 rapor paragraf motoru, tarama, manuel link havuzu ve Gephi motoru korunur.
+# ============================================================
+
+V146_ARCHIVE_DAY_FIELD='_Arşiv_Günü'
+
+
+def _v146_day_from_added_at(value):
+    try:
+        ts=pd.to_datetime(value,utc=True,errors='coerce')
+        if pd.isna(ts):
+            return ''
+        return ts.tz_convert('Europe/Istanbul').strftime('%d.%m.%Y')
+    except Exception:
+        return ''
+
+
+def _v146_day_from_record_date(rec):
+    # Son çare: eski/verisi eksik kayıtlarda haber tarihi kullanılır.
+    for key in ('Tarih','Tarih_Orijinal','Tarih_dt','Yayın_Tarihi'):
+        raw=str(rec.get(key,'') or '').strip()
+        if not raw:
+            continue
+        try:
+            ts=pd.to_datetime(raw,dayfirst=True,errors='coerce')
+            if pd.isna(ts):
+                continue
+            return ts.strftime('%d.%m.%Y')
+        except Exception:
+            continue
+    return 'Tarihsiz'
+
+
+def _v146_archive_db_metadata():
+    """analysis_basket_v3 içindeki eklenme zamanını dedup anahtarıyla döndürür."""
+    meta={}
+    if not _init_history_db():
+        return meta
+    try:
+        with _history_connect() as conn:
+            cur=conn.execute(
+                f'SELECT added_at,dedup_key FROM {V136_ARCHIVE_TABLE} ORDER BY id ASC'
+            )
+            for added_at,dedup_key in cur.fetchall():
+                k=str(dedup_key or '').strip()
+                if k:
+                    meta[k]=_v146_day_from_added_at(added_at)
+    except Exception:
+        pass
+    return meta
+
+
+def _v146_upgrade_archive_records(records):
+    meta=_v146_archive_db_metadata()
+    out=[]
+    changed=False
+    for item in records or []:
+        rec=dict(item)
+        day=str(rec.get(V146_ARCHIVE_DAY_FIELD,'') or '').strip()
+        if not day:
+            day=meta.get(_v3_analysis_dedup_key(rec),'') or _v146_day_from_record_date(rec)
+            rec[V146_ARCHIVE_DAY_FIELD]=day
+            changed=True
+        out.append(rec)
+    return out,changed
+
+
+# Arşiv getter'ını tarih bilgisini kaybetmeyecek biçimde güçlendir.
+_v146_original_archive_basket=_v136_archive_basket
+
+def _v136_archive_basket():
+    key='v136_archive_analysis_basket'
+    if key not in st.session_state:
+        rows=[]
+        if _init_history_db():
+            try:
+                with _history_connect() as conn:
+                    cur=conn.execute(
+                        f'SELECT added_at,record_json FROM {V136_ARCHIVE_TABLE} ORDER BY id ASC'
+                    )
+                    for added_at,rec_json in cur.fetchall():
+                        try:
+                            rec=json.loads(rec_json)
+                            if not str(rec.get(V146_ARCHIVE_DAY_FIELD,'') or '').strip():
+                                rec[V146_ARCHIVE_DAY_FIELD]=_v146_day_from_added_at(added_at) or _v146_day_from_record_date(rec)
+                            rows.append(rec)
+                        except Exception:
+                            continue
+            except Exception:
+                rows=[]
+        st.session_state[key]=rows
+    elif not st.session_state.get('_v146_archive_days_upgraded'):
+        upgraded,changed=_v146_upgrade_archive_records(st.session_state.get(key) or [])
+        if changed:
+            st.session_state[key]=upgraded
+        st.session_state['_v146_archive_days_upgraded']=True
+    return st.session_state[key]
+
+
+# Bundan sonra Günlük Sepetten Arşive taşınan her kayıt, taşıma gününü açıkça taşır.
+_v146_original_archive_add=_v136_archive_add
+
+def _v136_archive_add(rows):
+    today=pd.Timestamp.now(tz='Europe/Istanbul').strftime('%d.%m.%Y')
+    stamped=[]
+    for item in rows or []:
+        rec=dict(item)
+        rec[V146_ARCHIVE_DAY_FIELD]=today
+        stamped.append(rec)
+    return _v136_add_to_table(
+        stamped,
+        V136_ARCHIVE_TABLE,
+        'v136_archive_analysis_basket',
+        _v136_archive_basket
+    )
+
+
+def _v146_basket_keysets():
+    daily={_v3_analysis_dedup_key(r) for r in (_v136_daily_basket() or [])}
+    archive={_v3_analysis_dedup_key(r) for r in (_v136_archive_basket() or [])}
+    return daily,archive
+
+
+def _v146_basket_status(rec,daily_keys=None,archive_keys=None):
+    k=_v3_analysis_dedup_key(rec)
+    if daily_keys is None or archive_keys is None:
+        daily_keys,archive_keys=_v146_basket_keysets()
+    in_daily=bool(k and k in daily_keys)
+    in_archive=bool(k and k in archive_keys)
+    if in_daily and in_archive:
+        return '✅ Günlük + 🗂️ Arşiv'
+    if in_daily:
+        return '✅ Günlük Sepette'
+    if in_archive:
+        return '🗂️ Arşivde'
+    return '—'
+
+
+# Tüm Kaynak Bazlı İzleme / Kronoloji / risk / olay zaman çizelgesi tablolarında
+# aynı Durum sütunu çalışsın diye ortak renderer V146 ile yeniden tanımlanır.
+def _v3_source_table(section_key,data,columns=None,height=590):
+    if data is None or data.empty:
+        st.info('Bu bölümde eşleşen içerik bulunmamaktadır.')
+        return
+
+    x=data.copy().reset_index(drop=True)
+    _daily_keys,_archive_keys=_v146_basket_keysets()
+    x['Durum']=[
+        _v146_basket_status(r,_daily_keys,_archive_keys)
+        for r in x.to_dict('records')
+    ]
+
+    if 'Seç' in x.columns:
+        x['Seç']=False
+        cols=['Seç']+[c for c in x.columns if c!='Seç']
+        x=x[cols]
+    else:
+        x.insert(0,'Seç',False)
+
+    default_cols=[
+        'Seç','Durum','Tarih','Bölge','Kaynak','Kategori','Yaklaşım','Çerçeve','İçerik Türü',
+        'Başlık','İçerik_Özeti','Risk_Skoru','Doğrulama','URL'
+    ]
+    requested=list(columns or default_cols)
+    if 'Seç' not in requested:
+        requested.insert(0,'Seç')
+    if 'Durum' not in requested:
+        try:
+            pos=requested.index('Seç')+1
+        except ValueError:
+            pos=0
+        requested.insert(pos,'Durum')
+    show=[c for c in requested if c in x.columns]
+
+    with st.form(f'v3_form_{section_key}',clear_on_submit=False):
+        edited=st.data_editor(
+            x[show],
+            column_config={
+                'Seç':st.column_config.CheckboxColumn('Seç'),
+                'Durum':st.column_config.TextColumn('Durum',width='small'),
+                'URL':st.column_config.LinkColumn('Kaynak / Haber'),
+                'İçerik_Özeti':st.column_config.TextColumn('Kısa İçerik',width='large'),
+                'Risk_Skoru':st.column_config.NumberColumn('Risk',format='%d/100')
+            },
+            disabled=[c for c in show if c!='Seç'],
+            hide_index=True,
+            use_container_width=True,
+            height=height,
+            key=f'v3_editor_{section_key}'
+        )
+        c1,c2=st.columns(2)
+        with c1:
+            do_note=st.form_submit_button('📝 Detaylı Bilgi Notu Oluştur',use_container_width=True)
+        with c2:
+            do_basket=st.form_submit_button('🧺 Günlük Analiz Sepetine Ekle',use_container_width=True)
+
+    mask=edited['Seç'].astype(bool).to_numpy() if 'Seç' in edited.columns else []
+    selected=(
+        x.loc[mask].drop(columns=['Seç','Durum'],errors='ignore')
+        if len(mask) else pd.DataFrame()
+    )
+
+    if do_note:
+        _v3_make_note(selected,section_key)
+    if do_basket:
+        if selected.empty:
+            st.warning('Önce en az bir haber seçin.')
+        else:
+            n=_v3_add_analysis(selected.to_dict('records'))
+            if n:
+                st.success(f'✅ {n} içerik Günlük Analiz Sepetine eklenmiştir.')
+            else:
+                st.info('Seçilen içerikler zaten Günlük Analiz Sepetinde bulunmaktadır.')
+
+    if st.session_state.get(section_key+'_note_bytes'):
+        st.download_button(
+            '⬇️ Hazırlanan Bilgi Notunu İndir',
+            st.session_state[section_key+'_note_bytes'],
+            file_name=f'Terorsuz_Turkiye_Bilgi_Notu_{section_key}_{date.today()}.docx',
+            mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            use_container_width=True,
+            key=f'v3_note_download_{section_key}'
+        )
+
+
+# V137'nin güncel sepet renderer'ını günlük sepet için aynen koru.
+_v146_base_render_basket=_v136_render_basket
+
+
+def _v146_archive_day_sort(day):
+    if day=='Tarihsiz':
+        return pd.Timestamp.min
+    try:
+        return pd.to_datetime(day,format='%d.%m.%Y',errors='coerce')
+    except Exception:
+        return pd.Timestamp.min
+
+
+def _v146_render_archive_by_day(description):
+    st.markdown('#### 🗂️ Günlük Rapor Arşivi')
+    st.caption(
+        description + ' Arşiv sekmeleri, içeriğin **arşive eklendiği güne** göre oluşturulur; '
+        'her sekmedeki Son Durum raporu ve Gephi çıktısı yalnız o günün kayıtlarını kullanır.'
+    )
+
+    basket=[_v137_fix_record(r) for r in (_v136_archive_basket() or [])]
+    if not basket:
+        st.info('Günlük Rapor Arşivi henüz boş.')
+        return
+
+    groups={}
+    for rec in basket:
+        day=str(rec.get(V146_ARCHIVE_DAY_FIELD,'') or '').strip() or _v146_day_from_record_date(rec)
+        groups.setdefault(day,[]).append(rec)
+
+    days=sorted(groups.keys(),key=_v146_archive_day_sort,reverse=True)
+    tabs=st.tabs([f'📅 {day} ({len(groups[day])})' for day in days])
+
+    for tab,day in zip(tabs,days):
+        with tab:
+            day_records=list(groups[day])
+            day_keys={_v3_analysis_dedup_key(r) for r in day_records}
+
+            def _day_getter(_day=day):
+                current=[_v137_fix_record(r) for r in (_v136_archive_basket() or [])]
+                return [
+                    r for r in current
+                    if (str(r.get(V146_ARCHIVE_DAY_FIELD,'') or '').strip() or _v146_day_from_record_date(r))==_day
+                ]
+
+            def _day_remover(indices,_day=day):
+                subset=list(_day_getter(_day))
+                wanted={int(i) for i in indices if 0 <= int(i) < len(subset)}
+                keys={_v3_analysis_dedup_key(subset[i]) for i in wanted}
+                current=list(_v136_archive_basket() or [])
+                global_indices=[i for i,r in enumerate(current) if _v3_analysis_dedup_key(r) in keys]
+                return _v136_archive_remove(global_indices)
+
+            safe=re.sub(r'[^0-9A-Za-z]+','_',day).strip('_') or 'tarihsiz'
+            _v146_base_render_basket(
+                f'📅 {day} — {len(day_records)} içerik',
+                'Bu günlük arşiv sekmesindeki işlemler yalnız bu tarihin içeriklerine uygulanır.',
+                _day_getter,
+                _day_remover,
+                V136_ARCHIVE_TABLE,
+                'v136_archive_analysis_basket',
+                f'v146_archive_{safe}',
+                f'Gunluk_Arsiv_{safe}'
+            )
+
+
+def _v136_render_basket(title, description, getter, remover, table_name, session_key, key_prefix, file_prefix):
+    if table_name==V136_ARCHIVE_TABLE:
+        return _v146_render_archive_by_day(description)
+    return _v146_base_render_basket(
+        title,description,getter,remover,table_name,session_key,key_prefix,file_prefix
+    )
+
+# ============================================================
+# /V146 HABER DURUMU + GÜN GÜN ANALİZ ARŞİVİ
+# ============================================================
+
 rows=st.session_state.rows
 
 if rows is None:
@@ -38806,6 +39115,22 @@ if rows is None:
             ]
 
             _v120_now_show=_v34_diff[_show].copy().reset_index(drop=True)
+            _v120_now_status=[]
+            _v120_daily_keys,_v120_archive_keys=_v146_basket_keysets()
+            for _i in range(len(_v34_diff)):
+                try:
+                    _rr=_v120_now_records_for_basket(_v34_diff,[_i])
+                    _rec=_rr[0] if _rr else {
+                        'Başlık':str(_v34_diff.iloc[_i].get('Başlık','') or ''),
+                        'URL':str(_v34_diff.iloc[_i].get('Gerçek Bağlantı','') or '')
+                    }
+                except Exception:
+                    _rec={
+                        'Başlık':str(_v34_diff.iloc[_i].get('Başlık','') or ''),
+                        'URL':str(_v34_diff.iloc[_i].get('Gerçek Bağlantı','') or '')
+                    }
+                _v120_now_status.append(_v146_basket_status(_rec,_v120_daily_keys,_v120_archive_keys))
+            _v120_now_show.insert(0,'Durum',_v120_now_status)
             _v120_now_show.insert(0,'Sepete Ekle',False)
 
             _v120_now_edit=st.data_editor(
@@ -38815,6 +39140,7 @@ if rows is None:
                 height=min(780,130+34*min(120,len(_v34_diff))),
                 column_config={
                     'Sepete Ekle':st.column_config.CheckboxColumn('Sepete Ekle'),
+                    'Durum':st.column_config.TextColumn('Durum',width='small'),
                     'Başlık':st.column_config.TextColumn(
                         'Son İki Tarama Arasında Yeni Görülen İçerik',
                         width='large'
@@ -39340,16 +39666,16 @@ Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bi
     st.markdown('---')
     st.subheader('🧺 Analiz Sepetleri')
     st.caption(
-        'V140 ile Manuel Link Havuzu, Günlük Analiz Sepeti ve Eski Analiz Sepeti birlikte kullanılır. Kaynak Bazlı İzleme, kronoloji ve '
+        'V146 ile Manuel Link Havuzu, Günlük Analiz Sepeti ve Günlük Rapor Arşivi birlikte kullanılır. Kaynak Bazlı İzleme, kronoloji ve '
         'Şu An Bilmem Gerekenler bölümlerinden eklediğiniz yeni içerikler Günlük Analiz Sepetine gider. '
-        'Eski Analiz Sepeti ise önceki kararlı sürümde biriktirdiğiniz içerikleri arşiv olarak korur. '
+        'Günlük Rapor Arşivi, arşive taşıdığınız içerikleri gün gün tarih sekmelerinde düzenler. '
         'Manuel Link Havuzu ve her iki sepet siz silmediğiniz sürece yeni oturumlarda ve sonraki günlerde korunur.'
     )
 
     _manual_tab,_daily_tab,_archive_tab=st.tabs([
         f'🔗 Manuel Link Havuzu ({len(_v140_manual_pool())})',
         f'📅 Günlük Analiz Sepeti ({len(_v136_daily_basket())})',
-        f'🗂️ Eski Analiz Sepeti / Arşiv ({len(_v136_archive_basket())})'
+        f'🗂️ Günlük Rapor Arşivi ({len(_v136_archive_basket())})'
     ])
 
     with _manual_tab:
@@ -39367,8 +39693,8 @@ Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bi
     with _archive_tab:
         _v136_render_basket(
             '🗂️ Eski Analiz Sepeti / Arşiv',
-            'V135 ve önceki sürümlerde Analiz Sepetine eklenmiş içerikler burada korunur. '
-            'Bu içerikler yalnız siz çıkardığınız veya tüm sepeti temizlediğiniz zaman silinir.',
+            'Daha önce arşivde bulunan ve Günlük Analiz Sepetinden arşive taşıdığınız içerikler burada gün gün düzenlenir. '
+            'İçerikler siz çıkarmadığınız sürece korunur.',
             _v136_archive_basket,_v136_archive_remove,V136_ARCHIVE_TABLE,
             'v136_archive_analysis_basket','v136_archive','Eski_Analiz_Sepeti_Arsiv'
         )
@@ -39390,13 +39716,13 @@ Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bi
     p7.metric('PKK/KCK OSINT',int(movement_mask.sum()))
     p8.metric('Sosyal Medya',int(social_mask.sum()))
     p9.metric('Günlük Sepet',len(_v136_daily_basket()))
-    p10.metric('Eski Sepet / Arşiv',len(_v136_archive_basket()))
+    p10.metric('Günlük Arşiv',len(_v136_archive_basket()))
     _mp1,_mp2=st.columns([1,4])
     _mp1.metric('Manuel Link Havuzu',len(_v140_manual_pool()))
 
     st.caption(
         'Günlük çalışma akışı: Kaynak Bazlı İzleme ve Kronoloji → Genel Gephi Ağ Analizi → '
-        'Günlük / Eski Analiz Sepetleri → Gün Sonu Performans Özeti. '
+        'Günlük Analiz Sepeti / Günlük Rapor Arşivi → Gün Sonu Performans Özeti. '
         'Şu An Bilmem Gerekenler yalnız tarama öncesinde son iki tamamlanmış tarama arasındaki bütün yeni içerikleri gösterir.'
     )
 
