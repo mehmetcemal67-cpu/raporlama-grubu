@@ -39276,23 +39276,131 @@ def _v147_exec_tldr(rec):
     return _v147_compact(base),level
 
 
+# ============================================================
+# V148 — KAYNAK TÜRÜNE DUYARLI YÖNETİCİ ÖZETİ
+#
+# Düzeltme:
+# - V147'de sosyal gerilim anahtarları yalnız metne bakıyordu. Bu nedenle
+#   "PKK + tehdit" gibi ifadeler geçen bir internet haber sitesi yanlışlıkla
+#   sosyal medya riski olarak yorumlanabiliyordu.
+# - V148'de ÖNCE gerçek kaynak türü URL/domain üzerinden belirlenir.
+# - Sosyal medya etki şablonu yalnız gerçek sosyal platformlarda çalışır.
+# - Haber sitesi / think tank / bölgesel medya kendi konu etkileriyle analiz edilir.
+# - Kaynak başlığında ham domain yerine mümkünse yayın adı ve kaynak türü gösterilir.
+# ============================================================
+
+V148_SOCIAL_DOMAINS={
+    'x.com','twitter.com','facebook.com','instagram.com','tiktok.com','youtube.com','youtu.be',
+    'reddit.com','threads.net','bsky.app','t.me','telegram.me'
+}
+
+V148_SOURCE_LABELS={
+    'aawsat.com':'Asharq Al-Awsat',
+    'jpost.com':'The Jerusalem Post',
+    'medyahabertv.digital':'Medya Haber',
+    'medyahabertv.com':'Medya Haber',
+    't24.com.tr':'T24',
+    'ozgurpolitika.com':'Yeni Özgür Politika',
+    'anf-news.com':'ANF News',
+    'jinnews.net':'JINNEWS',
+    'rudaw.net':'Rûdaw',
+    'peyamakurd.info':'PeyamaKurd',
+    'kurdpress.com':'KurdPress',
+    'birgun.net':'BirGün',
+    'yeniyasamgazetesi9.com':'Yeni Yaşam',
+}
+
+
+def _v148_domain_root(rec):
+    d=_v145_domain(rec)
+    return str(d or '').lower().replace('www.','').strip()
+
+
+def _v148_domain_matches(d,root):
+    d=str(d or '').lower().replace('www.','').strip()
+    root=str(root or '').lower().replace('www.','').strip()
+    return bool(d and root and (d==root or d.endswith('.'+root)))
+
+
+def _v148_source_kind(rec):
+    """Kaynak türünü içerik kelimelerinden değil, önce gerçek URL/domain'den belirler."""
+    d=_v148_domain_root(rec)
+    if any(_v148_domain_matches(d,x) for x in V148_SOCIAL_DOMAINS):
+        return 'social'
+
+    family=str(_v147_family(rec) or '').strip()
+    fn=_v145_norm(family)
+    if 'sosyal medya' in fn or 'acik sosyal' in fn:
+        # Family etiketi sosyal dese bile URL açıkça bir haber sitesi ise domain üstün gelir.
+        # Domain yoksa family yedek olarak kullanılabilir.
+        if not d:
+            return 'social'
+    if 'think tank' in fn or 'analiz' in fn:
+        return 'thinktank'
+    if any(x in fn for x in ('yabanci basin','yerli basin','kurt bolgesel','pkk/kck','kurt medyasi')):
+        return 'news'
+    if d:
+        return 'news'
+    return 'other'
+
+
+def _v148_source_type_label(rec):
+    kind=_v148_source_kind(rec)
+    if kind=='social':
+        d=_v148_domain_root(rec)
+        if d in {'x.com','twitter.com'} or d.endswith('.x.com') or d.endswith('.twitter.com'):
+            return 'X / sosyal medya'
+        if 'facebook.com' in d: return 'Facebook / sosyal medya'
+        if 'instagram.com' in d: return 'Instagram / sosyal medya'
+        if 'youtube.com' in d or 'youtu.be' in d: return 'YouTube / sosyal medya'
+        if 'tiktok.com' in d: return 'TikTok / sosyal medya'
+        return 'Sosyal medya'
+    if kind=='thinktank': return 'Analiz / düşünce kuruluşu'
+    if kind=='news': return 'İnternet haber sitesi'
+    return 'Açık kaynak'
+
+
+def _v148_display_source(rec):
+    d=_v148_domain_root(rec)
+    for root,label in V148_SOURCE_LABELS.items():
+        if _v148_domain_matches(d,root):
+            return label
+    s=_v145_clean(_v145_source(rec))
+    # Ham alt alan adını kaynak adı gibi göstermemeye çalış.
+    if s and '.' not in s:
+        return s
+    if d:
+        # news.example.com -> example.com yerine mevcut label yoksa okunabilir domain.
+        parts=d.split('.')
+        if len(parts)>=2:
+            return '.'.join(parts[-2:])
+        return d
+    return s or 'Açık Kaynak'
+
+
 def _v147_topic_flags(rec,tldr=''):
     row=rec.get('Satır') if isinstance(rec.get('Satır'),dict) else {}
     txt=_v145_norm(_v147_blob(rec)+' '+tldr+' '+str(row.get('Kategori',''))+' '+str(row.get('Çerçeve','')))
     def hit(*terms): return any(_v145_norm(x) in txt for x in terms)
+    kind=_v148_source_kind(rec)
+    social_flags=_v147_social_tension_flags(txt)
     return {
-        'social_risk':_v147_social_tension_flags(txt)['hit'],
+        # KRİTİK V148 DÜZELTMESİ: sosyal gerilim şablonu yalnız gerçek sosyal platformlarda.
+        'social_risk':bool(kind=='social' and social_flags['hit']),
+        'source_kind':kind,
         'fire':hit('yangın','yangin','kundak','yakıldı','yakildi'),
         'violence':hit('saldırı','saldiri','yaralan','linç','linc','darp','bıçak','bicak','öldür','oldur','tehdit'),
         'law':hit('çerçeve yasa','cerceve yasa','kanun','yasa','hukuk','legal framework','meclis','tbmm','parliament'),
-        'disarm':hit('silahsızlan','silah bırak','silah birak','fesih','tasfiye','disarm','dissolution','silah teslim'),
+        'disarm':hit('silahsızlan','silah bırak','silah birak','fesih','tasfiye','disarm','dissolution','silah teslim','dağıtıl','dagitil'),
         'ocalan':hit('öcalan','ocalan','imralı','imrali','umut hakk','fiziki özgür','fiziksel özgür','statü','statu'),
         'syria':hit('suriye','syria','sdg','sdf','ypg','ypj','pyd','şam','damascus','entegrasyon'),
         'iraq':hit('ırak','iraq','ikby','krg','kandil','qandil','şengal','sengal','erbil','süleymaniye'),
-        'politics':hit('dem parti','mhp','ak parti','chp','deva','seçim','secim','kongre','ittifak','siyasi'),
+        'politics':hit('dem parti','mhp','ak parti','chp','deva','seçim','secim','kongre','ittifak','siyasi','reform','demokratik reform'),
         'rights':hit('hak','rights','demokrasi','democratic','eşit yurttaş','esit yurttas','kürt kimliği','kurt kimligi'),
-        'international':_v147_family(rec) in {'Yabancı Basın','Think Tank / Analiz','Kürt Bölgesel Medyası'},
+        'international':kind in {'news','thinktank'} and _v147_family(rec) in {'Yabancı Basın','Think Tank / Analiz','Kürt Bölgesel Medyası'},
         'claim':_v147_is_claim(txt),
+        'conditional':hit('takdirde','halinde','şart','sart','koşul','kosul','unless','if ','bağlı','bagli'),
+        'warning':hit('uyarı','uyari','tehdit','durdur','durabilir','sekte','risk','warn','threat'),
     }
 
 
@@ -39300,51 +39408,59 @@ def _v147_impacts(rec,tldr):
     f=_v147_topic_flags(rec,tldr)
     row=rec.get('Satır') if isinstance(rec.get('Satır'),dict) else {}
     family=_v147_family(rec)
-    source=_v145_source(rec)
+    kind=f.get('source_kind') or _v148_source_kind(rec)
+    source=_v148_display_source(rec)
     impacts=[]
 
     def add(s):
         s=_v145_clean(s)
-        if s and all(_v145_similarity(s,x)<0.55 for x in impacts): impacts.append(s)
+        if s and all(_v145_similarity(s,x)<0.55 for x in impacts):
+            impacts.append(s)
 
-    if f['social_risk']:
+    # Sosyal medya risk şablonu SADECE gerçek sosyal platformda çalışır.
+    if kind=='social' and f['social_risk']:
         add('Etnik kimlik ile şiddet, yaralanma veya yangın arasında doğrudan bağ kurulması toplumsal gerilim ve hedef gösterme riskini artırabilir.')
         add('Söylemin DEM Parti, PKK veya Kürt kimliği üzerinden siyasallaştırılması, Terörsüz Türkiye sürecine ilişkin kutuplaştırıcı ve provokatif anlatıları besleyebilir.')
-        add('İçerik sosyal medya kaynağına dayandığından fail, neden ve olayın kapsamı resmî açıklama veya bağımsız kaynaklarla doğrulanmadan olgu kabul edilmemelidir.')
+        add('Paylaşımda yer alan fail, neden ve olayın kapsamına ilişkin iddialar resmî açıklama veya bağımsız kaynaklarla doğrulanmadan olgu kabul edilmemelidir.')
     else:
-        if f['disarm']:
-            add('Silahsızlanma, fesih veya silah teslimiyle ilgili bu gelişme sürecin sahadaki somut ilerleme düzeyini doğrudan etkileyebilir.')
+        # Haber sitesi / analiz kaynağı için içerik-temelli etkiler.
+        if f['disarm'] and f['politics'] and (f['conditional'] or f['warning']):
+            add('Silahsızlanma sürecinin siyasi veya demokratik reform adımlarına bağlanması, sürecin ilerlemesini Ankara’nın atacağı somut adımlara koşullayan bir baskı unsuru oluşturmaktadır.')
+        elif f['disarm']:
+            add('Silahsızlanma, fesih veya silah teslimine ilişkin gelişme, sürecin sahadaki somut ilerleme düzeyini ve takvimini doğrudan etkileyebilir.')
+
         if f['law']:
-            add('Hukuki çerçevenin kapsamı ve uygulanma biçimi, silahsızlanma sonrası statü ve siyasi entegrasyonun uygulanabilirliği açısından belirleyicidir.')
+            add('Hukuki çerçevenin kapsamı ve uygulanma biçimi, silahsızlanma sonrası statü, geri dönüş ve siyasi entegrasyon başlıklarının uygulanabilirliği açısından belirleyicidir.')
+        if f['politics'] and not f['disarm']:
+            add('Gelişme, siyasi aktörlerin süreçteki pozisyonlarını ve olası uzlaşma/ayrışma alanlarını yeniden şekillendirebilir.')
         if f['ocalan']:
-            add('Abdullah Öcalan’ın statüsü, iletişim imkânları veya sürece katılımı, ilgili aktörlerin süreçten beklentilerinde merkezî başlıklardan biri olmaya devam etmektedir.')
+            add('Abdullah Öcalan’ın statüsü, iletişim imkânları veya sürece katılımı ilgili aktörlerin beklentilerinde merkezî başlıklardan biri olmaya devam etmektedir.')
         if f['syria']:
             add('Suriye’de SDG/YPG/YPJ’nin silah, kurumsal yapı ve entegrasyonuna ilişkin gelişmeler Türkiye’deki sürecin bölgesel güvenlik boyutunu doğrudan etkileyebilir.')
         if f['iraq']:
             add('Irak/IKBY/Şengal/Kandil hattındaki gelişme, PKK’nın saha varlığı ve bölgesel güvenlik denklemi bakımından sürecin dış boyutuna yansıyabilir.')
-        if f['politics']:
-            add('Açıklama veya gelişme, Türkiye’deki siyasi aktörlerin sürece ilişkin pozisyonlarının ve olası iş birliği/ayrışma alanlarının yeniden şekillenmesine yol açabilir.')
         if f['rights']:
-            add('Haklar, demokratikleşme veya kimlik taleplerinin öne çıkması, sürecin yalnız güvenlik değil siyasi ve toplumsal düzenleme boyutuyla da ele alındığını göstermektedir.')
+            add('Haklar ve demokratikleşme taleplerinin öne çıkması, sürecin yalnız güvenlik değil siyasi ve toplumsal düzenleme boyutuyla da yürütüldüğünü göstermektedir.')
         if f['international']:
-            add('Konunun yabancı/bölgesel medya veya analiz kuruluşlarında görünürlük kazanması, sürecin uluslararası algısını ve dış aktörlerin değerlendirmelerini etkileyebilir.')
+            add('Konunun yabancı veya bölgesel medyada görünürlük kazanması, sürecin dışarıdaki algısını ve uluslararası aktörlerin değerlendirmelerini etkileyebilir.')
 
-        # Kaynak/aktör etkisi: mevcut sınıflandırmayı kullan, yeni siyasi kimlik atfetme.
         stance=str(row.get('Yaklaşım','') or '').strip()
         if stance=='Eleştirel / Şüpheci':
-            add('İçerikteki eleştirel yaklaşım, sürecin mevcut uygulamasına ilişkin güven, yeterlilik veya karşılıklılık sorunlarının gündemde kaldığını göstermektedir.')
+            add('Eleştirel yaklaşım, sürecin mevcut uygulamasına ilişkin güven, yeterlilik veya karşılıklılık sorunlarının gündemde kaldığını göstermektedir.')
         elif stance=='Destekleyici / Olumlu':
             add('Destekleyici yaklaşım, ilgili çevrede sürecin devamına yönelik siyasi veya toplumsal meşruiyet üretme potansiyeli bulunduğunu göstermektedir.')
         elif stance=='Karma / Tartışmalı':
             add('Karma/tartışmalı çerçeve, sürece desteğin koşulsuz olmadığını ve belirli hukuki, siyasi veya güvenlik şartlarına bağlandığını göstermektedir.')
 
-        if f['claim'] or family=='Sosyal Medya':
-            add('İddia niteliğindeki hususların karar alma sürecinde kullanılabilmesi için resmî açıklama veya en az bir bağımsız kaynakla teyit edilmesi gerekmektedir.')
+        if f['claim']:
+            add('Haberde iddia niteliğinde aktarılan hususların karar alma sürecinde kullanılabilmesi için resmî açıklama veya bağımsız kaynaklarla teyit edilmesi gerekmektedir.')
+        elif kind=='social':
+            add('Sosyal medya paylaşımının etkisi ve doğruluğu, resmî açıklamalar ile bağımsız kaynakların teyidi üzerinden ayrıca değerlendirilmelidir.')
         else:
             add('Gelişmenin kalıcı sonuç üretip üretmeyeceği, ilgili aktörlerin sonraki açıklamaları ve somut uygulama adımlarıyla netleşecektir.')
 
     generic=[
-        'Gelişme, Terörsüz Türkiye sürecinin güvenlik, siyaset ve toplumsal meşruiyet boyutlarından en az birini etkileyebilecek yeni bir veri noktası oluşturmaktadır.',
+        'Gelişme, Terörsüz Türkiye sürecinin güvenlik, siyaset veya toplumsal meşruiyet boyutlarından en az birini etkileyebilecek yeni bir veri noktası oluşturmaktadır.',
         f'{source} kaynağındaki içerik, ilgili aktörün veya yayın çevresinin süreci hangi öncelik üzerinden okuduğunu görünür kılmaktadır.',
         'Kısa vadeli etkinin yönü, açıklamanın sahadaki uygulama ve diğer aktörlerin tepkileriyle desteklenip desteklenmemesine bağlı olacaktır.'
     ]
@@ -39354,12 +39470,13 @@ def _v147_impacts(rec,tldr):
 
 def _v147_add_item(doc,rec,tldr,impacts,footnotes):
     no=int(rec.get('No',0) or 0)
-    source=_v145_source(rec)
-    # Kısa kaynak satırı
+    source=_v148_display_source(rec)
+    source_type=_v148_source_type_label(rec)
+    # Kısa kaynak satırı: yayın adı + gerçek kaynak türü
     hp=doc.add_paragraph()
     hp.paragraph_format.space_before=Pt(7)
     hp.paragraph_format.space_after=Pt(2)
-    hr=hp.add_run(f'{no}. {source}')
+    hr=hp.add_run(f'{no}. {source} — {source_type}')
     hr.bold=True; hr.font.name='Times New Roman'; hr.font.size=Pt(10.5)
 
     p=doc.add_paragraph()
@@ -39438,7 +39555,7 @@ def _v147_analysis_basket_report_docx(df):
         except Exception: return raw
 
 
-# V147 yönetici özeti rapor motoru aktif.
+# V148 kaynak türüne duyarlı yönetici özeti rapor motoru aktif.
 _v114_analysis_basket_report_docx=_v147_analysis_basket_report_docx
 
 # ============================================================
