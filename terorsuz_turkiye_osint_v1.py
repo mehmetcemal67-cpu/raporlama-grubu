@@ -590,6 +590,8 @@ def _official_radar_rows(df):
 # V108 kaynak zenginleştirme ve V106 kararlı çekirdek korunmuştur.
 
 st.set_page_config(page_title='Terörsüz Türkiye OSINT Radarı', page_icon='🛡️', layout='wide')
+# V153 görünür sürüm teyidi: yanlış dosya çalıştırılıyorsa kullanıcı hemen fark eder.
+st.sidebar.success('✅ AKTİF SÜRÜM: V153 — Birleşik Kürt Medyası / PKK-KCK Kaynak Havuzu')
 
 # ============================================================
 # V55 — ŞİFRE KORUMASI
@@ -16947,6 +16949,356 @@ except Exception:
 # /V147 PRE-SCAN SOSYAL GERİLİM RADARI
 # ============================================================
 
+
+# ============================================================
+# V152 — BİRLEŞİK KÜRT MEDYASI / PKK-KCK AÇIK KAYNAK HAVUZU
+#
+# KARARLI TABAN: V148 (değiştirilmez).
+# Amaç:
+# - Kullanıcının takip listesinde olup mevcut havuzda bulunmayan/güncel alan
+#   adlarını kaynak evrenine eklemek.
+# - Mevcut kaynakları ve iç sınıflandırmaları silmeden tarama hacmini artırmak.
+# - "Kürt Medyası" ile "PKK/KCK Açık Kaynak" görünümlerini yalnız UI'da
+#   tek sekmede birleştirmek; kaynağın gerçek aile/perspektif etiketi korunur.
+# - Birleşik sekmede yer almak otomatik bir örgütsel bağlılık hükmü değildir.
+# ============================================================
+
+# Kullanıcının listesindeki, V148'de zaten bulunmayan veya güncel alan adı
+# olarak eklenmesi gereken hareket-söylemi odaklı açık kaynaklar.
+V152_MOVEMENT_EXTRA_DOMAINS = [
+    'gerilla.tv','gerillatv.net',
+    'ciratv.com',
+    'numedya24.com','numedya24.tv',
+    'ajansawelat.com','ajansawelat1.com',
+    'azadiyawelat1.com',
+    'mezopotamyaajansi.com','mezopotamyaajansi.org','mezopotamyaajansi35.com',
+    'mezopotamyaajansi44.com','mezopotamyaajansi.net',
+    'rojnews.news','rojnews.video',
+    'nuceciwan101.com','sterktv.org','medyahabertv.digital','medyahabertv.com',
+    'ronahi.tv','hawarnews.com',
+]
+
+# Kürt bölgesel / bağımsız / Kürt meselesi odaklı ek kaynaklar.
+# Bunlar birleşik izleme sekmesinde görünür; hareket/örgüt medyası olarak
+# otomatik yeniden sınıflandırılmaz.
+V152_KURDISH_REGIONAL_EXTRA = [
+    'theamargi.com','theamargi.org',
+    'waarmedia.com',
+    'welattv.com','welattv.net',
+    'botantimes.com','en.botantimes.com',
+    'diyarname.com',
+]
+
+# Gerîla/Gerilla TV, doğrudan silahlı kanat içerikleri taşıyan video kaynağı
+# olarak mevcut "direct" alt kümesine de eklenir. Alan adları dönemsel olarak
+# erişilemez olabildiği için marka sorgusu ayrıca aşağıda korunur.
+V152_MOVEMENT_DIRECT_EXTRA = ['gerilla.tv','gerillatv.net']
+
+# Mevcut listeleri ASLA daraltma; yalnız eksikleri sona ekle.
+TT_MOVEMENT_V9 = list(dict.fromkeys(list(TT_MOVEMENT_V9) + V152_MOVEMENT_EXTRA_DOMAINS))
+TT_MOVEMENT_OSINT = list(dict.fromkeys(list(TT_MOVEMENT_OSINT) + V152_MOVEMENT_EXTRA_DOMAINS))
+TT_MOVEMENT_DIRECT_V9 = list(dict.fromkeys(list(TT_MOVEMENT_DIRECT_V9) + V152_MOVEMENT_DIRECT_EXTRA))
+TT_KURDISH_REGIONAL_V9 = list(dict.fromkeys(list(TT_KURDISH_REGIONAL_V9) + V152_KURDISH_REGIONAL_EXTRA))
+TT_KURDISH_MEDIA = list(dict.fromkeys(
+    list(TT_KURDISH_MEDIA) + V152_MOVEMENT_EXTRA_DOMAINS + V152_KURDISH_REGIONAL_EXTRA
+))
+
+try:
+    V113_KURDISH_UMBRELLA = list(dict.fromkeys(
+        list(V113_KURDISH_UMBRELLA) + V152_MOVEMENT_EXTRA_DOMAINS + V152_KURDISH_REGIONAL_EXTRA
+    ))
+except Exception:
+    pass
+
+# Okunabilir kaynak/perspektif etiketleri.
+try:
+    V113_KURDISH_SOURCE_LABELS.update({
+        'theamargi.com':'The Amargi — bağımsız Kürt/MENA haber ve analiz',
+        'theamargi.org':'The Amargi — bağımsız Kürt/MENA haber ve analiz',
+        'gerilla.tv':'Gerîla / Gerilla TV — silahlı kanat video açık kaynağı',
+        'gerillatv.net':'Gerîla / Gerilla TV — silahlı kanat video açık kaynağı',
+        'ciratv.com':'Çira TV — Kürtçe televizyon / açık kaynak yayın',
+        'numedya24.com':'NûMedya24 — Kürt meselesi ve siyasal gündem odaklı açık kaynak',
+        'numedya24.tv':'NûMedya24 — Kürt meselesi ve siyasal gündem odaklı açık kaynak',
+        'ajansawelat.com':'Ajansa Welat — Kürtçe açık kaynak haber',
+        'azadiyawelat1.com':'Azadiya Welat — Kürtçe gazete / açık kaynak',
+        'mezopotamyaajansi.com':'Mezopotamya Ajansı — haber ajansı / açık kaynak',
+        'mezopotamyaajansi.org':'Mezopotamya Ajansı — haber ajansı / açık kaynak',
+        'mezopotamyaajansi35.com':'Mezopotamya Ajansı — haber ajansı / açık kaynak',
+        'mezopotamyaajansi44.com':'Mezopotamya Ajansı — haber ajansı / açık kaynak',
+        'mezopotamyaajansi.net':'Mezopotamya Ajansı — haber ajansı / açık kaynak',
+        'rojnews.news':'RojNews — Kürt gündemi / hareket çevresi açık kaynak',
+        'rojnews.video':'RojNews Video — Kürt gündemi / video açık kaynak',
+        'nuceciwan101.com':'Nûçe Ciwan — gençlik/hareket çevresi açık kaynak (yayın 01.07.2026 itibarıyla sona erdi)',
+        'sterktv.org':'Stêrk TV — Kürtçe televizyon / hareket çevresi açık kaynak',
+        'medyahabertv.digital':'Medya Haber TV — Kürtçe/Türkçe hareket çevresi açık kaynak',
+        'medyahabertv.com':'Medya Haber TV — Kürtçe/Türkçe hareket çevresi açık kaynak',
+        'ronahi.tv':'Ronahî TV — Rojava/Kürtçe televizyon açık kaynağı',
+        'hawarnews.com':'ANHA / Hawar News — Rojava / Suriye Kürt alanı',
+        'waarmedia.com':'WAAR / Waar Media — Kürdistan Bölgesi medya ağı',
+        'welattv.com':'Welat TV — Suriye/Kürt meseleleri odaklı medya',
+        'welattv.net':'Welat TV — Suriye/Kürt meseleleri odaklı medya',
+        'botantimes.com':'Botan Times — Kürtçe haber/kültür medya platformu',
+        'en.botantimes.com':'Botan Times English — Kürtçe/Kürt gündemi medya platformu',
+        'diyarname.com':'Diyarname — Kürtçe haber, kültür ve görüş platformu',
+    })
+except Exception:
+    pass
+
+# Google/Bing yayıncı adından gelen sonuçlarda domain çözümünü güçlendir.
+try:
+    SOURCE_ALIASES.update({
+        'the amargi':'theamargi.com','amargi':'theamargi.com',
+        'gerilla tv':'gerillatv.net','gerîla tv':'gerillatv.net','gerila tv':'gerillatv.net',
+        'çira tv':'ciratv.com','cira tv':'ciratv.com',
+        'nûmedya24':'numedya24.tv','numedya24':'numedya24.tv','nu medya24':'numedya24.tv',
+        'ajansa welat':'ajansawelat1.com','azadiya welat':'azadiyawelat1.com',
+        'mezopotamya ajansı':'mezopotamyaajansi.com','mezopotamya ajansi':'mezopotamyaajansi.com',
+        'waar tv':'waarmedia.com','waar media':'waarmedia.com',
+        'welat tv':'welattv.com','botan times':'botantimes.com','diyarname':'diyarname.com',
+        'rojnews':'rojnews.news','roj news':'rojnews.news',
+        'nûçe ciwan':'nuceciwan101.com','nuce ciwan':'nuceciwan101.com',
+        'medya haber tv':'medyahabertv.digital','ronahî tv':'ronahi.tv','ronahi tv':'ronahi.tv',
+        'stêrk tv':'sterktv.org','sterk tv':'sterktv.org',
+        'hawar news':'hawarnews.com','anha':'hawarnews.com',
+        'rudaw':'rudaw.net','rûdaw':'rudaw.net','kurdistan24':'kurdistan24.net',
+    })
+except Exception:
+    pass
+
+# Marka sorguları: alan adı değişse veya indeks URL'yi farklı gösterse de keşif şansı artsın.
+_V152_BASE_BUILD_MOVEMENT_QUERIES = build_movement_queries
+def build_movement_queries(when):
+    q=list(_V152_BASE_BUILD_MOVEMENT_QUERIES(when))
+    q.extend([
+        '("RojNews" OR "ANHA" OR "Hawar News" OR "Nûçe Ciwan" OR "Nuçe Ciwan") (Öcalan OR Ocalan OR PKK OR KCK OR SDF OR SDG OR YPG)',
+        '("Gerilla TV" OR "Gerîla TV" OR "Gerila TV") (PKK OR HPG OR YJA OR gerilla OR guerrilla OR operasyon)',
+        '("Stêrk TV" OR "Sterk TV" OR "Medya Haber TV" OR "Çira TV" OR "Cira TV" OR "Ronahî TV" OR "Ronahi TV") (Öcalan OR PKK OR KCK OR süreç OR SDF OR YPG)',
+        '("Mezopotamya Ajansı" OR "Mezopotamya Ajansi" OR "Ajansa Welat" OR "Azadiya Welat" OR "NûMedya24" OR "Numedya24") (Öcalan OR PKK OR KCK OR "barış süreci" OR "Terörsüz Türkiye" OR SDF OR YPG)',
+    ])
+    return list(dict.fromkeys(q))
+
+_V152_BASE_BUILD_KURDISH_QUERIES = build_kurdish_media_queries
+def build_kurdish_media_queries(when):
+    q=list(_V152_BASE_BUILD_KURDISH_QUERIES(when))
+    q.extend([
+        '("The Amargi" OR Rûdaw OR Rudaw OR Kurdistan24 OR "WAAR TV" OR "Waar Media" OR "Welat TV") (Turkey OR Türkiye OR Öcalan OR Ocalan OR PKK OR SDF OR YPG OR Kurdish)',
+        '("Botan Times" OR Diyarname) (Kürt OR Kurdish OR Kurdistan OR Öcalan OR Ocalan OR PKK OR SDF)',
+    ])
+    return list(dict.fromkeys(q))
+
+# V22 ana tarama yoluna da aynı marka-kurtarma sorgularını ekle.
+_V152_BASE_V22_MOVEMENT_QUERIES = _v22_movement_queries
+def _v22_movement_queries():
+    q=list(_V152_BASE_V22_MOVEMENT_QUERIES())
+    q.extend([
+        '("RojNews" OR "ANHA" OR "Hawar News" OR "Nûçe Ciwan" OR "Nuçe Ciwan") (Öcalan OR Ocalan OR PKK OR KCK OR SDF OR SDG OR YPG)',
+        '("Gerilla TV" OR "Gerîla TV" OR "Gerila TV") (PKK OR HPG OR gerilla OR guerrilla)',
+        '("Stêrk TV" OR "Sterk TV" OR "Medya Haber TV" OR "Çira TV" OR "Cira TV" OR "Ronahî TV" OR "Ronahi TV") (Öcalan OR PKK OR KCK OR süreç OR SDF OR YPG)',
+        '("Mezopotamya Ajansı" OR "Ajansa Welat" OR "Azadiya Welat" OR "NûMedya24" OR "Numedya24") (Öcalan OR PKK OR KCK OR süreç OR SDF OR YPG)',
+    ])
+    return list(dict.fromkeys(q))
+
+_V152_BASE_V22_KURDISH_QUERIES = _v22_kurdish_queries
+def _v22_kurdish_queries():
+    q=list(_V152_BASE_V22_KURDISH_QUERIES())
+    q.extend([
+        '("The Amargi" OR Rûdaw OR Rudaw OR Kurdistan24 OR "WAAR TV" OR "Waar Media" OR "Welat TV") (Turkey OR Türkiye OR Öcalan OR Ocalan OR PKK OR SDF OR YPG OR Kurdish)',
+        '("Botan Times" OR Diyarname) (Kürt OR Kurdish OR Kurdistan OR Öcalan OR Ocalan OR PKK OR SDF)',
+    ])
+    return list(dict.fromkeys(q))
+
+# V153 — Arama motoru indeksine bağımlılığı azaltan DOĞRUDAN KAYNAK KATMANI.
+# V148/V152 mevcut üç doğrudan kaynağı korunur. Buna ek olarak kullanıcının
+# izleme listesinde yer alan aktif yayınların ana sayfaları paralel okunur.
+# Hareket/PKK-KCK alt kümesi ile Kürt bölgesel/bağımsız alt küme ayrı tutulur;
+# ekranda ise tek birleşik sekmede gösterilir.
+
+# Doğrudan kaynak sayfalarında süreçle ilişkili hareket içeriğini biraz daha
+# geniş yakala. Genel taramadaki filtreyi değiştirme; yalnız bu kaynak katmanı
+# HPG/YJA/gerîla/Kandil/Rojava gibi örgüt-saha terimlerini de dikkate alır.
+def _v153_movement_topic_hit(text):
+    t=norm(text)
+    if _v138_topic_hit(text):
+        return True
+    extra=[
+        'hpg','yja star','yja-star','gerilla','gerîla','guerrilla','kandil','qandil',
+        'zap','metina','avaşin','avasin','xakurkê','xakurke','rojhilat','rojava',
+        'kobanê','kobane','qamişlo','qamishlo','şengal','sengal','demokratik toplum',
+        'democratic society','örgüt yönetimi','orgut yonetimi','gerilla tv'
+    ]
+    return any(norm(x) in t for x in extra)
+
+
+def _v153_homepage_raw(home_url,source_label,max_items=100,topic='movement'):
+    rr=_v138_http_get(home_url,10)
+    if rr is None or rr.status_code>=400 or not rr.text:
+        return []
+    try:
+        soup=BeautifulSoup(rr.text,'html.parser')
+    except Exception:
+        return []
+    base_domain=_tt_norm_domain(rr.url or home_url)
+    out=[]; seen=set()
+    skip_parts=('javascript:','mailto:','#','/tag/','/etiket/','/kategori/','/category/','/author/','/yazar/')
+    for a in soup.find_all('a',href=True):
+        href=str(a.get('href') or '').strip()
+        if not href or href.startswith(skip_parts):
+            continue
+        url=_v138_fix_url(requests.compat.urljoin(rr.url,href))
+        d=_tt_norm_domain(url)
+        if not d or d!=base_domain:
+            continue
+        title=re.sub(r'\s+',' ',a.get_text(' ',strip=True)).strip()
+        if len(title)<16 or len(title)>320:
+            continue
+        parent=a.find_parent(['article','li','section','div'])
+        context=''
+        if parent is not None:
+            try: context=re.sub(r'\s+',' ',parent.get_text(' ',strip=True)).strip()[:1800]
+            except Exception: context=''
+        combined=(title+' '+context).strip()
+        if topic=='movement':
+            if not _v153_movement_topic_hit(combined):
+                continue
+        else:
+            # Bölgesel/bağımsız kaynaklarda Türkiye-süreç-Kürt güvenlik/siyaset ekseni.
+            nt=norm(combined)
+            regional_terms=[
+                'turkey','türkiye','turkiye','pkk','kck','öcalan','ocalan','sdf','sdg','ypg',
+                'peace process','barış süreci','baris sureci','disarmament','silahsızlanma',
+                'kurdish issue','kürt meselesi','kurt meselesi','legal framework','çerçeve yasa',
+                'dem party','dem parti','mazlum abdi','kandil','qandil','syria','suriye','iraq','ırak'
+            ]
+            if not any(norm(x) in nt for x in regional_terms):
+                continue
+        key=(title_key(title),url)
+        if key in seen:
+            continue
+        seen.add(key)
+        date_txt=''
+        if parent is not None:
+            try:
+                tm=parent.find('time')
+                if tm is not None:
+                    date_txt=str(tm.get('datetime') or tm.get_text(' ',strip=True) or '').strip()
+            except Exception:
+                pass
+        if not date_txt:
+            date_txt=_v138_parse_visible_date(context)
+        snippet=context
+        if snippet.startswith(title): snippet=snippet[len(title):].strip(' -–—|:')
+        if len(snippet)<40: snippet=title
+        out.append({
+            'title':title,'url':url,'date':date_txt,'snippet':snippet[:2200],
+            'source':source_label,'source_url':rr.url or home_url,
+            '_v138_direct':True,'_v153_direct':True,
+        })
+        if len(out)>=max_items:
+            break
+    return out
+
+
+_V153_BASE_DIRECT_MOVEMENT_SOURCES = _v138_direct_movement_sources
+def _v138_direct_movement_sources(hours=168):
+    rows=list(_V153_BASE_DIRECT_MOVEMENT_SOURCES(hours) or [])
+    jobs=[
+        ('https://rojnews.news/','RojNews'),
+        ('https://hawarnews.com/','ANHA / Hawar News'),
+        ('https://gerillatv.net/','Gerîla TV'),
+        ('https://sterktv.org/','Stêrk TV'),
+        ('https://www.medyahabertv.digital/','Medya Haber TV'),
+        ('https://ciratv.com/','Çira TV'),
+        ('https://ronahi.tv/','Ronahî TV'),
+        ('https://www.numedya24.tv/','NûMedya24'),
+        ('https://www.mezopotamyaajansi.com/','Mezopotamya Ajansı'),
+        ('https://www.mezopotamyaajansi.org/','Mezopotamya Ajansı'),
+        ('https://azadiyawelat1.com/','Azadiya Welat'),
+        ('https://ajansawelat1.com/','Ajansa Welat'),
+        ('https://www.nuceciwan101.com/','Nûçe Ciwan'),
+    ]
+    def one(job):
+        url,label=job
+        try: return _v153_homepage_raw(url,label,90,'movement')
+        except Exception: return []
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(10,len(jobs))) as ex:
+            for part in ex.map(one,jobs): rows.extend(part or [])
+    except Exception:
+        for job in jobs:
+            try: rows.extend(one(job) or [])
+            except Exception: pass
+    ded=[]; seen=set()
+    for r in rows:
+        k=(str(r.get('url') or ''),title_key(r.get('title','')))
+        if k in seen: continue
+        seen.add(k); ded.append(r)
+    return ded
+
+
+def _v153_direct_kurdish_sources(hours=168):
+    jobs=[
+        ('https://www.theamargi.com/','The Amargi'),
+        ('https://www.rudaw.net/','Rûdaw'),
+        ('https://www.kurdistan24.net/','Kurdistan24'),
+        ('https://www.waarmedia.com/','WAAR / Waar Media'),
+        ('https://www.welattv.com/','Welat TV'),
+        ('https://www.welattv.net/','Welat TV'),
+        ('https://www.botantimes.com/','Botan Times'),
+        ('https://www.diyarname.com/','Diyarname'),
+    ]
+    rows=[]
+    def one(job):
+        url,label=job
+        try: return _v153_homepage_raw(url,label,80,'kurdish')
+        except Exception: return []
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8,len(jobs))) as ex:
+            for part in ex.map(one,jobs): rows.extend(part or [])
+    except Exception:
+        for job in jobs:
+            try: rows.extend(one(job) or [])
+            except Exception: pass
+    ded=[]; seen=set()
+    for r in rows:
+        k=(str(r.get('url') or ''),title_key(r.get('title','')))
+        if k in seen: continue
+        seen.add(k); ded.append(r)
+    return ded
+
+
+# V22 aramasını marka sorgularıyla sınırlama: doğrulanmış/aktif alan adlarına
+# tekil site sorguları da ekle. Bu, arama motorunun yayın adını farklı yazdığı
+# durumlarda kaçırmayı azaltır.
+_V153_BASE_V22_MOVEMENT_QUERIES=_v22_movement_queries
+def _v22_movement_queries():
+    q=list(_V153_BASE_V22_MOVEMENT_QUERIES())
+    core='(Öcalan OR Ocalan OR PKK OR KCK OR HPG OR "Barış ve Demokratik Toplum" OR "barış süreci" OR "çerçeve yasa" OR SDF OR SDG OR YPG OR "Mazlum Abdi")'
+    domains=[
+        'rojnews.news','hawarnews.com','gerillatv.net','sterktv.org','medyahabertv.digital',
+        'ciratv.com','ronahi.tv','numedya24.tv','numedya24.com','mezopotamyaajansi.com',
+        'mezopotamyaajansi.org','azadiyawelat1.com','ajansawelat1.com','nuceciwan101.com'
+    ]
+    for sites in _v22_group_sites(domains,5): q.append(f'{core} {sites}')
+    return list(dict.fromkeys(q))
+
+
+_V153_BASE_V22_KURDISH_QUERIES=_v22_kurdish_queries
+def _v22_kurdish_queries():
+    q=list(_V153_BASE_V22_KURDISH_QUERIES())
+    core='(Turkey OR Türkiye OR Öcalan OR Ocalan OR PKK OR KCK OR SDF OR YPG OR "peace process" OR "barış süreci" OR "Kürt meselesi" OR "legal framework" OR "çerçeve yasa")'
+    domains=['theamargi.com','theamargi.org','rudaw.net','kurdistan24.net','waarmedia.com','welattv.com','welattv.net','botantimes.com','diyarname.com']
+    for sites in _v22_group_sites(domains,5): q.append(f'{core} {sites}')
+    return list(dict.fromkeys(q))
+
+# ============================================================
+# /V153 DOĞRUDAN KAYNAK KATMANI
+# ============================================================
+
+# ============================================================
+# /V152 PRE-SCAN KAYNAK GENİŞLETME
+# ============================================================
+
 if run:
     st.session_state.pop('_v20_frame_cmp_rows',None)
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
@@ -17133,6 +17485,26 @@ if run:
             status_box.write(
                 '🛰️ V139 doğrudan kaynak yedeği (orijinal link korunur): '+
                 ', '.join(f'{k} {v}' for k,v in sorted(_v138_counts.items()))
+            )
+    except Exception:
+        pass
+
+    # V153 — Kürt bölgesel/bağımsız kaynakları da arama motorundan bağımsız besle.
+    try:
+        _v153_kurdish_direct_rows=_v153_direct_kurdish_sources(movement_hours)
+        for _item in _v153_kurdish_direct_rows:
+            if isinstance(_item,dict):
+                _item['_origin_query']='V153 direct Kurdish source fallback'
+        raw_by_mode.setdefault('kurdish',[]).extend(_v153_kurdish_direct_rows)
+        stat['Ham sonuç']+=len(_v153_kurdish_direct_rows)
+        if _v153_kurdish_direct_rows:
+            _v153_counts={}
+            for _item in _v153_kurdish_direct_rows:
+                _src=str(_item.get('source') or 'Açık Kaynak')
+                _v153_counts[_src]=_v153_counts.get(_src,0)+1
+            status_box.write(
+                '🟣 V153 doğrudan Kürt medya yedeği: '+
+                ', '.join(f'{k} {v}' for k,v in sorted(_v153_counts.items()))
             )
     except Exception:
         pass
@@ -34780,12 +35152,11 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
             _v3_make_note(pd.DataFrame(getter()),key_prefix)
     with c3:
         if st.button('🧠 YÖNETİCİ ÖZET RAPORU OLUŞTUR',type='primary',use_container_width=True,key=f'{key_prefix}_report'):
-            try:
-                st.session_state[f'{key_prefix}_report_bytes']=_v150_generate_manager_report(
-                    pd.DataFrame(getter()), key_prefix
-                )
-            except Exception as e:
-                st.error(f'Rapor hazırlanamadı: {e}')
+            with st.spinner('Sepetteki içerikler TL;DR + 3 etki/sonuç yönetici özeti formatında hazırlanıyor...'):
+                try:
+                    st.session_state[f'{key_prefix}_report_bytes']=_v114_analysis_basket_report_docx(pd.DataFrame(getter()))
+                except Exception as e:
+                    st.error(f'Rapor hazırlanamadı: {e}')
 
     if st.session_state.get(f'{key_prefix}_note_bytes'):
         st.download_button(
@@ -34800,7 +35171,7 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
         st.download_button(
             '⬇️ TERÖRSÜZ TÜRKİYE YÖNETİCİ ÖZETİNİ İNDİR',
             st.session_state[f'{key_prefix}_report_bytes'],
-            file_name=f'{file_prefix}_Terorsuz_Turkiye_Yonetici_Ozeti_V150_{date.today()}.docx',
+            file_name=f'{file_prefix}_Terorsuz_Turkiye_Yonetici_Ozeti_V152_{date.today()}.docx',
             mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             use_container_width=True,
             key=f'{key_prefix}_report_download'
@@ -35466,12 +35837,13 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
             use_container_width=True,
             key=f'{key_prefix}_report'
         ):
-            try:
-                st.session_state[f'{key_prefix}_report_bytes']=_v150_generate_manager_report(
-                    pd.DataFrame([_v137_fix_record(r) for r in getter()]), key_prefix
-                )
-            except Exception as e:
-                st.error(f'Rapor hazırlanamadı: {e}')
+            with st.spinner('Sepetteki içerikler TL;DR + 3 etki/sonuç yönetici özeti formatında hazırlanıyor...'):
+                try:
+                    st.session_state[f'{key_prefix}_report_bytes']=_v114_analysis_basket_report_docx(
+                        pd.DataFrame([_v137_fix_record(r) for r in getter()])
+                    )
+                except Exception as e:
+                    st.error(f'Rapor hazırlanamadı: {e}')
 
     if st.session_state.get(f'{key_prefix}_note_bytes'):
         st.download_button(
@@ -35487,7 +35859,7 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
         st.download_button(
             '⬇️ TERÖRSÜZ TÜRKİYE YÖNETİCİ ÖZETİNİ İNDİR',
             st.session_state[f'{key_prefix}_report_bytes'],
-            file_name=f'{file_prefix}_Terorsuz_Turkiye_Yonetici_Ozeti_V150_{date.today()}.docx',
+            file_name=f'{file_prefix}_Terorsuz_Turkiye_Yonetici_Ozeti_V152_{date.today()}.docx',
             mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             use_container_width=True,
             key=f'{key_prefix}_report_download'
@@ -39559,368 +39931,58 @@ def _v147_analysis_basket_report_docx(df):
 _v114_analysis_basket_report_docx=_v147_analysis_basket_report_docx
 
 # ============================================================
-# V149 — YÖNETİCİ ÖZETİ PERFORMANS + GÖRÜNÜR İLERLEME
-#
-# KARARLI TABAN: V146
-# V148'de beğenilen TL;DR + 3 etki/sonuç içeriği DEĞİŞTİRİLMEZ.
-# Yalnız rapor üretim deneyimi ve bekleme süresi iyileştirilir:
-# - Tam metin çözme sonuçları oturum içinde ayrıca cache'lenir.
-# - İlk üretimde 8 yerine en fazla 12 paralel haber çözümü kullanılır.
-# - Sepet değişmediyse aynı rapor ikinci kez sıfırdan üretilmez.
-# - Butona basıldığında görünür durum kutusu + ilerleme çubuğu gösterilir.
+# /V147 YÖNETİCİ ÖZETİ RAPOR MOTORU
 # ============================================================
 
-_V149_REPORT_PROGRESS_CB=None
 
-def _v149_report_row_key(row):
+# ============================================================
+# V152 — GEÇ AŞAMA ETİKET / GEPHI UYUMLULUĞU
+# Yeni kaynakları V148'in daha sonra tanımlanan rapor/Gephi sözlüklerine ekler.
+# ============================================================
+_V152_MOVEMENT_SET=set(V152_MOVEMENT_EXTRA_DOMAINS)
+_V152_KURDISH_SET=set(V152_KURDISH_REGIONAL_EXTRA)
+for _set_name in (
+    'V121_MOVEMENT_DOMAINS','V127_MOVEMENT_DOMAINS','V128_MOVEMENT_DOMAINS','V134_MOVEMENT_DOMAINS'
+):
     try:
-        k=_v3_analysis_dedup_key(row)
-        if k:
-            return str(k)
+        _obj=globals().get(_set_name)
+        if hasattr(_obj,'update'): _obj.update(_V152_MOVEMENT_SET)
     except Exception:
         pass
-    return (str(row.get('URL','') or '').strip()+'|'+title_key(str(row.get('Başlık','') or '')))
-
-def _v149_report_fingerprint(df):
-    import hashlib
-    x=df.copy() if df is not None else pd.DataFrame()
-    if x.empty:
-        return 'empty'
-    payload=[]
-    for r in x.to_dict('records'):
-        payload.append({
-            'k':_v149_report_row_key(r),
-            'title':str(r.get('Başlık','') or ''),
-            'summary':str(r.get('İçerik_Özeti',r.get('İçerik / Özet','')) or ''),
-            'source':str(r.get('Kaynak','') or ''),
-            'date':str(r.get('Tarih',r.get('Tarih_Orijinal','')) or ''),
-            'frame':str(r.get('Çerçeve','') or ''),
-            'stance':str(r.get('Yaklaşım','') or ''),
-        })
-    raw=json.dumps(payload,ensure_ascii=False,sort_keys=True,default=str).encode('utf-8')
-    return hashlib.sha1(raw).hexdigest()
-
-# V142 çözümleyicisini aynı içerik mantığıyla, yalnız cache + daha yüksek paralellik ekleyerek güçlendir.
-def _v142_resolve_preserve_order(df):
-    """Sepet sırasını korur; article_detail çıktısını değiştirmeden hızlandırır."""
-    x=df.copy() if df is not None else pd.DataFrame()
-    if x.empty:
-        return [],[]
-    rows=x.to_dict('records')
-    details=[{} for _ in rows]
-    cache=st.session_state.setdefault('_v149_manager_detail_cache',{})
-    pending=[]
-    for i,row in enumerate(rows):
-        key=_v149_report_row_key(row)
-        if key and key in cache:
-            details[i]=cache.get(key) or {}
-        else:
-            pending.append((i,row,key))
-
-    cb=globals().get('_V149_REPORT_PROGRESS_CB')
-    total=len(rows)
-    done=total-len(pending)
-    if callable(cb):
-        try: cb(done,total,done)
-        except Exception: pass
-
-    if pending:
-        workers=min(12,max(1,len(pending)))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
-            fmap={ex.submit(article_detail,row):(i,key) for i,row,key in pending}
-            for fut in concurrent.futures.as_completed(fmap):
-                i,key=fmap[fut]
-                try:
-                    detail=fut.result() or {}
-                except Exception:
-                    detail={}
-                details[i]=detail
-                if key:
-                    cache[key]=detail
-                done+=1
-                if callable(cb):
-                    try: cb(done,total,total-len(pending))
-                    except Exception: pass
-
-    # Cache'i sınırlı tut.
-    if len(cache)>300:
-        try:
-            for old in list(cache.keys())[:80]:
-                cache.pop(old,None)
-        except Exception:
-            pass
-    st.session_state['_v149_manager_detail_cache']=cache
-    return rows,details
-
-def _v149_generate_manager_report(df,key_prefix='manager'):
-    """V148 rapor metnini değiştirmeden görünür ilerleme ve cache ile üretir."""
-    global _V149_REPORT_PROGRESS_CB
-    x=df.copy() if df is not None else pd.DataFrame()
-    fingerprint=_v149_report_fingerprint(x)
-    report_cache=st.session_state.setdefault('_v149_manager_report_cache',{})
-
-    # Aynı sepet için daha önce üretilmiş rapor varsa tekrar web çözümü yapma.
-    if fingerprint in report_cache:
-        try:
-            st.success('✅ Yönetici özeti hazır. Sepet değişmediği için önceki üretim anında getirildi.')
-        except Exception:
-            pass
-        return report_cache[fingerprint]
-
-    status=None; progress=None; msg=None
+for _set_name in (
+    'V121_KURDISH_DOMAINS','V127_KURDISH_REGIONAL_DOMAINS','V128_KURDISH_REGIONAL_DOMAINS',
+    'V134_KURDISH_DOMAINS','V118_KURDISH_REPORT_DOMAINS'
+):
     try:
-        status=st.status('🧠 Yönetici özeti hazırlanıyor…',expanded=True)
-        status.write(f'1/3 — {len(x)} sepet kaydı hazırlanıyor.')
-        progress=st.progress(4)
-        msg=st.empty()
+        _obj=globals().get(_set_name)
+        if hasattr(_obj,'update'): _obj.update(_V152_KURDISH_SET)
     except Exception:
-        status=None
-        progress=st.progress(4)
-        msg=st.empty()
-        msg.info(f'🧠 Yönetici özeti hazırlanıyor — {len(x)} kayıt işlenecek.')
+        pass
 
-    def _progress(done,total,cached_count=0):
-        total=max(1,int(total or 1)); done=max(0,min(int(done or 0),total))
-        pct=8+int(72*(done/total))
-        try:
-            if progress is not None: progress.progress(min(80,max(8,pct)))
-            if msg is not None:
-                cache_txt=f' • {cached_count} kayıt önbellekten' if cached_count else ''
-                msg.caption(f'2/3 — Haber içerikleri çözülüyor: {done}/{total}{cache_txt}')
-        except Exception:
-            pass
-
-    _V149_REPORT_PROGRESS_CB=_progress
-    try:
-        result=_v114_analysis_basket_report_docx(x)
-        try:
-            if progress is not None: progress.progress(94)
-            if msg is not None: msg.caption('3/3 — Word belgesi ve dipnotlar hazırlanıyor…')
-        except Exception:
-            pass
-        report_cache[fingerprint]=result
-        # Son 8 farklı sepet çıktısını tutmak yeterli.
-        if len(report_cache)>8:
-            try:
-                for old in list(report_cache.keys())[:-8]:
-                    report_cache.pop(old,None)
-            except Exception:
-                pass
-        st.session_state['_v149_manager_report_cache']=report_cache
-        try:
-            if progress is not None: progress.progress(100)
-            if msg is not None: msg.empty()
-            if status is not None:
-                status.update(label='✅ Yönetici özeti hazır — aşağıdaki indirme düğmesini kullanabilirsiniz.',state='complete',expanded=False)
-            else:
-                st.success('✅ Yönetici özeti hazır — aşağıdaki indirme düğmesini kullanabilirsiniz.')
-        except Exception:
-            pass
-        return result
-    finally:
-        _V149_REPORT_PROGRESS_CB=None
+try:
+    V148_SOURCE_LABELS.update({
+        'theamargi.com':'The Amargi','theamargi.org':'The Amargi',
+        'gerilla.tv':'Gerîla TV','gerillatv.net':'Gerîla TV',
+        'ciratv.com':'Çira TV','numedya24.com':'NûMedya24','numedya24.tv':'NûMedya24',
+        'ajansawelat.com':'Ajansa Welat','ajansawelat1.com':'Ajansa Welat',
+        'azadiyawelat1.com':'Azadiya Welat',
+        'mezopotamyaajansi.com':'Mezopotamya Ajansı','mezopotamyaajansi.org':'Mezopotamya Ajansı',
+        'mezopotamyaajansi35.com':'Mezopotamya Ajansı',
+        'mezopotamyaajansi44.com':'Mezopotamya Ajansı','mezopotamyaajansi.net':'Mezopotamya Ajansı',
+        'rojnews.news':'RojNews','rojnews.video':'RojNews',
+        'hawarnews.com':'ANHA / Hawar Haber Ajansı',
+        'nuceciwan101.com':'Nûçe Ciwan','sterktv.org':'Stêrk TV',
+        'medyahabertv.digital':'Medya Haber TV','medyahabertv.com':'Medya Haber TV',
+        'ronahi.tv':'Ronahî TV','waarmedia.com':'WAAR / Waar Media',
+        'welattv.com':'Welat TV','welattv.net':'Welat TV',
+        'botantimes.com':'Botan Times','en.botantimes.com':'Botan Times',
+        'diyarname.com':'Diyarname','kurdistan24.net':'Kurdistan24','rudaw.net':'Rûdaw',
+    })
+except Exception:
+    pass
 
 # ============================================================
-# /V149 YÖNETİCİ ÖZETİ PERFORMANS + GÖRÜNÜR İLERLEME
-# ============================================================
-
-
-# ============================================================
-# V150 — GERÇEK HIZLANDIRMA / MEVCUT ÖZETİ ÖNCE KULLAN
-#
-# KARARLI TABAN: V146
-# RAPOR İÇERİĞİ: V148 kaynak-türüne duyarlı TL;DR + 3 etki/sonuç aynen korunur.
-#
-# V149'DAKİ SORUN:
-# - Her raporda hemen hemen her URL yeniden okunmaya çalışıldığı için 8→12 worker
-#   değişikliği pratikte beklemeyi belirgin azaltmıyordu.
-# - İlerleme bileşeni de Streamlit'in tam sayfa rerun davranışını değiştirmiyordu.
-#
-# V150:
-# 1) Tarama sırasında zaten elde edilmiş yeterli bir İçerik_Özeti varsa HABER SAYFASINA
-#    tekrar gitmez. Yönetici özeti doğrudan bu kanıttan üretilir.
-# 2) Yalnız özet zayıf / başlık tekrarından ibaretse gerçek sayfa çözümü yapılır.
-# 3) Sosyal platform URL'leri canlı sayfadan okunmaya zorlanmaz; indeks/snippet korunur.
-# 4) Zayıf kayıtlar paralel çözülür ve sonuçlar oturum önbelleğinde tutulur.
-# 5) Kullanıcının alışık olduğu standart spinner geri getirilir.
-# ============================================================
-
-V150_MIN_SUMMARY_CHARS=150
-V150_MIN_SUMMARY_WORDS=18
-
-
-def _v150_best_row_summary(row):
-    vals=[]
-    for key in ('Manuel_Not','Manuel Not','İçerik_Özeti','İçerik / Özet','Özet','snippet','description'):
-        try:
-            v=_v145_clean(row.get(key,''))
-        except Exception:
-            v=str(row.get(key,'') or '').strip()
-        if v and v not in vals:
-            vals.append(v)
-    # En bilgi yoğun mevcut özeti kullan.
-    vals.sort(key=lambda s:(len(s.split()),len(s)),reverse=True)
-    return vals[0] if vals else ''
-
-
-def _v150_summary_is_sufficient(row):
-    summary=_v150_best_row_summary(row)
-    title=_v145_clean(row.get('Başlık',''))
-    if not summary:
-        return False
-
-    n=_v145_norm(summary)
-    if len(summary)<V150_MIN_SUMMARY_CHARS or len(summary.split())<V150_MIN_SUMMARY_WORDS:
-        return False
-
-    # Başlığın aynısı / neredeyse aynısı ise tam metin kurtarmaya çalış.
-    if title:
-        try:
-            if _v145_similarity(summary,title)>=0.84:
-                return False
-        except Exception:
-            pass
-
-    bad=(
-        'daha fazla haber için','read more','devamını oku','google aramalarında',
-        'show results with','missing:','ana sayfa','sitemizi ziyaret','cookie','çerez'
-    )
-    if any(x in n for x in bad):
-        return False
-    return True
-
-
-def _v150_is_social_row(row):
-    try:
-        d=_v145_domain({'URL':row.get('URL',''),'Satır':row})
-    except Exception:
-        try: d=_tt_norm_domain(row.get('URL',''))
-        except Exception: d=''
-    return d in {'x.com','twitter.com','facebook.com','instagram.com','tiktok.com','youtube.com','reddit.com'}
-
-
-def _v150_detail_from_existing_summary(row):
-    summary=_v150_best_row_summary(row)
-    try:
-        sents=_v142_sentences(summary)
-    except Exception:
-        sents=[]
-    return {
-        'title':_v145_clean(row.get('Başlık','')),
-        'canonical':str(row.get('URL','') or '').strip(),
-        'published':str(row.get('Tarih',row.get('Tarih_Orijinal','')) or ''),
-        'source':str(row.get('Kaynak',row.get('Yayıncı','')) or ''),
-        'text':summary,
-        '_validated':False,
-        '_sentences':sents,
-        '_sequence':sents[:8] if len(sents)>=3 else [],
-        '_v150_from_existing_summary':True,
-    }
-
-
-def _v142_resolve_preserve_order(df):
-    """V150: yalnız gerçekten gerekli kayıtlarda ağdan tam metin çöz; sepet sırasını koru."""
-    x=df.copy() if df is not None else pd.DataFrame()
-    if x.empty:
-        st.session_state['_v150_last_resolution_stats']={'total':0,'local':0,'cached':0,'fetched':0,'failed':0}
-        return [],[]
-
-    rows=x.to_dict('records')
-    details=[{} for _ in rows]
-    cache=st.session_state.setdefault('_v150_manager_detail_cache',{})
-    pending=[]
-    stats={'total':len(rows),'local':0,'cached':0,'fetched':0,'failed':0}
-
-    for i,row in enumerate(rows):
-        key=_v149_report_row_key(row)
-
-        # X/Facebook/Instagram vb. için canlı sayfayı açmaya çalışmak çoğunlukla yavaş ve
-        # verimsizdir. Tarama indeksinde gelen içerik varsa doğrudan onu kullan.
-        if _v150_is_social_row(row) and _v150_best_row_summary(row):
-            details[i]=_v150_detail_from_existing_summary(row)
-            stats['local']+=1
-            continue
-
-        # Tarama aşamasında yeterli içerik zaten alınmışsa ikinci kez web isteği YOK.
-        if _v150_summary_is_sufficient(row):
-            details[i]=_v150_detail_from_existing_summary(row)
-            stats['local']+=1
-            continue
-
-        if key and key in cache:
-            details[i]=cache.get(key) or {}
-            stats['cached']+=1
-            continue
-
-        pending.append((i,row,key))
-
-    # Ağ erişimi yalnız zayıf kayıtlar için. Çok yüksek worker sayısı bazı sitelerde
-    # bağlantı kuyruğu/timeout yarattığı için dengeli 6 worker kullanılır.
-    if pending:
-        workers=min(6,max(1,len(pending)))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
-            fmap={ex.submit(article_detail,row):(i,key,row) for i,row,key in pending}
-            for fut in concurrent.futures.as_completed(fmap):
-                i,key,row=fmap[fut]
-                try:
-                    detail=fut.result() or {}
-                except Exception:
-                    detail={}
-                if not detail:
-                    detail=_v150_detail_from_existing_summary(row)
-                    stats['failed']+=1
-                else:
-                    stats['fetched']+=1
-                details[i]=detail
-                if key:
-                    cache[key]=detail
-
-    if len(cache)>320:
-        for old in list(cache.keys())[:80]:
-            cache.pop(old,None)
-    st.session_state['_v150_manager_detail_cache']=cache
-    st.session_state['_v150_last_resolution_stats']=stats
-    return rows,details
-
-
-def _v150_generate_manager_report(df,key_prefix='manager'):
-    """V148 içerik motorunu koruyup ağ erişimini seçici hale getirir."""
-    x=df.copy() if df is not None else pd.DataFrame()
-    fingerprint=_v149_report_fingerprint(x)
-    report_cache=st.session_state.setdefault('_v150_manager_report_cache',{})
-
-    if fingerprint in report_cache:
-        st.success('✅ Yönetici özeti hazır. Sepet değişmediği için mevcut Word tekrar kullanıldı.')
-        return report_cache[fingerprint]
-
-    # Kullanıcının alışık olduğu standart dönen spinner. Asıl hız kazancı aşağıdaki
-    # seçici çözümleyiciden gelir; yalnız UI efektiyle hızlanmış gibi gösterilmez.
-    with st.spinner(f'🧠 Yönetici özeti hazırlanıyor… {len(x)} kayıt değerlendiriliyor'):
-        result=_v114_analysis_basket_report_docx(x)
-
-    report_cache[fingerprint]=result
-    if len(report_cache)>8:
-        for old in list(report_cache.keys())[:-8]:
-            report_cache.pop(old,None)
-    st.session_state['_v150_manager_report_cache']=report_cache
-
-    stats=st.session_state.get('_v150_last_resolution_stats') or {}
-    local=int(stats.get('local',0) or 0)
-    cached=int(stats.get('cached',0) or 0)
-    fetched=int(stats.get('fetched',0) or 0)
-    failed=int(stats.get('failed',0) or 0)
-    extra=(f' • {local} kayıt mevcut tarama özetinden, {cached} önbellekten, {fetched} gerçek sayfadan işlendi')
-    if failed:
-        extra+=f' • {failed} erişilemeyen kayıt mevcut özetle korundu'
-    st.success('✅ Yönetici özeti hazır'+extra+'.')
-    return result
-
-# ============================================================
-# /V150 GERÇEK HIZLANDIRMA
-# ============================================================
-
-# ============================================================
-# /V147 YÖNETİCİ ÖZETİ RAPOR MOTORU
+# /V152 GEÇ AŞAMA ETİKET / GEPHI UYUMLULUĞU
 # ============================================================
 
 rows=st.session_state.rows
@@ -40067,15 +40129,14 @@ else:
         kurdish_mask=_fam_series.eq('Kürt Bölgesel Medyası')
         movement_mask=_fam_series.eq('PKK/KCK Açık Kaynak')
 
-        # V113 — Kürt Medyası sekmesi bir şemsiye görünümüdür:
-        # bölgesel kaynaklar + ANHA/Özgür Politika vb. hareket çevresi açık
-        # kaynakları + Bianet/Darka Mazi/EUKURD gibi ek izleme kaynakları.
-        # Ana aile etiketleri değiştirilmez; diğer paneller aynı kalır.
+        # V152 — Kaynak Bazlı İzleme'de Kürt medyası ve PKK/KCK açık kaynak
+        # tek görünümde birleştirilir. İç aile/perspektif etiketleri KORUNUR.
         _v113_kurdish_domain_mask=df.apply(
             lambda _r:_v113_kurdish_umbrella_domain(_v113_row_domain(_r)),
             axis=1
         )
         kurdish_media_display_mask=(kurdish_mask | _v113_kurdish_domain_mask)
+        kurdish_pkk_display_mask=(kurdish_media_display_mask | movement_mask)
 
         commentary_mask=df.get(
             'İçerik Türü',
@@ -40087,19 +40148,19 @@ else:
         # ====================================================
         st.subheader('🗞️ Kaynak Bazlı İzleme')
         st.caption(
-            'Yerli, yabancı, sosyal, think tank, Kürt bölgesel, PKK/KCK açık kaynak ve '
-            'yorum/görüş içerikleri aynı taramada birlikte izlenir. Kronoloji, eleştirel/riskli, '
-            'olay ve trend görünümleri bu bölümün altında birleştirilmiştir.'
+            'Yerli, yabancı, sosyal ve think tank kaynaklarına ek olarak Kürt bölgesel medya ile '
+            'PKK/KCK/hareket söylemi açık kaynakları tek birleşik izleme sekmesinde gösterilir. '
+            'Kaynakların gerçek aile ve perspektif etiketleri korunur; birleşik sekmede yer almak '
+            'tek başına örgütsel bağlılık anlamına gelmez.'
         )
 
-        # Quick scan coverage row
-        sc1,sc2,sc3,sc4,sc5,sc6=st.columns(6)
+        # Quick scan coverage row — Kürt/PKK görünümü tek toplamda.
+        sc1,sc2,sc3,sc4,sc5=st.columns(5)
         sc1.metric('Yerli',int(local_mask.sum()))
         sc2.metric('Yabancı',int(foreign_mask.sum()))
         sc3.metric('Sosyal',int(social_mask.sum()))
-        sc4.metric('Kürt Medyası',int(kurdish_media_display_mask.sum()))
-        sc5.metric('PKK/KCK',int(movement_mask.sum()))
-        sc6.metric('Think Tank',int(think_mask.sum()))
+        sc4.metric('Kürt Medyası / PKK-KCK',int(kurdish_pkk_display_mask.sum()))
+        sc5.metric('Think Tank',int(think_mask.sum()))
 
         if int(foreign_mask.sum())==0 or int(social_mask.sum())==0:
             _missing=[]
@@ -40114,13 +40175,12 @@ else:
                 'doğrulanabilir sonuç döndürmediği anlamına gelir.'
             )
 
-        tab_local,tab_social,tab_foreign,tab_think,tab_kurdish,tab_movement,tab_commentary=st.tabs([
+        tab_local,tab_social,tab_foreign,tab_think,tab_kurdish_pkk,tab_commentary=st.tabs([
             '🇹🇷 Yerli Basın',
             '📱 Sosyal Medya',
             '🌍 Yabancı Basın',
             '🧠 Think Tank',
-            '🟣 Kürt Medyası',
-            '🛰️ PKK/KCK Açık Kaynak',
+            '🛰️ Kürt Medyası / PKK-KCK Açık Kaynak',
             '✍️ Yazar / Yorum'
         ])
 
@@ -40143,23 +40203,36 @@ else:
                 ['Seç','Tarih','Bölge','Kaynak','Kategori','Yaklaşım','Çerçeve',
                  'İçerik Türü','Başlık','İçerik_Özeti','URL']
             )
-        with tab_kurdish:
+        with tab_kurdish_pkk:
             st.caption(
-                'V113: Kürt bölgesel medya ile Kürt meselesini düzenli izleyen seçili '
-                'Türkiye/diaspora kaynakları ve ANHA, Yeni Özgür Politika, Medya Haber, '
-                'RojNews, Nûçe Ciwan gibi açık kaynaklar bu şemsiye görünümde birlikte gösterilir. '
-                'Kaynakların asıl aile/perspektif etiketleri korunur.'
+                f'Birleşik izleme havuzu: {int(kurdish_pkk_display_mask.sum())} içerik • '
+                f'PKK/KCK/hareket açık kaynak alt kümesi: {int(movement_mask.sum())} • '
+                f'Kürt bölgesel/şemsiye alt kümesi: {int(kurdish_media_display_mask.sum())}. '
+                'ANF, RojNews, ANHA, Nûçe Ciwan, Gerîla TV, Stêrk TV, Medya Haber TV, Çira TV, '
+                'Ronahî TV, Mezopotamya Ajansı, Ajansa/Azadiya Welat, NûMedya24 ile Rûdaw, '
+                'Kurdistan24, The Amargi, WAAR/Welat TV, Botan Times ve Diyarname gibi kaynaklar '
+                'aynı ekranda izlenir. Kaynak Perspektifi sütunu iç ayrımı korur.'
             )
+            _v153_combined_df=df[kurdish_pkk_display_mask].copy()
+            try:
+                _v153_priority_names=[
+                    'ANF','RojNews','ANHA / Hawar','Nûçe Ciwan','Gerîla TV','Stêrk TV','Medya Haber TV',
+                    'Çira TV','Ronahî TV','Mezopotamya Ajansı','Ajansa Welat','Azadiya Welat','NûMedya24',
+                    'Rûdaw','Kurdistan24','The Amargi','WAAR','Welat TV','Botan Times','Diyarname'
+                ]
+                _v153_src_series=_v153_combined_df.get('Kaynak',pd.Series('',index=_v153_combined_df.index)).astype(str)
+                _v153_counts=[]
+                for _name in _v153_priority_names:
+                    _n=int(_v153_src_series.str.contains(re.escape(_name),case=False,na=False,regex=True).sum())
+                    _v153_counts.append({'Kaynak':_name,'İçerik':_n})
+                with st.expander('🔎 V153 kaynak kapsama kontrolü',False):
+                    st.dataframe(pd.DataFrame(_v153_counts),hide_index=True,use_container_width=True)
+                    st.caption('Bir kaynak 0 görünüyorsa o zaman penceresinde uygun içerik gelmemiş veya kaynak erişim/indeks sorunu yaşamış olabilir.')
+            except Exception:
+                pass
             _v3_source_table(
-                'v33_kurdish_media',
-                df[kurdish_media_display_mask],
-                ['Seç','Tarih','Kaynak','Kaynak Perspektifi','Kategori','Yaklaşım',
-                 'Çerçeve','İçerik Türü','Başlık','İçerik_Özeti','Risk_Skoru','URL']
-            )
-        with tab_movement:
-            _v3_source_table(
-                'v33_movement_osint',
-                df[movement_mask],
+                'v153_kurdish_pkk_media',
+                _v153_combined_df,
                 ['Seç','Tarih','Kaynak','Kaynak Perspektifi','Kategori','Yaklaşım',
                  'Çerçeve','İçerik Türü','Başlık','İçerik_Özeti','Risk_Skoru','URL']
             )
