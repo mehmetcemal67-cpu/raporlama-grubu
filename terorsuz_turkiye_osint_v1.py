@@ -39985,6 +39985,446 @@ except Exception:
 # /V152 GEÇ AŞAMA ETİKET / GEPHI UYUMLULUĞU
 # ============================================================
 
+# ============================================================
+# V154 — KAYNAK PROFİLİ / İDEOLOJİK SINIFLANDIRMA + GEPHI DOĞRULAMA
+#        + MANUEL LİNKİ OTOMATİK KAYNAK İZLEMEYE DAHİL ETME
+# TABAN: V153 test dalı; KARARLI SÜRÜM V148 DEĞİŞTİRİLMEZ.
+# ============================================================
+V154_SOURCE_PROFILES = {
+    'mepanews.com': {'name':'Mepa News','region':'Türkiye','family':'Yerli Basın','ideology':'İslamcı / muhafazakâr dış politika ve güvenlik odaklı yayın','confidence':'Orta'},
+    'yeniyasamgazetesi9.com': {'name':'Yeni Yaşam','region':'Türkiye / Kürt Medyası','family':'PKK/KCK Açık Kaynak','ideology':'Sol-sosyalist; Kürt özgürlük hareketi ve hak-temelli siyaset çizgisine yakın','confidence':'Orta-Yüksek'},
+    'jinnews.net': {'name':'JINNEWS / Jin Haber Ajansı','region':'Türkiye / Kürt Kadın Medyası','family':'PKK/KCK Açık Kaynak','ideology':'Radikal feminist; Kürt kadın hareketi ve toplumsal cinsiyet odaklı','confidence':'Orta-Yüksek'},
+    'jinnews.org': {'name':'JINNEWS / Jin Haber Ajansı','region':'Türkiye / Kürt Kadın Medyası','family':'PKK/KCK Açık Kaynak','ideology':'Radikal feminist; Kürt kadın hareketi ve toplumsal cinsiyet odaklı','confidence':'Orta-Yüksek'},
+    'peyamakurd.com': {'name':'PeyamaKurd','region':'IKBY / Irak Kürdistanı','family':'Kürt Bölgesel Medyası','ideology':'Kürt bölgesel milliyetçi; IKBY ve Barzani/KDP çizgisine yakın','confidence':'Orta'},
+    'aawsat.com': {'name':'Asharq Al-Awsat','region':'Suudi Arabistan / Londra','family':'Yabancı Basın','ideology':'Suudi ana akım / kraliyet çevresinin dış politika perspektifine yakın bölgesel yayın','confidence':'Orta-Yüksek'},
+    'anf-news.com': {'name':'ANF / Fırat Haber Ajansı','region':'Avrupa / Kürt Hareketi','family':'PKK/KCK Açık Kaynak','ideology':'Kürt hareketi odaklı; uluslararası kaynaklarda PKK’ye yakın/bağlantılı olarak tanımlanan yayın','confidence':'Yüksek'},
+    'anfenglish.com': {'name':'ANF / Fırat Haber Ajansı','region':'Avrupa / Kürt Hareketi','family':'PKK/KCK Açık Kaynak','ideology':'Kürt hareketi odaklı; uluslararası kaynaklarda PKK’ye yakın/bağlantılı olarak tanımlanan yayın','confidence':'Yüksek'},
+    'kurdpress.com': {'name':'KurdPress','region':'İran / Kürt Bölgeleri','family':'Kürt Bölgesel Medyası','ideology':'İran merkezli Kürt haber perspektifi; İran içi resmî/bölgesel çerçevelere yakın','confidence':'Orta'},
+    'kurdpress.net': {'name':'KurdPress','region':'İran / Kürt Bölgeleri','family':'Kürt Bölgesel Medyası','ideology':'İran merkezli Kürt haber perspektifi; İran içi resmî/bölgesel çerçevelere yakın','confidence':'Orta'},
+    'rojnews.news': {'name':'RojNews','region':'IKBY / Süleymaniye - Kürt Hareketi','family':'PKK/KCK Açık Kaynak','ideology':'PKK/KCK çizgisine yakın; Öcalan’ın demokratik konfederalizm söylemini görünür taşıyan yayın','confidence':'Orta-Yüksek'},
+    'rojnews.video': {'name':'RojNews','region':'IKBY / Süleymaniye - Kürt Hareketi','family':'PKK/KCK Açık Kaynak','ideology':'PKK/KCK çizgisine yakın; Öcalan’ın demokratik konfederalizm söylemini görünür taşıyan yayın','confidence':'Orta-Yüksek'},
+    'amwaj.media': {'name':'Amwaj.media','region':'Birleşik Krallık / Londra','family':'Yabancı Basın','ideology':'Bağımsız bölgesel analiz; Batı Asya/İran-Irak-Körfez uzman görüşü odaklı','confidence':'Yüksek'},
+    'theamargi.com': {'name':'The Amargi','region':'Avrupa / Kürt-MENA','family':'Kürt Bölgesel Medyası','ideology':'Sol-çoğulcu, demokrasi/eşitlik/sosyal adalet ve Kürt öz-belirlenimi odaklı','confidence':'Yüksek'},
+    'theamargi.org': {'name':'The Amargi','region':'Avrupa / Kürt-MENA','family':'Kürt Bölgesel Medyası','ideology':'Sol-çoğulcu, demokrasi/eşitlik/sosyal adalet ve Kürt öz-belirlenimi odaklı','confidence':'Yüksek'},
+    'hawarnews.com': {'name':'ANHA / Hawar Haber Ajansı','region':'Kuzey ve Doğu Suriye / Rojava','family':'PKK/KCK Açık Kaynak','ideology':'Rojava/AANES demokratik toplum, çoğulculuk, kadın özgürlüğü ve yerel özerklik söylemine yakın','confidence':'Yüksek'},
+    'nuceciwan101.com': {'name':'Nûçe Ciwan / Genç Haber','region':'Avrupa / Kürt Gençlik Hareketi','family':'PKK/KCK Açık Kaynak','ideology':'Kürt özgürlük hareketi / gençlik mobilizasyonu ve Öcalan çizgisi odaklı','confidence':'Orta-Yüksek'},
+    'gerilla.tv': {'name':'Gerîla TV','region':'Kürt Hareketi / Örgüt Medyası','family':'PKK/KCK Açık Kaynak','ideology':'PKK/HPG silahlı kanat faaliyetlerini doğrudan aktaran örgüt/hareket video medyası','confidence':'Yüksek'},
+    'gerillatv.net': {'name':'Gerîla TV','region':'Kürt Hareketi / Örgüt Medyası','family':'PKK/KCK Açık Kaynak','ideology':'PKK/HPG silahlı kanat faaliyetlerini doğrudan aktaran örgüt/hareket video medyası','confidence':'Yüksek'},
+    'sterktv.org': {'name':'Stêrk TV','region':'Avrupa / Kürt Hareketi','family':'PKK/KCK Açık Kaynak','ideology':'Kürt özgürlük hareketi / Öcalan eksenli siyasal-toplumsal yayın çizgisine yakın','confidence':'Orta-Yüksek'},
+    'medyahabertv.digital': {'name':'Medya Haber TV','region':'Avrupa / Kürt Hareketi','family':'PKK/KCK Açık Kaynak','ideology':'Kürt özgürlük hareketi ve Öcalan eksenli siyasal gündeme yakın','confidence':'Orta-Yüksek'},
+    'medyahabertv.com': {'name':'Medya Haber TV','region':'Avrupa / Kürt Hareketi','family':'PKK/KCK Açık Kaynak','ideology':'Kürt özgürlük hareketi ve Öcalan eksenli siyasal gündeme yakın','confidence':'Orta-Yüksek'},
+    'ciratv.com': {'name':'Çira TV','region':'Avrupa / Êzidî Medyası','family':'Kürt Bölgesel Medyası','ideology':'Êzidî kimliği, inancı, kültürü, çoğulculuk ve demokratik değerler odaklı kamusal yayın','confidence':'Yüksek'},
+    'ronahi.tv': {'name':'Ronahî TV','region':'Kuzey ve Doğu Suriye / Rojava','family':'PKK/KCK Açık Kaynak','ideology':'Rojava/AANES-PYD çevresindeki demokratik özerklik ve Kürt hareketi söylemine yakın','confidence':'Orta-Yüksek'},
+    'mezopotamyaajansi.com': {'name':'Mezopotamya Ajansı (MA)','region':'Türkiye / Kürt Medyası','family':'PKK/KCK Açık Kaynak','ideology':'Kürt yanlısı / sol-hak temelli ve hükümet eleştirel haber çizgisi','confidence':'Yüksek'},
+    'mezopotamyaajansi.org': {'name':'Mezopotamya Ajansı (MA)','region':'Türkiye / Kürt Medyası','family':'PKK/KCK Açık Kaynak','ideology':'Kürt yanlısı / sol-hak temelli ve hükümet eleştirel haber çizgisi','confidence':'Yüksek'},
+    'mezopotamyaajansi35.com': {'name':'Mezopotamya Ajansı (MA)','region':'Türkiye / Kürt Medyası','family':'PKK/KCK Açık Kaynak','ideology':'Kürt yanlısı / sol-hak temelli ve hükümet eleştirel haber çizgisi','confidence':'Yüksek'},
+    'ajansawelat.com': {'name':'Ajansa Welat','region':'Türkiye / Kürtçe Medya','family':'PKK/KCK Açık Kaynak','ideology':'Kürtçe yayın, Kürt hakları ve özgür basın söylemi odaklı','confidence':'Orta'},
+    'ajansawelat1.com': {'name':'Ajansa Welat','region':'Türkiye / Kürtçe Medya','family':'PKK/KCK Açık Kaynak','ideology':'Kürtçe yayın, Kürt hakları ve özgür basın söylemi odaklı','confidence':'Orta'},
+    'azadiyawelat1.com': {'name':'Azadiya Welat','region':'Türkiye / Kürtçe Medya','family':'PKK/KCK Açık Kaynak','ideology':'Kürtçe basın / Kürt hakları ve özgürlükçü-muhalif yayın geleneği','confidence':'Orta-Yüksek'},
+    'numedya24.com': {'name':'NûMedya24','region':'Avrupa / Türkiye-Kürt Gündemi','family':'PKK/KCK Açık Kaynak','ideology':'Çoğulcu-sol, halkların eşitliği, demokratik yaşam ve Kürt meselesi odaklı','confidence':'Yüksek'},
+    'numedya24.tv': {'name':'NûMedya24','region':'Avrupa / Türkiye-Kürt Gündemi','family':'PKK/KCK Açık Kaynak','ideology':'Çoğulcu-sol, halkların eşitliği, demokratik yaşam ve Kürt meselesi odaklı','confidence':'Yüksek'},
+    'rudaw.net': {'name':'Rûdaw Medya Ağı','region':'IKBY / Erbil','family':'Kürt Bölgesel Medyası','ideology':'Kürt bölgesel/ulusal gündem; dış kaynaklarda KDP-Neçirvan Barzani çevresine yakın olarak değerlendirilen','confidence':'Yüksek'},
+    'kurdistan24.net': {'name':'Kurdistan24','region':'IKBY / Erbil','family':'Kürt Bölgesel Medyası','ideology':'Kürt bölgesel/ulusal gündem; dış kaynaklarda KDP-Masrour Barzani çevresine yakın olarak değerlendirilen','confidence':'Orta-Yüksek'},
+    'waarmedia.com': {'name':'WAAR / Waar Media','region':'IKBY / Irak Kürdistanı','family':'Kürt Bölgesel Medyası','ideology':'IKBY odaklı Kürt bölgesel / Kürt ulusal gündemi','confidence':'Orta'},
+    'welattv.com': {'name':'Welat TV','region':'IKBY-Erbil / Suriye Kürt Gündemi','family':'Kürt Bölgesel Medyası','ideology':'Suriye-Kürt meseleleri; çoğulculuk, eşit haklar ve Kürt toplumsal-siyasal gündemi odaklı','confidence':'Yüksek'},
+    'welattv.net': {'name':'Welat TV','region':'IKBY-Erbil / Suriye Kürt Gündemi','family':'Kürt Bölgesel Medyası','ideology':'Suriye-Kürt meseleleri; çoğulculuk, eşit haklar ve Kürt toplumsal-siyasal gündemi odaklı','confidence':'Yüksek'},
+    'botantimes.com': {'name':'Botan Times','region':'Türkiye / Kürtçe Medya','family':'Kürt Bölgesel Medyası','ideology':'Bağımsız Kürtçe medya; dil-kültür, ifade özgürlüğü ve medya çoğulculuğu odaklı','confidence':'Yüksek'},
+    'en.botantimes.com': {'name':'Botan Times English','region':'Türkiye / Kürtçe Medya','family':'Kürt Bölgesel Medyası','ideology':'Bağımsız Kürtçe medya; dil-kültür, ifade özgürlüğü ve medya çoğulculuğu odaklı','confidence':'Yüksek'},
+    'diyarname.com': {'name':'Diyarname','region':'Türkiye / Kürtçe Medya','family':'Kürt Bölgesel Medyası','ideology':'Bağımsız Kürtçe kültür-haber yayını; Kürt dili, kültürü ve toplumsal gündem odaklı','confidence':'Orta-Yüksek'},
+    'siyasihaber10.org': {'name':'Siyasi Haber','region':'Türkiye','family':'Yerli Basın','ideology':'Sol-sosyalist / anti-kapitalist; emek, kadın, LGBTİ+, ekoloji ve ezilen topluluklar odaklı','confidence':'Yüksek'},
+}
+
+V154_SOURCE_ALIASES = {
+    'mepa news':'mepanews.com','mepa':'mepanews.com','yeni yaşam':'yeniyasamgazetesi9.com','yeni yasam':'yeniyasamgazetesi9.com',
+    'jinha':'jinnews.net','jin haber ajansı':'jinnews.net','jin haber ajansi':'jinnews.net','jinnews':'jinnews.net',
+    'peyamakurd':'peyamakurd.com','peyama kurd':'peyamakurd.com','asharq al-awsat':'aawsat.com','aawsat':'aawsat.com',
+    'anf':'anf-news.com','anf türkçe':'anf-news.com','anf turkce':'anf-news.com','fırat haber ajansı':'anf-news.com','firat haber ajansi':'anf-news.com',
+    'kurdpress':'kurdpress.com','rojnews':'rojnews.news','roj news':'rojnews.news','amwaj.media':'amwaj.media','amwaj media':'amwaj.media','amwaj':'amwaj.media',
+    'the amargi':'theamargi.com','amargi':'theamargi.com','anha':'hawarnews.com','hawar news':'hawarnews.com','hawar haber ajansı':'hawarnews.com','hawar haber ajansi':'hawarnews.com',
+    'nûçe ciwan':'nuceciwan101.com','nuçe ciwan':'nuceciwan101.com','nuce ciwan':'nuceciwan101.com','gerilla tv':'gerillatv.net','gerîla tv':'gerillatv.net','gerila tv':'gerillatv.net',
+    'stêrk tv':'sterktv.org','sterk tv':'sterktv.org','medya haber tv':'medyahabertv.digital','medya haber':'medyahabertv.digital','çira tv':'ciratv.com','cira tv':'ciratv.com',
+    'ronahî tv':'ronahi.tv','ronahi tv':'ronahi.tv','mezopotamya ajansı':'mezopotamyaajansi.com','mezopotamya ajansi':'mezopotamyaajansi.com',
+    'ajansa welat':'ajansawelat1.com','azadiya welat':'azadiyawelat1.com','nûmedya24':'numedya24.tv','numedya24':'numedya24.tv',
+    'rudaw':'rudaw.net','rûdaw':'rudaw.net','rudaw medya ağı':'rudaw.net','rudaw medya agi':'rudaw.net','kurdistan24':'kurdistan24.net','kurdistan 24':'kurdistan24.net',
+    'waar':'waarmedia.com','waar tv':'waarmedia.com','waar media':'waarmedia.com','welat tv':'welattv.com','botan times':'botantimes.com','diyarname':'diyarname.com',
+    'siyasi haber':'siyasihaber10.org','siyasihaber10':'siyasihaber10.org','siyasihaber10.org':'siyasihaber10.org',
+}
+
+try: SOURCE_ALIASES.update(V154_SOURCE_ALIASES)
+except Exception: pass
+try: V148_SOURCE_LABELS.update({d:p['name'] for d,p in V154_SOURCE_PROFILES.items()})
+except Exception: pass
+
+for _d,_p in V154_SOURCE_PROFILES.items():
+    _fam=_p.get('family','')
+    try:
+        if _fam=='PKK/KCK Açık Kaynak':
+            for _n in ('TT_MOVEMENT_V9','TT_MOVEMENT_OSINT'):
+                _lst=globals().get(_n)
+                if isinstance(_lst,list) and _d not in _lst: _lst.append(_d)
+            for _n in ('V121_MOVEMENT_DOMAINS','V127_MOVEMENT_DOMAINS','V128_MOVEMENT_DOMAINS','V134_MOVEMENT_DOMAINS'):
+                _s=globals().get(_n)
+                if hasattr(_s,'add'): _s.add(_d)
+        elif _fam=='Kürt Bölgesel Medyası':
+            _lst=globals().get('TT_KURDISH_REGIONAL_V9')
+            if isinstance(_lst,list) and _d not in _lst: _lst.append(_d)
+            for _n in ('V121_KURDISH_DOMAINS','V127_KURDISH_REGIONAL_DOMAINS','V128_KURDISH_REGIONAL_DOMAINS','V134_KURDISH_DOMAINS'):
+                _s=globals().get(_n)
+                if hasattr(_s,'add'): _s.add(_d)
+        elif _fam=='Yabancı Basın':
+            for _n in ('V127_FOREIGN_DOMAINS','V128_FOREIGN_DOMAINS','V134_FOREIGN_DOMAINS'):
+                _s=globals().get(_n)
+                if hasattr(_s,'add'): _s.add(_d)
+        elif _fam=='Yerli Basın':
+            _s=globals().get('V127_LOCAL_DOMAINS')
+            if hasattr(_s,'add'): _s.add(_d)
+    except Exception: pass
+
+
+def _v154_norm_source_text(v):
+    try: return norm(str(v or '')).strip()
+    except Exception: return re.sub(r'\s+',' ',str(v or '').lower()).strip()
+
+
+def _v154_domain_from_row(row):
+    r=row.to_dict() if hasattr(row,'to_dict') else dict(row or {})
+    for val in [r.get('Domain'),r.get('URL'),r.get('Yayıncı_URL'),r.get('RSS_URL')]:
+        try: d=_tt_norm_domain(val)
+        except Exception: d=''
+        d=str(d or '').lower().replace('www.','').strip()
+        if d and d not in {'news.google.com','google.com','bing.com'}: return d
+    for c in [r.get('Kaynak'),r.get('Yayıncı'),r.get('Kaynak Perspektifi')]:
+        n=_v154_norm_source_text(c)
+        if not n: continue
+        if n in V154_SOURCE_ALIASES: return V154_SOURCE_ALIASES[n]
+        for alias,d in V154_SOURCE_ALIASES.items():
+            an=_v154_norm_source_text(alias)
+            if an and (an==n or an in n): return d
+        raw=str(c or '').strip().lower().replace('www.','')
+        if re.match(r'^[a-z0-9.-]+\.[a-z]{2,}$',raw): return raw
+    return ''
+
+
+def _v154_profile(row):
+    d=_v154_domain_from_row(row)
+    if d in V154_SOURCE_PROFILES: return d,dict(V154_SOURCE_PROFILES[d])
+    for root,p in V154_SOURCE_PROFILES.items():
+        if d and (d==root or d.endswith('.'+root)): return root,dict(p)
+    return d,{}
+
+
+def _v154_pretty_domain(d):
+    d=str(d or '').replace('www.','').strip()
+    if not d: return 'Açık Kaynak'
+    parts=d.split('.')
+    core=parts[-2] if len(parts)>=2 else parts[0]
+    return core.replace('-',' ').replace('_',' ').title()
+
+
+def _v154_fallback_region(d,family=''):
+    d=str(d or '').lower()
+    if family=='Sosyal Medya': return 'Sosyal Medya'
+    if family=='PKK/KCK Açık Kaynak': return 'Kürt Hareketi / Açık Kaynak'
+    if family=='Kürt Bölgesel Medyası': return 'Kürt Bölgesel / Açık Kaynak'
+    if family=='Think Tank / Analiz': return 'Uluslararası Analiz'
+    if family=='Yerli Basın' or d.endswith('.tr'): return 'Türkiye'
+    if d.endswith('.uk') or d.endswith('.co.uk'): return 'Birleşik Krallık'
+    if d.endswith('.de'): return 'Almanya'
+    if d.endswith('.fr'): return 'Fransa'
+    if d.endswith('.ir'): return 'İran'
+    if d.endswith('.iq'): return 'Irak'
+    if d: return 'Uluslararası / Açık Kaynak'
+    return 'Açık Kaynak / Bölge Belirsiz'
+
+
+def _v154_family_from_row(row,d='',profile=None):
+    profile=profile or {}
+    if profile.get('family'): return profile['family']
+    r=row.to_dict() if hasattr(row,'to_dict') else dict(row or {})
+    try:
+        if d and _v127_domain_in(d,V127_SOCIAL_DOMAINS): return 'Sosyal Medya'
+    except Exception: pass
+    raw=str(r.get('Kaynak Ailesi') or r.get('Kaynak_Grubu') or '').strip()
+    if raw and raw not in {'Kaynak Belirsiz','Diğer','❔ Kaynağı Belirsiz / Diğer'}: return V23_SOURCE_GROUP_LABELS.get(raw,raw)
+    if d.endswith('.tr'): return 'Yerli Basın'
+    if d: return 'Yabancı Basın'
+    return 'Diğer'
+
+
+def _v154_enrich_record(row):
+    r=row.to_dict() if hasattr(row,'to_dict') else dict(row or {})
+    d,p=_v154_profile(r)
+    family=_v154_family_from_row(r,d,p)
+    current=str(r.get('Kaynak') or r.get('Yayıncı') or '').strip()
+    if p.get('name'): source=p['name']
+    elif current and _v154_norm_source_text(current) not in {'kaynak belirsiz','belirsiz','acik kaynak','açık kaynak','google news','google haberler'}: source=current
+    else: source=_v154_pretty_domain(d)
+    r['Kaynak']=source
+    if not str(r.get('Yayıncı') or '').strip() or _v154_norm_source_text(r.get('Yayıncı')) in {'kaynak belirsiz','google news'}: r['Yayıncı']=source
+    if d: r['Domain']=d
+    region=str(r.get('Bölge') or '').strip()
+    if p.get('region'): region=p['region']
+    elif not region or _v154_norm_source_text(region) in {'kaynak belirsiz','belirsiz','diger','diğer'}: region=_v154_fallback_region(d,family)
+    r['Bölge']=region
+    r['Kaynak Ailesi']=family
+    group_map={'Yerli Basın':'🇹🇷 Yerli Basın','Yabancı Basın':'🌍 Yabancı Basın','Think Tank / Analiz':'🧠 Think Tank / Analiz Kuruluşu','Kürt Bölgesel Medyası':'🟣 Kürt Bölgesel Medyası','PKK/KCK Açık Kaynak':'🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak','Sosyal Medya':'📱 Sosyal Medya / Açık Sosyal'}
+    r['Kaynak_Grubu']=group_map.get(family,r.get('Kaynak_Grubu') or '❔ Kaynağı Belirsiz / Diğer')
+    ideology=p.get('ideology') or str(r.get('İdeolojik Sınıflandırma') or '').strip()
+    if not ideology:
+        ideology={'Yerli Basın':'Türkiye merkezli genel/yerel haber kaynağı','Yabancı Basın':'Uluslararası/genel haber kaynağı','Think Tank / Analiz':'Uzman/kurumsal analiz kaynağı','Kürt Bölgesel Medyası':'Kürt bölgesel / Kürt meselesi odaklı medya','PKK/KCK Açık Kaynak':'Kürt hareketi / örgüt söylemi izlenen açık kaynak','Sosyal Medya':'Sosyal medya / kullanıcı üretimli içerik'}.get(family,'Genel açık kaynak; editoryal çizgi ayrıca teyit edilmeli')
+    r['İdeolojik Sınıflandırma']=ideology
+    r['Profil Güveni']=p.get('confidence') or str(r.get('Profil Güveni') or 'Düşük/Genel')
+    kp=str(r.get('Kaynak Perspektifi') or '').strip()
+    if not kp or _v154_norm_source_text(kp) in {'kaynak belirsiz','manuel keşif / analist eklemesi'}: r['Kaynak Perspektifi']=ideology
+    cat=str(r.get('Kategori') or '').strip()
+    if not cat or _v154_norm_source_text(cat) in {'kaynak belirsiz','belirsiz'}:
+        try: _s,_sc,_st,_n,_rk,cat,_rr=classify(str(r.get('Başlık') or ''),str(r.get('İçerik_Özeti') or ''),d)
+        except Exception: cat='Genel / Terörsüz Türkiye'
+    r['Kategori']=cat or 'Genel / Terörsüz Türkiye'
+    return r
+
+
+def _v154_enrich_df(df):
+    if df is None: return df
+    try:
+        x=df.copy()
+        if x.empty: return x
+        return pd.DataFrame([_v154_enrich_record(r) for r in x.to_dict('records')],index=x.index)
+    except Exception: return df
+
+_V154_BASE_SOURCE_FAMILY=_v127_source_family
+def _v127_source_family(row):
+    d,p=_v154_profile(row)
+    if p.get('family'): return p['family']
+    r=_v154_enrich_record(row)
+    fam=str(r.get('Kaynak Ailesi') or '').strip()
+    if fam and fam!='Diğer': return fam
+    try: return _V154_BASE_SOURCE_FAMILY(r)
+    except Exception: return 'Diğer'
+_v23_source_family=_v127_source_family
+
+_V154_BASE_SOURCE_IDENTITY=_v127_source_identity
+def _v127_source_identity(row):
+    r=_v154_enrich_record(row)
+    d=_v154_domain_from_row(r)
+    if _v127_platform(r): return _V154_BASE_SOURCE_IDENTITY(r)
+    label=str(r.get('Kaynak') or _v154_pretty_domain(d)).strip()
+    return d or _v154_norm_source_text(label),label
+_v23_source_identity=_v127_source_identity
+
+_V154_BASE_SOURCE_ROLE=_v127_source_role
+def _v127_source_role(row):
+    r=_v154_enrich_record(row)
+    ide=str(r.get('İdeolojik Sınıflandırma') or '').strip()
+    if ide: return ide
+    try: return _V154_BASE_SOURCE_ROLE(r)
+    except Exception: return _v127_source_family(r)
+
+_V154_BASE_DISCOURSE_GROUP=_v28_discourse_group
+def _v28_discourse_group(row):
+    r=_v154_enrich_record(row)
+    fam=_v127_source_family(r)
+    ide=_v154_norm_source_text(r.get('İdeolojik Sınıflandırma'))
+    if fam=='Sosyal Medya': return _V154_BASE_DISCOURSE_GROUP(r)
+    if any(x in ide for x in ['pkk','kck','öcalan','ocalan','kürt özgürlük hareketi','silahlı kanat']): return 'PKK/KCK / Kürt Özgürlük Hareketi Medya Çevresi'
+    if any(x in ide for x in ['rojava','aanes','pyd','demokratik özerklik','demokratik toplum']): return 'Rojava / Demokratik Özerklik Medya Çevresi'
+    if any(x in ide for x in ['kdp','barzani']): return 'IKBY / KDP-Barzani Medya Çevresi'
+    if any(x in ide for x in ['sol-sosyalist','sol-çoğulcu','sol-hak','radikal feminist','anti-kapitalist']): return 'Sol / Hak-Temelli / Kürt Muhalif Medya Çevresi'
+    if 'islamcı' in ide or 'islamci' in ide: return 'İslamcı / Muhafazakâr Medya Çevresi'
+    if 'suudi' in ide: return 'Körfez / Suudi Ana Akım Medya Çevresi'
+    if 'iran' in ide: return 'İran Merkezli / Bölgesel Medya Çevresi'
+    if fam=='Kürt Bölgesel Medyası': return 'Kürt Bölgesel / Bağımsız Medya Çevresi'
+    if fam=='Yabancı Basın': return 'Uluslararası / Bölgesel Basın Çevresi'
+    return _V154_BASE_DISCOURSE_GROUP(r)
+
+_V154_BASE_SOURCE_TABLE=_v3_source_table
+def _v3_source_table(section_key,data,columns=None,height=590):
+    x=_v154_enrich_df(data)
+    cols=list(columns) if columns else columns
+    if cols:
+        if 'İdeolojik Sınıflandırma' not in cols:
+            anchor='Kaynak Perspektifi' if 'Kaynak Perspektifi' in cols else ('Kaynak' if 'Kaynak' in cols else None)
+            if anchor: cols.insert(cols.index(anchor)+1,'İdeolojik Sınıflandırma')
+        if 'Bölge' not in cols and 'Kaynak' in cols: cols.insert(cols.index('Kaynak'),'Bölge')
+    return _V154_BASE_SOURCE_TABLE(section_key,x,cols,height)
+
+_V154_BASE_DAILY_ADD=_v136_daily_add
+def _v136_daily_add(rows): return _V154_BASE_DAILY_ADD([_v154_enrich_record(r) for r in (rows or [])])
+_v3_add_analysis=_v136_daily_add
+_V154_BASE_ARCHIVE_ADD=_v136_archive_add
+def _v136_archive_add(rows): return _V154_BASE_ARCHIVE_ADD([_v154_enrich_record(r) for r in (rows or [])])
+
+
+def _v154_ensure_dynamic_source_table():
+    try:
+        with _history_connect() as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS dynamic_sources_v154 (domain TEXT PRIMARY KEY, source_name TEXT, region TEXT, family TEXT, ideology TEXT, first_seen TEXT, last_seen TEXT, sample_url TEXT)")
+            conn.commit()
+        return True
+    except Exception: return False
+
+
+def _v154_dynamic_sources():
+    out=[]
+    if not _v154_ensure_dynamic_source_table(): return out
+    try:
+        with _history_connect() as conn:
+            cur=conn.execute('SELECT domain,source_name,region,family,ideology,first_seen,last_seen,sample_url FROM dynamic_sources_v154 ORDER BY last_seen DESC')
+            for row in cur.fetchall(): out.append(dict(zip(['domain','source_name','region','family','ideology','first_seen','last_seen','sample_url'],row)))
+    except Exception: pass
+    return out
+
+
+def _v154_register_dynamic_source(rec):
+    r=_v154_enrich_record(rec); d=_v154_domain_from_row(r)
+    if not d or d in {'news.google.com','google.com','bing.com'}: return False
+    now=datetime.now(timezone.utc).isoformat()
+    try:
+        if not _v154_ensure_dynamic_source_table(): return False
+        with _history_connect() as conn:
+            conn.execute('INSERT INTO dynamic_sources_v154(domain,source_name,region,family,ideology,first_seen,last_seen,sample_url) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(domain) DO UPDATE SET source_name=excluded.source_name, region=excluded.region, family=excluded.family, ideology=excluded.ideology, last_seen=excluded.last_seen, sample_url=excluded.sample_url',
+                         (d,str(r.get('Kaynak') or _v154_pretty_domain(d)),str(r.get('Bölge') or ''),str(r.get('Kaynak Ailesi') or _v154_family_from_row(r,d,{})),str(r.get('İdeolojik Sınıflandırma') or 'Genel açık kaynak; editoryal çizgi ayrıca teyit edilmeli'),now,now,str(r.get('URL') or '')))
+            conn.commit()
+        return True
+    except Exception: return False
+
+
+def _v154_inject_into_current_scan(rec):
+    r=_v154_enrich_record(rec)
+    try: cur=st.session_state.get('rows')
+    except Exception: cur=None
+    if cur is None: return False
+    try:
+        if isinstance(cur,pd.DataFrame):
+            x=cur.copy(); url=str(r.get('URL') or '')
+            exists=(url and 'URL' in x.columns and x['URL'].astype(str).eq(url).any())
+            if not exists: x=pd.concat([x,pd.DataFrame([r])],ignore_index=True,sort=False)
+            st.session_state.rows=_v154_enrich_df(x); return True
+        if isinstance(cur,list):
+            url=str(r.get('URL') or '')
+            if not any(str((z or {}).get('URL') or '')==url for z in cur): cur.append(r)
+            st.session_state.rows=cur; return True
+    except Exception: pass
+    return False
+
+_V154_BASE_MANUAL_ADD=_v140_add_manual_records
+def _v140_add_manual_records(records):
+    enriched=[]
+    for item in records or []:
+        try:
+            rr=_v154_enrich_record(item); _v154_register_dynamic_source(rr); _v154_inject_into_current_scan(rr); enriched.append(rr)
+        except Exception: enriched.append(item)
+    return _V154_BASE_MANUAL_ADD(enriched)
+
+_V154_BASE_PREPARE_MANUAL=_v140_prepare_manual_record
+def _v140_prepare_manual_record(url,title='',summary='',source='',published=''):
+    rec=_v154_enrich_record(_V154_BASE_PREPARE_MANUAL(url,title,summary,source,published))
+    _v154_register_dynamic_source(rec); _v154_inject_into_current_scan(rec); return rec
+
+
+def _v154_dynamic_site_queries(target_family=None,max_domains=30):
+    q=[]
+    for item in _v154_dynamic_sources()[:max_domains]:
+        d=str(item.get('domain') or '').strip(); fam=str(item.get('family') or '')
+        if not d or (target_family and fam!=target_family): continue
+        q.append(f'(Öcalan OR Ocalan OR PKK OR KCK OR "Terörsüz Türkiye" OR "barış süreci" OR SDF OR SDG OR YPG) site:{d}')
+    return q
+
+_V154_BASE_V22_MOVEMENT=_v22_movement_queries
+def _v22_movement_queries(): return list(dict.fromkeys(list(_V154_BASE_V22_MOVEMENT())+_v154_dynamic_site_queries('PKK/KCK Açık Kaynak')))
+_V154_BASE_V22_KURDISH=_v22_kurdish_queries
+def _v22_kurdish_queries(): return list(dict.fromkeys(list(_V154_BASE_V22_KURDISH())+_v154_dynamic_site_queries('Kürt Bölgesel Medyası')))
+try:
+    _V154_BASE_V22_TURKISH=_v22_turkish_queries
+    def _v22_turkish_queries(): return list(dict.fromkeys(list(_V154_BASE_V22_TURKISH())+_v154_dynamic_site_queries('Yerli Basın')))
+except Exception: pass
+try:
+    _V154_BASE_V22_FOREIGN=_v22_foreign_queries
+    def _v22_foreign_queries(): return list(dict.fromkeys(list(_V154_BASE_V22_FOREIGN())+_v154_dynamic_site_queries('Yabancı Basın')))
+except Exception: pass
+
+_V154_BASE_GEPHI_NETWORK=_v23_gephi_network
+def _v154_gephi_network(df,network_type='family',min_weight=1):
+    x=_v154_enrich_df(df)
+    nodes,edges,summary=_V154_BASE_GEPHI_NETWORK(x,network_type=network_type,min_weight=min_weight)
+    if nodes is None or nodes.empty: return nodes,edges,summary
+    for c in ['İdeolojikProfil','Bölge','ProfilGüveni']:
+        if c not in nodes.columns: nodes[c]=''
+    if edges is not None and not edges.empty:
+        for c in ['İdeolojikProfil','Bölge','ProfilGüveni']:
+            if c not in edges.columns: edges[c]=''
+    label_map={}
+    for r in (x.to_dict('records') if x is not None and not x.empty else []):
+        _k,_label=_v127_source_identity(r)
+        label_map[str(_label)]={'İdeolojikProfil':str(r.get('İdeolojik Sınıflandırma') or ''),'Bölge':str(r.get('Bölge') or ''),'ProfilGüveni':str(r.get('Profil Güveni') or '')}
+    for i,n in nodes.iterrows():
+        if str(n.get('NodeType'))=='Source':
+            for c,v in label_map.get(str(n.get('Label')) ,{}).items(): nodes.at[i,c]=v
+    if edges is not None and not edges.empty:
+        for i,e in edges.iterrows():
+            for c,v in label_map.get(str(e.get('SourceLabel')) ,{}).items(): edges.at[i,c]=v
+    return nodes,edges,summary
+_v23_gephi_network=_v154_gephi_network
+
+
+def _v154_gephi_gexf(nodes,edges,description='Terörsüz Türkiye — Kaynak/Çerçeve Ağı'):
+    if nodes is None or edges is None or nodes.empty or edges.empty: return b''
+    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'})
+    meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')}); ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT V154'; ET.SubElement(meta,'description').text=str(description)
+    graph=ET.SubElement(root,'graph',{'mode':'static','defaultedgetype':'undirected'})
+    ncols=[c for c in nodes.columns if c not in {'Id','Label'}]; ecols=[c for c in edges.columns if c not in {'Id','Source','Target','Type','Weight'}]
+    na=ET.SubElement(graph,'attributes',{'class':'node'}); nmap={}
+    for ix,c in enumerate(ncols):
+        typ='integer' if pd.api.types.is_integer_dtype(nodes[c]) else ('double' if pd.api.types.is_float_dtype(nodes[c]) else 'string'); nmap[c]=str(ix); ET.SubElement(na,'attribute',{'id':str(ix),'title':str(c),'type':typ})
+    ea=ET.SubElement(graph,'attributes',{'class':'edge'}); emap={}
+    for ix,c in enumerate(ecols):
+        typ='integer' if pd.api.types.is_integer_dtype(edges[c]) else ('double' if pd.api.types.is_float_dtype(edges[c]) else 'string'); emap[c]=str(ix); ET.SubElement(ea,'attribute',{'id':str(ix),'title':str(c),'type':typ})
+    ns=ET.SubElement(graph,'nodes')
+    for _,r in nodes.iterrows():
+        n=ET.SubElement(ns,'node',{'id':str(r.get('Id','')),'label':str(r.get('Label',''))}); av=ET.SubElement(n,'attvalues')
+        for c in ncols:
+            v=r.get(c,''); v='' if pd.isna(v) else v; ET.SubElement(av,'attvalue',{'for':nmap[c],'value':str(v)})
+    es=ET.SubElement(graph,'edges')
+    for _,r in edges.iterrows():
+        e=ET.SubElement(es,'edge',{'id':str(r.get('Id','')),'source':str(r.get('Source','')),'target':str(r.get('Target','')),'weight':str(float(r.get('Weight',1) or 1))}); av=ET.SubElement(e,'attvalues')
+        for c in ecols:
+            v=r.get(c,''); v='' if pd.isna(v) else v; ET.SubElement(av,'attvalue',{'for':emap[c],'value':str(v)})
+    return ET.tostring(root,encoding='utf-8',xml_declaration=True)
+_v23_gephi_gexf=_v154_gephi_gexf
+
+try:
+    _cur=st.session_state.get('rows')
+    if isinstance(_cur,pd.DataFrame) and not _cur.empty: st.session_state.rows=_v154_enrich_df(_cur)
+    elif isinstance(_cur,list) and _cur: st.session_state.rows=[_v154_enrich_record(r) for r in _cur]
+except Exception: pass
+
+# Eski günlük/arşiv kayıtları da okunurken anında zenginleştirilsin.
+_V154_BASE_DAILY_GET=_v136_daily_basket
+def _v136_daily_basket():
+    try: return [_v154_enrich_record(r) for r in (_V154_BASE_DAILY_GET() or [])]
+    except Exception: return _V154_BASE_DAILY_GET()
+
+_V154_BASE_ARCHIVE_GET=_v136_archive_basket
+def _v136_archive_basket():
+    try: return [_v154_enrich_record(r) for r in (_V154_BASE_ARCHIVE_GET() or [])]
+    except Exception: return _V154_BASE_ARCHIVE_GET()
+
+# Eski tarama yolunu kullanan çağrılar için build_* sorgularını da dinamik kaynaklarla genişlet.
+try:
+    _V154_BASE_BUILD_MOVEMENT=build_movement_queries
+    def build_movement_queries(when):
+        return list(dict.fromkeys(list(_V154_BASE_BUILD_MOVEMENT(when))+_v154_dynamic_site_queries('PKK/KCK Açık Kaynak')))
+except Exception: pass
+try:
+    _V154_BASE_BUILD_KURDISH=build_kurdish_media_queries
+    def build_kurdish_media_queries(when):
+        return list(dict.fromkeys(list(_V154_BASE_BUILD_KURDISH(when))+_v154_dynamic_site_queries('Kürt Bölgesel Medyası')))
+except Exception: pass
+
+# ============================================================
+# /V154
+# ============================================================
+
 rows=st.session_state.rows
 
 if rows is None:
