@@ -546,7 +546,15 @@ def _v109_chronology_events(df):
         rep['Tarih']=latest.get('Tarih')
         domains={str(v) for v in g.get('Domain',pd.Series(dtype=str)).tolist() if str(v).strip()}
         sources=list(dict.fromkeys(str(v) for v in g.get('Kaynak',pd.Series(dtype=str)).tolist() if str(v).strip()))
-        rep['Kaynak Sayısı']=max(len(domains),len(sources),int(rep.get('Olay_Kaynak_Sayisi',0) or 0))
+        # V155: Manuel linklerden gelebilen boş/NaN/"1.0" vb. değerler int() ile
+        # doğrudan çevrildiğinde ValueError üretmesin. Yalnız bu sayaç alanını güvenli sayıya çevir.
+        _raw_source_count=rep.get('Olay_Kaynak_Sayisi',0)
+        try:
+            _num_source_count=pd.to_numeric(_raw_source_count,errors='coerce')
+            _existing_source_count=int(_num_source_count) if pd.notna(_num_source_count) else 0
+        except Exception:
+            _existing_source_count=0
+        rep['Kaynak Sayısı']=max(len(domains),len(sources),_existing_source_count)
         rep['Haber Sayısı']=len(g)
         rep['Kaynaklar']=' • '.join(sources[:8])
         rep['_Olay_ID']=str(oid)
