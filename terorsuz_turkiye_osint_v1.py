@@ -40434,202 +40434,48 @@ except Exception: pass
 # ============================================================
 
 
+
 # ============================================================
-# V156 — SEÇİLEBİLİR ARŞİV HEDEFİ + ÖZEL ARŞİV KLASÖRLERİ
+# V158 — SADECE SERBEST ARŞİV TARİHİ
 #
 # KARARLI TABAN: V155 (değiştirilmez).
-# Yalnız arşivleme iş akışı geliştirilir:
-# - Günlük Analiz Sepeti -> Arşiv aktarımında hedef gün kullanıcı tarafından seçilebilir.
-# - Kullanıcı kalıcı özel arşiv klasörleri oluşturabilir ve seçili kayıtları bu klasöre taşıyabilir.
-# - Gün bazlı mevcut arşiv mantığı korunur.
-# - Özel klasörlerin Word/Gephi işlemleri yalnız o klasörün kayıtlarını kullanır.
-# - Tarama, kaynak profili, Gephi motoru, yönetici özeti, manuel link motoru değiştirilmez.
+# Yalnız Günlük Analiz Sepeti -> Günlük Rapor Arşivi aktarımında
+# hedef tarih kullanıcı tarafından serbestçe seçilir.
+# - Özel klasör yok.
+# - Arşiv adı yok.
+# - Aynı tarihte tek günlük arşiv sekmesi kullanılır.
+# - Geçmiş / ileri tarih seçilebilir.
+# - Tarama, kaynak profili, Gephi, raporlama ve manuel link mantığı değişmez.
 # ============================================================
 
-V156_ARCHIVE_FOLDER_FIELD='_Arşiv_Klasörü'
-V156_FOLDER_TABLE='archive_folders_v156'
+_V158_BASE_RENDER_BASKET=_v136_render_basket
 
 
-def _v156_ensure_folder_table():
-    if not _init_history_db():
-        return False
-    try:
-        with _history_connect() as conn:
-            conn.execute(
-                f'''CREATE TABLE IF NOT EXISTS {V156_FOLDER_TABLE}(
-                    name TEXT PRIMARY KEY,
-                    created_at TEXT
-                )'''
-            )
-            conn.commit()
-        return True
-    except Exception:
-        return False
-
-
-def _v156_clean_folder_name(value):
-    s=re.sub(r'\s+',' ',str(value or '')).strip()
-    s=re.sub(r'[\x00-\x1f]','',s)
-    return s[:80].strip()
-
-
-def _v156_list_folders():
-    names=[]
-    if _v156_ensure_folder_table():
+def _v158_selected_archive_day():
+    raw=st.session_state.get('_v158_archive_target_day','')
+    if raw:
         try:
-            with _history_connect() as conn:
-                cur=conn.execute(f'SELECT name FROM {V156_FOLDER_TABLE} ORDER BY created_at ASC, name ASC')
-                names=[_v156_clean_folder_name(r[0]) for r in cur.fetchall() if _v156_clean_folder_name(r[0])]
+            ts=pd.to_datetime(str(raw),dayfirst=True,errors='coerce')
+            if pd.notna(ts):
+                return ts.strftime('%d.%m.%Y')
         except Exception:
-            names=[]
-    try:
-        for rec in (_v136_archive_basket() or []):
-            n=_v156_clean_folder_name(rec.get(V156_ARCHIVE_FOLDER_FIELD,''))
-            if n and n not in names:
-                names.append(n)
-    except Exception:
-        pass
-    return names
-
-
-def _v156_create_folder(name):
-    name=_v156_clean_folder_name(name)
-    if not name:
-        return False
-    if not _v156_ensure_folder_table():
-        return False
-    try:
-        with _history_connect() as conn:
-            conn.execute(
-                f'INSERT OR IGNORE INTO {V156_FOLDER_TABLE}(name,created_at) VALUES (?,?)',
-                (name,datetime.now(timezone.utc).isoformat())
-            )
-            conn.commit()
-        return True
-    except Exception:
-        return False
-
-
-def _v156_existing_archive_days():
-    out=[]
-    try:
-        for rec in (_v136_archive_basket() or []):
-            if _v156_clean_folder_name(rec.get(V156_ARCHIVE_FOLDER_FIELD,'')):
-                continue
-            day=str(rec.get(V146_ARCHIVE_DAY_FIELD,'') or '').strip() or _v146_day_from_record_date(rec)
-            if day and day not in out:
-                out.append(day)
-    except Exception:
-        pass
-    return sorted(out,key=_v146_archive_day_sort,reverse=True)
-
-
-def _v156_render_archive_target_selector():
-    st.markdown('##### 🗂️ Arşiv hedefi')
-    st.caption(
-        'Seçtiğiniz günlük sepet kayıtları otomatik tarihe bağlı değildir; '
-        'aşağıdan istediğiniz güne veya oluşturduğunuz özel klasöre taşıyabilirsiniz.'
-    )
-    target_type=st.radio(
-        'Hedef türü',
-        ['📅 Günlük arşiv günü','📁 Özel klasör'],
-        horizontal=True,
-        key='v156_archive_target_type_ui'
-    )
-
-    if target_type.startswith('📅'):
-        today=pd.Timestamp.now(tz='Europe/Istanbul').date()
-        existing=_v156_existing_archive_days()
-        today_label=today.strftime('%d.%m.%Y')
-        opts=[f'Bugün — {today_label}']
-        opts.extend([d for d in existing if d!=today_label])
-        opts.append('📆 Başka tarih seç…')
-        chosen=st.selectbox('Arşiv günü',opts,key='v156_archive_day_choice')
-        if chosen=='📆 Başka tarih seç…':
-            chosen_date=st.date_input(
-                'Hedef tarih',
-                value=today,
-                key='v156_archive_custom_date'
-            )
-            day=chosen_date.strftime('%d.%m.%Y')
-        elif chosen.startswith('Bugün — '):
-            day=today_label
-        else:
-            day=chosen
-        st.session_state['_v156_archive_target_mode']='date'
-        st.session_state['_v156_archive_target_day']=day
-        st.session_state['_v156_archive_target_folder']=''
-        st.info(f'📅 Seçili hedef: **{day}**')
-        return
-
-    c1,c2=st.columns([2,1])
-    with c1:
-        new_name=st.text_input(
-            'Yeni klasör adı',
-            placeholder='Örn. 11 Eylül Akşam Vardiyası / Özel Takip / Haftalık Dosya',
-            key='v156_new_folder_name'
-        )
-    with c2:
-        st.write('')
-        st.write('')
-        if st.button('📁 Klasör Oluştur',use_container_width=True,key='v156_create_folder_btn'):
-            name=_v156_clean_folder_name(new_name)
-            if not name:
-                st.warning('Klasör adı girin.')
-            elif _v156_create_folder(name):
-                st.session_state['_v156_archive_target_folder']=name
-                st.success(f'📁 {name} oluşturuldu.')
-                st.rerun()
-            else:
-                st.error('Klasör oluşturulamadı.')
-
-    folders=_v156_list_folders()
-    if folders:
-        default_folder=str(st.session_state.get('_v156_archive_target_folder','') or '')
-        try: idx=folders.index(default_folder)
-        except Exception: idx=0
-        selected=st.selectbox(
-            'Arşiv klasörü',
-            folders,
-            index=idx,
-            key='v156_archive_folder_choice'
-        )
-        st.session_state['_v156_archive_target_mode']='folder'
-        st.session_state['_v156_archive_target_folder']=selected
-        st.session_state['_v156_archive_target_day']=pd.Timestamp.now(tz='Europe/Istanbul').strftime('%d.%m.%Y')
-        st.info(f'📁 Seçili hedef: **{selected}**')
-    else:
-        st.session_state['_v156_archive_target_mode']='folder'
-        st.session_state['_v156_archive_target_folder']=''
-        st.warning('Henüz özel klasör yok. Önce yukarıdan bir klasör oluşturun.')
+            pass
+    return pd.Timestamp.now(tz='Europe/Istanbul').strftime('%d.%m.%Y')
 
 
 def _v136_archive_add(rows):
-    mode=str(st.session_state.get('_v156_archive_target_mode','date') or 'date')
-    selected_day=str(st.session_state.get('_v156_archive_target_day','') or '').strip()
-    selected_folder=_v156_clean_folder_name(st.session_state.get('_v156_archive_target_folder',''))
-    today=pd.Timestamp.now(tz='Europe/Istanbul').strftime('%d.%m.%Y')
-    day=selected_day or today
-
-    if mode=='folder' and not selected_folder:
-        try: st.warning('Özel klasöre arşivlemek için önce bir klasör oluşturup seçin.')
-        except Exception: pass
-        return 0
-
+    # V154 kaynak zenginleştirmesini koru; yalnız arşiv gününü kullanıcının
+    # seçtiği tarihle damgala. V146'nın otomatik "bugün" davranışını burada
+    # bilinçli olarak geçersiz kılıyoruz.
+    day=_v158_selected_archive_day()
     stamped=[]
     for item in rows or []:
         try:
             rec=_v154_enrich_record(item)
         except Exception:
             rec=dict(item)
-        if mode=='folder' and selected_folder:
-            rec[V156_ARCHIVE_FOLDER_FIELD]=selected_folder
-            rec[V146_ARCHIVE_DAY_FIELD]=today
-        else:
-            rec[V156_ARCHIVE_FOLDER_FIELD]=''
-            rec[V146_ARCHIVE_DAY_FIELD]=day
+        rec[V146_ARCHIVE_DAY_FIELD]=day
         stamped.append(rec)
-
     return _v136_add_to_table(
         stamped,
         V136_ARCHIVE_TABLE,
@@ -40638,171 +40484,31 @@ def _v136_archive_add(rows):
     )
 
 
-def _v156_subset_remover(subset_getter,indices):
-    subset=list(subset_getter())
-    wanted={int(i) for i in indices if 0 <= int(i) < len(subset)}
-    keys={_v3_analysis_dedup_key(subset[i]) for i in wanted}
-    current=list(_v136_archive_basket() or [])
-    global_indices=[i for i,r in enumerate(current) if _v3_analysis_dedup_key(r) in keys]
-    return _v136_archive_remove(global_indices)
-
-
-_V156_BASE_CLEAR_TABLE=_v136_clear_table
-def _v136_clear_table(table_name,session_key):
-    # Gün/klasör alt görünümündeki "TÜM SEPETİ TEMİZLE" yalnız o alt grubu temizler.
-    getter=st.session_state.get('_v156_active_archive_subset_getter')
-    if table_name==V136_ARCHIVE_TABLE and callable(getter):
-        try:
-            subset=list(getter())
-            return _v156_subset_remover(getter,range(len(subset)))
-        except Exception:
-            return 0
-    return _V156_BASE_CLEAR_TABLE(table_name,session_key)
-
-
-def _v156_render_archive_subset(title,description,records_getter,key_prefix,file_prefix):
-    records=list(records_getter())
-    if not records:
-        st.info(f'{title} henüz boş.')
-        return
-
-    def _remover(indices):
-        return _v156_subset_remover(records_getter,indices)
-
-    st.session_state['_v156_active_archive_subset_getter']=records_getter
-    try:
-        _v146_base_render_basket(
-            title,
-            description,
-            records_getter,
-            _remover,
-            V136_ARCHIVE_TABLE,
-            'v136_archive_analysis_basket',
-            key_prefix,
-            file_prefix
-        )
-    finally:
-        st.session_state.pop('_v156_active_archive_subset_getter',None)
-
-
-def _v156_render_archive(description):
-    st.markdown('#### 🗂️ Günlük Rapor Arşivi')
-    st.caption(
-        description + ' Günlük arşiv günleri ve sizin oluşturduğunuz özel klasörler ayrı tutulur. '
-        'Her gün/klasör içindeki Yönetici Özeti ve Gephi çıktısı yalnız o grubun kayıtlarını kullanır.'
-    )
-
-    basket=[_v137_fix_record(r) for r in (_v136_archive_basket() or [])]
-    folders=_v156_list_folders()
-    if not basket and not folders:
-        st.info('Günlük Rapor Arşivi henüz boş.')
-        return
-
-    day_records=[
-        r for r in basket
-        if not _v156_clean_folder_name(r.get(V156_ARCHIVE_FOLDER_FIELD,''))
-    ]
-    foldered_records=[
-        r for r in basket
-        if _v156_clean_folder_name(r.get(V156_ARCHIVE_FOLDER_FIELD,''))
-    ]
-
-    tab_days,tab_folders=st.tabs([
-        f'📅 Günler ({len(day_records)})',
-        f'📁 Özel Klasörler ({len(folders)})'
-    ])
-
-    with tab_days:
-        if not day_records:
-            st.info('Gün bazlı arşiv kaydı bulunmuyor.')
-        else:
-            groups={}
-            for rec in day_records:
-                day=str(rec.get(V146_ARCHIVE_DAY_FIELD,'') or '').strip() or _v146_day_from_record_date(rec)
-                groups.setdefault(day,[]).append(rec)
-            days=sorted(groups.keys(),key=_v146_archive_day_sort,reverse=True)
-            tabs=st.tabs([f'📅 {day} ({len(groups[day])})' for day in days])
-            for tab,day in zip(tabs,days):
-                with tab:
-                    def _day_getter(_day=day):
-                        current=[_v137_fix_record(r) for r in (_v136_archive_basket() or [])]
-                        return [
-                            r for r in current
-                            if not _v156_clean_folder_name(r.get(V156_ARCHIVE_FOLDER_FIELD,''))
-                            and (str(r.get(V146_ARCHIVE_DAY_FIELD,'') or '').strip() or _v146_day_from_record_date(r))==_day
-                        ]
-                    safe=re.sub(r'[^0-9A-Za-z]+','_',day).strip('_') or 'tarihsiz'
-                    _v156_render_archive_subset(
-                        f'📅 {day} — {len(groups[day])} içerik',
-                        'Bu günlük arşiv sekmesindeki işlemler yalnız bu tarihin içeriklerine uygulanır.',
-                        _day_getter,
-                        f'v156_archive_day_{safe}',
-                        f'Gunluk_Arsiv_{safe}'
-                    )
-
-    with tab_folders:
-        st.markdown('##### 📁 Özel arşiv klasörleri')
-        fc1,fc2=st.columns([3,1])
-        with fc1:
-            fname=st.text_input(
-                'Yeni klasör',
-                placeholder='Örn. Kritik Gelişmeler / 24 Saatlik Vardiya / Özel Dosya',
-                key='v156_archive_tab_new_folder'
-            )
-        with fc2:
-            st.write('')
-            st.write('')
-            if st.button('➕ Oluştur',use_container_width=True,key='v156_archive_tab_create'):
-                clean=_v156_clean_folder_name(fname)
-                if not clean:
-                    st.warning('Klasör adı girin.')
-                elif _v156_create_folder(clean):
-                    st.success(f'📁 {clean} oluşturuldu.')
-                    st.rerun()
-                else:
-                    st.error('Klasör oluşturulamadı.')
-
-        folders=_v156_list_folders()
-        if not folders:
-            st.info('Henüz özel klasör oluşturulmadı.')
-        else:
-            ftabs=st.tabs([
-                f'📁 {name} ({sum(1 for r in foldered_records if _v156_clean_folder_name(r.get(V156_ARCHIVE_FOLDER_FIELD,""))==name)})'
-                for name in folders
-            ])
-            for ftab,name in zip(ftabs,folders):
-                with ftab:
-                    def _folder_getter(_name=name):
-                        current=[_v137_fix_record(r) for r in (_v136_archive_basket() or [])]
-                        return [
-                            r for r in current
-                            if _v156_clean_folder_name(r.get(V156_ARCHIVE_FOLDER_FIELD,''))==_name
-                        ]
-                    safe=re.sub(r'[^0-9A-Za-zÇĞİÖŞÜçğıöşü]+','_',name).strip('_') or 'klasor'
-                    _v156_render_archive_subset(
-                        f'📁 {name}',
-                        'Bu özel klasördeki işlemler, Yönetici Özeti ve Gephi çıktısı yalnız bu klasörün içeriklerine uygulanır.',
-                        _folder_getter,
-                        f'v156_archive_folder_{safe}',
-                        f'Arsiv_Klasoru_{safe}'
-                    )
-
-
-_V156_BASE_RENDER_BASKET=_v136_render_basket
 def _v136_render_basket(title, description, getter, remover, table_name, session_key, key_prefix, file_prefix):
     if table_name==V136_DAILY_TABLE:
-        _v156_render_archive_target_selector()
-        return _V156_BASE_RENDER_BASKET(
-            title,description,getter,remover,table_name,session_key,key_prefix,file_prefix
+        st.markdown('##### 📅 Arşiv hedef tarihi')
+        st.caption(
+            'Arşive taşıyacağınız seçili içeriklerin hangi tarih sekmesine gideceğini siz belirlersiniz. '
+            'Geçmiş veya ileri tarih seçebilirsiniz.'
         )
-    if table_name==V136_ARCHIVE_TABLE:
-        return _v156_render_archive(description)
-    return _V156_BASE_RENDER_BASKET(
+        today=pd.Timestamp.now(tz='Europe/Istanbul').date()
+        chosen=st.date_input(
+            'Hedef arşiv tarihi',
+            value=today,
+            min_value=date(1900,1,1),
+            max_value=date(2100,12,31),
+            key='v158_archive_target_date'
+        )
+        day=chosen.strftime('%d.%m.%Y')
+        st.session_state['_v158_archive_target_day']=day
+        st.info(f'📅 Seçili arşiv günü: **{day}**')
+
+    return _V158_BASE_RENDER_BASKET(
         title,description,getter,remover,table_name,session_key,key_prefix,file_prefix
     )
 
 # ============================================================
-# /V156 SEÇİLEBİLİR ARŞİV HEDEFİ + ÖZEL ARŞİV KLASÖRLERİ
+# /V158 SADECE SERBEST ARŞİV TARİHİ
 # ============================================================
 
 rows=st.session_state.rows
