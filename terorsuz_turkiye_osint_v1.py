@@ -41069,6 +41069,475 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
 # /V160 YEREL SQLITE / WAL ADLİ KURTARMA TARAMASI
 # ============================================================
 
+# ============================================================
+# V161 — KALICI / MANUEL ARŞİV DOSYASI
+#
+# TABAN: V160 kurtarma sürümü. Tarama, kaynak, Gephi, rapor ve manuel link
+# motorlarına dokunulmaz. Yalnız Günlük Rapor Arşivinin kalıcılığı güçlendirilir.
+#
+# Amaç:
+# - Kullanıcı istediği tarihi elle oluşturabilsin.
+# - Arşiv yalnız Streamlit'in geçici diskine bağlı kalmasın.
+# - İsteğe bağlı ÖZEL GitHub deposundaki tek JSON dosyası kalıcı ana arşiv olsun.
+# - Uygulama yeniden deploy/reboot olduğunda uzak arşiv otomatik olarak geri birleşsin.
+# - Her değişiklikten sonra uzak arşiv güncellensin.
+# - Her zaman tam arşiv JSON'u ayrıca indirilebilsin.
+#
+# Streamlit Secrets örneği:
+# [archive]
+# github_token = "github_pat_..."
+# github_repo = "kullanici/ozel-arsiv-deposu"
+# github_branch = "main"
+# github_path = "terorsuz_turkiye_archive.json"
+#
+# NOT: Arşiv içeriği hassassa github_repo PRIVATE olmalıdır.
+# ============================================================
+
+V161_ARCHIVE_DAYS_TABLE='archive_days_v161'
+
+
+def _v161_day(value):
+    try:
+        ts=pd.to_datetime(str(value or ''),dayfirst=True,errors='coerce')
+        if pd.notna(ts):
+            return ts.strftime('%d.%m.%Y')
+    except Exception:
+        pass
+    return ''
+
+
+def _v161_ensure_days_table():
+    if not _init_history_db():
+        return False
+    try:
+        with _history_connect() as conn:
+            conn.execute(f'''CREATE TABLE IF NOT EXISTS {V161_ARCHIVE_DAYS_TABLE}(
+                day TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL
+            )''')
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+def _v161_local_days():
+    days=set()
+    if _v161_ensure_days_table():
+        try:
+            with _history_connect() as conn:
+                for (d,) in conn.execute(f'SELECT day FROM {V161_ARCHIVE_DAYS_TABLE}').fetchall():
+                    d=_v161_day(d)
+                    if d: days.add(d)
+        except Exception:
+            pass
+    try:
+        for r in (_v136_archive_basket() or []):
+            d=_v161_day(r.get(V146_ARCHIVE_DAY_FIELD,'') or r.get('_Arşiv_Günü','') or r.get('Tarih',''))
+            if d: days.add(d)
+    except Exception:
+        pass
+    return days
+
+
+def _v161_create_day(day):
+    day=_v161_day(day)
+    if not day:
+        return False
+    if not _v161_ensure_days_table():
+        return False
+    try:
+        with _history_connect() as conn:
+            conn.execute(
+                f'INSERT OR IGNORE INTO {V161_ARCHIVE_DAYS_TABLE}(day,created_at) VALUES(?,?)',
+                (day,datetime.now(timezone.utc).isoformat())
+            )
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+def _v161_remote_cfg():
+    try:
+        cfg=st.secrets.get('archive',{})
+    except Exception:
+        cfg={}
+    try:
+        token=str(cfg.get('github_token','') or '').strip()
+        repo=str(cfg.get('github_repo','') or '').strip().strip('/')
+        branch=str(cfg.get('github_branch','main') or 'main').strip()
+        path=str(cfg.get('github_path','terorsuz_turkiye_archive.json') or 'terorsuz_turkiye_archive.json').strip().lstrip('/')
+    except Exception:
+        token=repo=''; branch='main'; path='terorsuz_turkiye_archive.json'
+    ok=bool(token and repo and '/' in repo and path)
+    return {'ok':ok,'token':token,'repo':repo,'branch':branch,'path':path}
+
+
+def _v161_record_key(rec):
+    try:
+        k=str(_v3_analysis_dedup_key(rec) or '').strip()
+        if k and k!='|': return k
+    except Exception:
+        pass
+    u=str((rec or {}).get('URL','') or (rec or {}).get('Gerçek Bağlantı','') or '').strip().lower().rstrip('/')
+    t=title_key((rec or {}).get('Başlık',''))
+    return f'{u}|{t}'
+
+
+def _v161_full_payload(records=None,days=None):
+    if records is None:
+        records=[dict(r) for r in (_v136_archive_basket() or [])]
+    if days is None:
+        days=sorted(_v161_local_days(),key=_v146_archive_day_sort)
+    return {
+        'schema':'terorsuz_turkiye_archive_v161',
+        'updated_at':datetime.now(timezone.utc).isoformat(),
+        'archive_days':list(days or []),
+        'records':records,
+    }
+
+
+def _v161_payload_bytes(records=None,days=None):
+    return json.dumps(_v161_full_payload(records,days),ensure_ascii=False,indent=2,default=str).encode('utf-8')
+
+
+def _v161_remote_get():
+    cfg=_v161_remote_cfg()
+    if not cfg['ok']:
+        return None,None,'Kalıcı GitHub arşivi yapılandırılmamış.',False
+    try:
+        import base64 as _v161_b64
+        from urllib.parse import quote as _v161_quote
+        api=f"https://api.github.com/repos/{cfg['repo']}/contents/{_v161_quote(cfg['path'],safe='/')}"
+        headers={
+            'Authorization':f"Bearer {cfg['token']}",
+            'Accept':'application/vnd.github+json',
+            'X-GitHub-Api-Version':'2022-11-28',
+            'User-Agent':'terorsuz-turkiye-osint-v161'
+        }
+        r=requests.get(api,headers=headers,params={'ref':cfg['branch']},timeout=15)
+        if r.status_code==404:
+            return None,None,'Kalıcı arşiv dosyası henüz oluşturulmamış.',True
+        if r.status_code!=200:
+            return None,None,f'GitHub arşivi okunamadı (HTTP {r.status_code}).',False
+        obj=r.json()
+        raw=_v161_b64.b64decode(str(obj.get('content','')).replace('\n',''))
+        payload=json.loads(raw.decode('utf-8-sig'))
+        if not isinstance(payload,dict):
+            return None,obj.get('sha'),'Kalıcı arşiv JSON yapısı geçersiz.',False
+        return payload,obj.get('sha'),'',True
+    except Exception as e:
+        return None,None,f'Kalıcı arşiv okunamadı: {type(e).__name__}',False
+
+
+def _v161_remote_put(payload,sha=None):
+    cfg=_v161_remote_cfg()
+    if not cfg['ok']:
+        return False,'Kalıcı GitHub arşivi yapılandırılmamış.'
+    try:
+        import base64 as _v161_b64
+        from urllib.parse import quote as _v161_quote
+        api=f"https://api.github.com/repos/{cfg['repo']}/contents/{_v161_quote(cfg['path'],safe='/')}"
+        headers={
+            'Authorization':f"Bearer {cfg['token']}",
+            'Accept':'application/vnd.github+json',
+            'X-GitHub-Api-Version':'2022-11-28',
+            'User-Agent':'terorsuz-turkiye-osint-v161'
+        }
+        raw=json.dumps(payload,ensure_ascii=False,indent=2,default=str).encode('utf-8')
+        body={
+            'message':'Terorsuz Turkiye arsiv guncellemesi',
+            'content':_v161_b64.b64encode(raw).decode('ascii'),
+            'branch':cfg['branch'],
+        }
+        if sha: body['sha']=sha
+        r=requests.put(api,headers=headers,json=body,timeout=20)
+        if r.status_code not in {200,201}:
+            msg=''
+            try: msg=str(r.json().get('message',''))
+            except Exception: msg=''
+            return False,f'GitHub arşivi yazılamadı (HTTP {r.status_code})'+(f': {msg}' if msg else '')
+        return True,''
+    except Exception as e:
+        return False,f'Kalıcı arşiv yazılamadı: {type(e).__name__}'
+
+
+# V159'un gerçek içe aktarma motorunu sakla. Otomatik uzak geri yüklemede
+# yeniden uzak senkron çağrısı oluşmaması için bu temel fonksiyon kullanılır.
+_V161_BASE_RESTORE_ARCHIVE=_v159_restore_archive_payload
+
+
+def _v161_apply_remote_payload(payload):
+    if not isinstance(payload,dict):
+        return 0,0,'Uzak arşiv yapısı geçersiz.'
+    for d in payload.get('archive_days',[]) or []:
+        _v161_create_day(d)
+    try:
+        raw=json.dumps({'records':payload.get('records',[]) or []},ensure_ascii=False,default=str).encode('utf-8')
+        return _V161_BASE_RESTORE_ARCHIVE(raw)
+    except Exception as e:
+        return 0,0,f'Uzak arşiv yerel depoya alınamadı: {type(e).__name__}'
+
+
+def _v161_sync_remote(remove_keys=None):
+    # Yerel arşivi uzak JSON ile güvenli biçimde birleştir ve kalıcı dosyayı güncelle.
+    cfg=_v161_remote_cfg()
+    if not cfg['ok']:
+        return False,'Kalıcı GitHub arşivi yapılandırılmamış.'
+
+    remote,sha,msg,reachable=_v161_remote_get()
+    if not reachable:
+        return False,msg
+    if remote is None:
+        remote={'records':[],'archive_days':[]}
+
+    remove_keys={str(x) for x in (remove_keys or set()) if str(x)}
+    merged={}
+    for rec in remote.get('records',[]) or []:
+        if not isinstance(rec,dict): continue
+        k=_v161_record_key(rec)
+        if k in remove_keys: continue
+        if k: merged[k]=dict(rec)
+    for rec in (_v136_archive_basket() or []):
+        if not isinstance(rec,dict): continue
+        k=_v161_record_key(rec)
+        if k in remove_keys: continue
+        if k: merged[k]=dict(rec)
+
+    days=set()
+    for d in remote.get('archive_days',[]) or []:
+        dd=_v161_day(d)
+        if dd: days.add(dd)
+    days.update(_v161_local_days())
+    for rec in merged.values():
+        dd=_v161_day(rec.get(V146_ARCHIVE_DAY_FIELD,'') or rec.get('_Arşiv_Günü','') or rec.get('Tarih',''))
+        if dd: days.add(dd)
+
+    payload=_v161_full_payload(list(merged.values()),sorted(days,key=_v146_archive_day_sort))
+    return _v161_remote_put(payload,sha=sha)
+
+
+def _v161_pull_remote():
+    payload,sha,msg,reachable=_v161_remote_get()
+    if payload is None:
+        return 0,0,msg
+    added,skipped,err=_v161_apply_remote_payload(payload)
+    if err:
+        return added,skipped,err
+    # Yerelde uzak dosyada olmayan mevcut kayıtlar varsa onları da kaybetmeden
+    # birleşik sürümü tekrar uzağa yaz.
+    ok,sync_msg=_v161_sync_remote()
+    if not ok and sync_msg:
+        return added,skipped,'Uzak arşiv okundu; ancak birleşik arşiv tekrar yazılamadı: '+sync_msg
+    return added,skipped,''
+
+
+def _v161_bootstrap_remote_once():
+    if st.session_state.get('_v161_remote_bootstrap_done'):
+        return
+    st.session_state['_v161_remote_bootstrap_done']=True
+    cfg=_v161_remote_cfg()
+    if not cfg['ok']:
+        return
+    payload,sha,msg,reachable=_v161_remote_get()
+    if payload is None:
+        st.session_state['_v161_remote_bootstrap_note']=msg
+        return
+    added,skipped,err=_v161_apply_remote_payload(payload)
+    st.session_state['_v161_remote_bootstrap_note']=(
+        f'Kalıcı arşivden otomatik eşitleme: {added} kayıt yerel önbelleğe alındı, {skipped} kayıt zaten mevcuttu.'
+        if not err else err
+    )
+
+
+# Arşive yeni kayıt taşındığında seçilen tarih hem tarih listesinde tutulur
+# hem de kalıcı uzak arşiv otomatik güncellenir.
+_V161_BASE_ARCHIVE_ADD=_v136_archive_add
+
+def _v136_archive_add(rows):
+    day=_v158_selected_archive_day()
+    _v161_create_day(day)
+    added=_V161_BASE_ARCHIVE_ADD(rows)
+    if added:
+        ok,msg=_v161_sync_remote()
+        st.session_state['_v161_last_sync']=(ok,msg or f'{added} kayıt kalıcı arşive eşitlendi.')
+    return added
+
+
+# Arşivden kayıt çıkarıldığında uzak dosyada da aynı kayıtlar kaldırılır.
+_V161_BASE_ARCHIVE_REMOVE=_v136_archive_remove
+
+def _v136_archive_remove(indices):
+    before=list(_v136_archive_basket() or [])
+    wanted={int(i) for i in (indices or []) if 0 <= int(i) < len(before)}
+    remove_keys={_v161_record_key(before[i]) for i in wanted}
+    removed=_V161_BASE_ARCHIVE_REMOVE(indices)
+    if removed:
+        ok,msg=_v161_sync_remote(remove_keys=remove_keys)
+        st.session_state['_v161_last_sync']=(ok,msg or f'{removed} kayıt kalıcı arşivden de kaldırıldı.')
+    return removed
+
+
+# JSON / adli kurtarma yoluyla kayıt eklenirse kalıcı uzak arşive de yaz.
+def _v159_restore_archive_payload(raw_bytes):
+    added,skipped,err=_V161_BASE_RESTORE_ARCHIVE(raw_bytes)
+    try:
+        payload=json.loads(raw_bytes.decode('utf-8-sig'))
+        if isinstance(payload,dict):
+            for d in payload.get('archive_days',[]) or []:
+                _v161_create_day(d)
+            for r in payload.get('records',[]) or []:
+                if isinstance(r,dict):
+                    _v161_create_day(r.get(V146_ARCHIVE_DAY_FIELD,'') or r.get('_Arşiv_Günü','') or r.get('Tarih',''))
+    except Exception:
+        pass
+    if not err and (added or skipped):
+        ok,msg=_v161_sync_remote()
+        st.session_state['_v161_last_sync']=(ok,msg or 'Kurtarılan kayıtlar kalıcı arşive eşitlendi.')
+    return added,skipped,err
+
+
+def _v161_render_persistent_archive_panel():
+    st.markdown('#### 🗃️ Kalıcı Arşiv Dosyam (V161)')
+    st.caption(
+        'Bu bölüm arşivi Streamlit sunucusunun geçici diskinden bağımsızlaştırır. '
+        'İstediğiniz tarih arşivini elle oluşturabilir, tüm arşivi JSON olarak indirebilir ve '
+        'özel GitHub deposundaki tek kalıcı arşiv dosyasıyla otomatik eşitleyebilirsiniz.'
+    )
+
+    note=st.session_state.pop('_v161_remote_bootstrap_note',None)
+    if note: st.info(note)
+    last=st.session_state.pop('_v161_last_sync',None)
+    if last:
+        ok,msg=last
+        (st.success if ok else st.warning)(msg)
+
+    cfg=_v161_remote_cfg()
+    if cfg['ok']:
+        st.success(f"🔒 Kalıcı arşiv bağlantısı hazır: {cfg['repo']} / {cfg['path']}")
+    else:
+        st.warning(
+            'Kalıcı uzak arşiv henüz yapılandırılmamış. Bu durumda kayıtlar yine yerel SQLite\'ta çalışır; '
+            'ancak Streamlit yeniden deploy edilirse kaybolabilir. Kalıcı kullanım için özel GitHub deposu + Streamlit Secrets kurun.'
+        )
+        with st.expander('🔐 Streamlit Secrets ayarı',False):
+            st.code(
+                '[archive]\n'
+                'github_token = "github_pat_..."\n'
+                'github_repo = "KULLANICI/PRIVATE_ARSIV_REPOSU"\n'
+                'github_branch = "main"\n'
+                'github_path = "terorsuz_turkiye_archive.json"',
+                language='toml'
+            )
+            st.caption('GitHub tokenında yalnız ilgili PRIVATE depoya Contents: Read and write yetkisi yeterlidir.')
+
+    c1,c2=st.columns([1,1])
+    with c1:
+        new_day=st.date_input(
+            'Manuel arşiv tarihi oluştur',
+            value=pd.Timestamp.now(tz='Europe/Istanbul').date(),
+            min_value=date(1900,1,1),max_value=date(2100,12,31),
+            key='v161_manual_archive_day'
+        )
+        if st.button('📅 BU TARİH İÇİN ARŞİV OLUŞTUR',use_container_width=True,key='v161_create_day_btn'):
+            day=new_day.strftime('%d.%m.%Y')
+            if _v161_create_day(day):
+                ok,msg=_v161_sync_remote() if cfg['ok'] else (False,'')
+                st.success(f'✅ {day} tarihli arşiv oluşturuldu.')
+                if cfg['ok'] and not ok: st.warning(msg)
+                st.rerun()
+            else:
+                st.error('Arşiv tarihi oluşturulamadı.')
+    with c2:
+        st.download_button(
+            '⬇️ TÜM ARŞİVİ JSON YEDEĞİ OLARAK İNDİR',
+            data=_v161_payload_bytes(),
+            file_name=f'Terorsuz_Turkiye_Tam_Arsiv_{pd.Timestamp.now(tz="Europe/Istanbul").strftime("%Y-%m-%d")}.json',
+            mime='application/json',use_container_width=True,key='v161_full_archive_download'
+        )
+
+    if cfg['ok']:
+        c3,c4=st.columns(2)
+        with c3:
+            if st.button('☁️ MEVCUT ARŞİVİ KALICI DOSYAYA KAYDET',use_container_width=True,key='v161_remote_save_btn'):
+                ok,msg=_v161_sync_remote()
+                if ok: st.success('✅ Mevcut arşiv kalıcı dosyaya kaydedildi.')
+                else: st.error(msg)
+        with c4:
+            if st.button('🔄 KALICI ARŞİVDEN YENİLE',use_container_width=True,key='v161_remote_pull_btn'):
+                added,skipped,err=_v161_pull_remote()
+                if err: st.error(err)
+                else:
+                    st.success(f'✅ Kalıcı arşiv okundu. Yeni eklenen: {added} • zaten mevcut: {skipped}.')
+                    st.rerun()
+
+
+# V146'nın tarih sekmeli arşiv görünümünü, boş olsa bile kullanıcının elle
+# oluşturduğu günleri gösterecek şekilde genişlet. Rapor ve Gephi motoru aynıdır.
+def _v146_render_archive_by_day(description):
+    st.markdown('#### 🗂️ Günlük Rapor Arşivi')
+    st.caption(
+        description + ' Arşiv tarihini siz belirlersiniz. Her tarih sekmesindeki Yönetici Özeti ve Gephi çıktısı '
+        'yalnız o tarihin kayıtlarını kullanır. V161 ile oluşturduğunuz boş tarih sekmeleri de korunur.'
+    )
+
+    _v161_render_persistent_archive_panel()
+
+    basket=[_v137_fix_record(r) for r in (_v136_archive_basket() or [])]
+    groups={}
+    for rec in basket:
+        day=_v161_day(rec.get(V146_ARCHIVE_DAY_FIELD,'') or rec.get('_Arşiv_Günü','') or rec.get('Tarih','')) or 'Tarihsiz'
+        groups.setdefault(day,[]).append(rec)
+    for day in _v161_local_days():
+        groups.setdefault(day,[])
+
+    if not groups:
+        st.info('Günlük Rapor Arşivi henüz boş. Yukarıdan istediğiniz tarihi oluşturarak başlayabilirsiniz.')
+        return
+
+    days=sorted(groups.keys(),key=_v146_archive_day_sort,reverse=True)
+    tabs=st.tabs([f'📅 {day} ({len(groups[day])})' for day in days])
+
+    for tab,day in zip(tabs,days):
+        with tab:
+            day_records=list(groups[day])
+            if not day_records:
+                st.info(f'{day} tarihli arşiv oluşturuldu; henüz içerik eklenmedi.')
+                continue
+
+            def _day_getter(_day=day):
+                current=[_v137_fix_record(r) for r in (_v136_archive_basket() or [])]
+                return [
+                    r for r in current
+                    if (_v161_day(r.get(V146_ARCHIVE_DAY_FIELD,'') or r.get('_Arşiv_Günü','') or r.get('Tarih','')) or 'Tarihsiz')==_day
+                ]
+
+            def _day_remover(indices,_day=day):
+                subset=list(_day_getter(_day))
+                wanted={int(i) for i in indices if 0 <= int(i) < len(subset)}
+                keys={_v161_record_key(subset[i]) for i in wanted}
+                current=list(_v136_archive_basket() or [])
+                global_indices=[i for i,r in enumerate(current) if _v161_record_key(r) in keys]
+                return _v136_archive_remove(global_indices)
+
+            safe=re.sub(r'[^0-9A-Za-z]+','_',day).strip('_') or 'tarihsiz'
+            _v146_base_render_basket(
+                f'📅 {day} — {len(day_records)} içerik',
+                'Bu günlük arşiv sekmesindeki işlemler yalnız bu tarihin içeriklerine uygulanır.',
+                _day_getter,_day_remover,V136_ARCHIVE_TABLE,
+                'v136_archive_analysis_basket',f'v161_archive_{safe}',f'Gunluk_Arsiv_{safe}'
+            )
+
+
+# Uygulama her yeni Streamlit çalışma ortamında yalnız bir kez kalıcı arşivi
+# okumaya çalışır. Uzak dosya yoksa hiçbir yerel kayıt silinmez/değişmez.
+_v161_bootstrap_remote_once()
+
+# ============================================================
+# /V161 KALICI / MANUEL ARŞİV DOSYASI
+# ============================================================
+
 rows=st.session_state.rows
 
 if rows is None:
