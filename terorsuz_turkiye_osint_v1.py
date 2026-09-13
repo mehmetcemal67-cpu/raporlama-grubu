@@ -40511,6 +40511,564 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
 # /V158 SADECE SERBEST ARŞİV TARİHİ
 # ============================================================
 
+# ============================================================
+# V159 — ESKİ ARŞİV KURTARMA / JSON İÇE AKTARIMI
+#
+# KARARLI TABAN: V158 (değiştirilmez).
+# Yalnız kaybolan/eski Günlük Rapor Arşivi kayıtlarını güvenli biçimde
+# geri yüklemek için JSON içe aktarım paneli eklenir.
+# - Mevcut tarama / kaynak / Gephi / rapor / manuel link mantığına dokunulmaz.
+# - İçe aktarılan kaydın _Arşiv_Günü alanı korunur; V158 hedef tarihiyle ezilmez.
+# - Mevcut dedup anahtarı kullanılır; zaten var olan kayıtlar yeniden eklenmez.
+# ============================================================
+
+_V159_BASE_RENDER_BASKET=_v136_render_basket
+
+
+def _v159_restore_archive_payload(raw_bytes):
+    try:
+        payload=json.loads(raw_bytes.decode('utf-8-sig'))
+    except Exception as e:
+        return 0,0,f'JSON okunamadı: {e}'
+    if isinstance(payload,dict):
+        rows=payload.get('records',[])
+    elif isinstance(payload,list):
+        rows=payload
+    else:
+        return 0,0,'JSON yapısı geçersiz.'
+    if not isinstance(rows,list):
+        return 0,0,'records alanı liste olmalıdır.'
+
+    prepared=[]
+    skipped=0
+    for item in rows:
+        if not isinstance(item,dict):
+            skipped+=1
+            continue
+        rec=dict(item)
+        day=str(rec.get(V146_ARCHIVE_DAY_FIELD,'') or rec.get('_Arşiv_Günü','') or '').strip()
+        if not day:
+            # Kurtarma paketlerinde tarih yoksa kayıt tarihini son çare olarak kullan.
+            raw_day=str(rec.get('Tarih','') or '').strip()
+            try:
+                ts=pd.to_datetime(raw_day,dayfirst=True,errors='coerce')
+                day=ts.strftime('%d.%m.%Y') if pd.notna(ts) else ''
+            except Exception:
+                day=''
+        if not day:
+            skipped+=1
+            continue
+        rec[V146_ARCHIVE_DAY_FIELD]=day
+        try:
+            rec=_v154_enrich_record(rec)
+        except Exception:
+            pass
+        if not str(rec.get('Başlık','') or '').strip():
+            rec['Başlık']=str(rec.get('İçerik_Özeti','') or rec.get('URL','') or 'Kurtarılan kayıt')[:240]
+        if not str(rec.get('URL','') or '').strip() and str(rec.get('Gerçek Bağlantı','') or '').strip():
+            rec['URL']=str(rec.get('Gerçek Bağlantı','')).strip()
+        prepared.append(rec)
+
+    if not prepared:
+        return 0,skipped,'İçe aktarılabilecek kayıt bulunamadı.'
+
+    # Kurtarma sırasında aynı URL eski arşivde zaten varsa, başlığı farklı olsa bile çoğaltma.
+    try:
+        existing_urls={str(r.get('URL','') or '').strip().lower().rstrip('/') for r in (_v136_archive_basket() or []) if str(r.get('URL','') or '').strip()}
+        unique=[]
+        for rec in prepared:
+            u=str(rec.get('URL','') or '').strip().lower().rstrip('/')
+            if u and u in existing_urls:
+                skipped+=1
+                continue
+            if u: existing_urls.add(u)
+            unique.append(rec)
+        prepared=unique
+    except Exception:
+        pass
+
+    if not prepared:
+        return 0,skipped,''
+
+    # V158 _v136_archive_add hedef tarihi yeniden damgalar; kurtarmada bunu kullanmıyoruz.
+    added=_v136_add_to_table(
+        prepared,
+        V136_ARCHIVE_TABLE,
+        'v136_archive_analysis_basket',
+        _v136_archive_basket
+    )
+    # DB'den yeniden okumayı zorla; arşiv günleri anında görünür.
+    st.session_state.pop('_v146_archive_days_upgraded',None)
+    return int(added),int(skipped),''
+
+
+def _v159_render_recovery_panel():
+    with st.expander('🛟 Eski Arşivi Geri Yükle',expanded=False):
+        st.caption(
+            'Daha önce dışa alınmış/kurtarılmış JSON arşiv paketini buradan içe aktarabilirsiniz. '
+            'Kayıtların tarihleri korunur; mevcut kayıtlar silinmez ve aynı içerik ikinci kez eklenmez.'
+        )
+        up=st.file_uploader(
+            'Arşiv kurtarma JSON dosyası',
+            type=['json'],
+            key='v159_archive_recovery_upload'
+        )
+        if up is not None:
+            try:
+                data=up.getvalue()
+                obj=json.loads(data.decode('utf-8-sig'))
+                preview=obj.get('records',[]) if isinstance(obj,dict) else obj
+                if isinstance(preview,list):
+                    days={}
+                    for r in preview:
+                        if isinstance(r,dict):
+                            d=str(r.get(V146_ARCHIVE_DAY_FIELD,'') or r.get('_Arşiv_Günü','') or r.get('Tarih','') or 'Tarihsiz').strip()
+                            days[d]=days.get(d,0)+1
+                    st.info('Kurtarma paketi: **%d kayıt** • %s' % (
+                        len(preview),
+                        ' • '.join(f'{d}: {n}' for d,n in sorted(days.items()))
+                    ))
+            except Exception:
+                st.warning('Dosya önizlemesi okunamadı; içe aktarmadan önce JSON yapısını kontrol edin.')
+
+            confirm=st.checkbox(
+                'Bu kurtarma paketindeki kayıtları Günlük Rapor Arşivine eklemeyi onaylıyorum.',
+                key='v159_archive_restore_confirm'
+            )
+            if st.button(
+                '♻️ ARŞİVİ GERİ YÜKLE',
+                use_container_width=True,
+                disabled=not confirm,
+                key='v159_archive_restore_btn'
+            ):
+                added,skipped,err=_v159_restore_archive_payload(data)
+                if err:
+                    st.error(err)
+                else:
+                    st.success(f'✅ {added} eski arşiv kaydı geri yüklendi. Atlanan: {skipped}.')
+                    st.rerun()
+
+
+def _v136_render_basket(title, description, getter, remover, table_name, session_key, key_prefix, file_prefix):
+    if table_name==V136_ARCHIVE_TABLE:
+        _v159_render_recovery_panel()
+    return _V159_BASE_RENDER_BASKET(
+        title,description,getter,remover,table_name,session_key,key_prefix,file_prefix
+    )
+
+# ============================================================
+# /V159 ESKİ ARŞİV KURTARMA / JSON İÇE AKTARIMI
+# ============================================================
+
+
+# ============================================================
+# V160 — YEREL SQLITE / WAL ADLİ KURTARMA TARAMASI
+#
+# KARARLI TABAN: V158. V159 JSON kurtarma paneli korunur.
+# Yalnız kaybolan arşiv kayıtlarının eski SQLite/WAL kalıntılarından
+# kurtarılabilmesi için ek bir adli tarama paneli eklenir.
+# - Tarama yalnız uygulamanın kendi klasöründeki DB/WAL/SQLite/Bak dosyalarıyla
+#   ve kullanıcının isteğe bağlı yüklediği dosyayla sınırlıdır.
+# - Tarama / kaynak / Gephi / raporlama / manuel link motorlarına dokunulmaz.
+# - Bulunan kayıtlar otomatik yazılmaz; kullanıcı açıkça onaylarsa arşive eklenir.
+# ============================================================
+
+import tempfile as _v160_tempfile
+import zipfile as _v160_zipfile
+import xml.etree.ElementTree as _v160_ET
+
+_V160_BASE_RENDER_BASKET=_v136_render_basket
+
+
+def _v160_archive_like_record(rec):
+    if not isinstance(rec,dict):
+        return False
+    has_content=bool(
+        str(rec.get('URL','') or rec.get('Gerçek Bağlantı','') or '').strip()
+        or str(rec.get('Başlık','') or '').strip()
+    )
+    has_day=bool(
+        str(rec.get(V146_ARCHIVE_DAY_FIELD,'') or rec.get('_Arşiv_Günü','') or rec.get('Tarih','') or '').strip()
+    )
+    return has_content and has_day
+
+
+def _v160_json_from_blob(data, source_name='ham veri'):
+    """SQLite/WAL içindeki düz UTF-8 JSON kayıtlarını salt-okunur biçimde ara."""
+    if not data:
+        return []
+    try:
+        # Çok büyük/yanlış dosyalarda UI'ı kilitlememek için 80 MB üst sınır.
+        if len(data) > 80 * 1024 * 1024:
+            data=data[:80 * 1024 * 1024]
+    except Exception:
+        pass
+    txt=data.decode('utf-8',errors='ignore')
+    markers=['"_Arşiv_Günü"','"_Arşiv_Gunu"','"Gerçek Bağlantı"','"İçerik_Özeti"']
+    positions=set()
+    for marker in markers:
+        start=0
+        while True:
+            pos=txt.find(marker,start)
+            if pos < 0:
+                break
+            positions.add(pos)
+            start=pos+len(marker)
+            if len(positions) > 20000:
+                break
+    decoder=json.JSONDecoder()
+    found=[]
+    seen=set()
+    for pos in sorted(positions):
+        # Kaydın başlangıç süslü parantezini yakın çevreden bul.
+        left=max(0,pos-50000)
+        chunk=txt[left:pos+100000]
+        rel=pos-left
+        starts=[m.start() for m in re.finditer(r'\{',chunk[:rel])]
+        for st_pos in reversed(starts[-80:]):
+            try:
+                obj,end=decoder.raw_decode(chunk[st_pos:])
+            except Exception:
+                continue
+            if not _v160_archive_like_record(obj):
+                continue
+            u=str(obj.get('URL','') or obj.get('Gerçek Bağlantı','') or '').strip()
+            title=str(obj.get('Başlık','') or '').strip()
+            day=str(obj.get(V146_ARCHIVE_DAY_FIELD,'') or obj.get('_Arşiv_Günü','') or obj.get('Tarih','') or '').strip()
+            sig=(u.lower().rstrip('/'),title[:180],day)
+            if sig in seen:
+                break
+            seen.add(sig)
+            rec=dict(obj)
+            rec['_Kurtarma_Kaynağı']=str(rec.get('_Kurtarma_Kaynağı','') or f'Adli ham tarama: {source_name}')
+            rec['_Kurtarma_Güveni']=str(rec.get('_Kurtarma_Güveni','') or 'Adli aday')
+            found.append(rec)
+            break
+    return found
+
+
+def _v160_sqlite_rows(path_obj):
+    out=[]
+    diagnostics=[]
+    try:
+        p=Path(path_obj)
+        uri='file:'+str(p.resolve()).replace('\\','/')+'?mode=ro'
+        conn=sqlite3.connect(uri,uri=True,timeout=3)
+        try:
+            tables=[r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+            for table in tables:
+                if table not in {
+                    'analysis_basket_v3','analysis_basket_daily_v136',
+                    'analysis_basket','analysis_basket_v2'
+                }:
+                    continue
+                try:
+                    cols=[r[1] for r in conn.execute(f'PRAGMA table_info({table})').fetchall()]
+                    if 'record_json' not in cols:
+                        continue
+                    vals=conn.execute(f'SELECT record_json FROM {table}').fetchall()
+                    n=0
+                    for (raw_json,) in vals:
+                        try:
+                            rec=json.loads(raw_json)
+                        except Exception:
+                            continue
+                        if _v160_archive_like_record(rec):
+                            rec=dict(rec)
+                            rec['_Kurtarma_Kaynağı']=str(rec.get('_Kurtarma_Kaynağı','') or f'SQLite tablo: {p.name}/{table}')
+                            rec['_Kurtarma_Güveni']=str(rec.get('_Kurtarma_Güveni','') or 'Yüksek')
+                            out.append(rec); n+=1
+                    diagnostics.append(f'{p.name} / {table}: {n} okunabilir kayıt')
+                except Exception as e:
+                    diagnostics.append(f'{p.name} / {table}: okunamadı ({type(e).__name__})')
+        finally:
+            conn.close()
+    except Exception as e:
+        diagnostics.append(f'{Path(path_obj).name}: SQLite olarak açılamadı ({type(e).__name__})')
+    return out,diagnostics
+
+
+def _v160_normalize_candidates(rows):
+    unique=[]
+    seen=set()
+    for item in rows or []:
+        if not isinstance(item,dict):
+            continue
+        rec=dict(item)
+        day=str(rec.get(V146_ARCHIVE_DAY_FIELD,'') or rec.get('_Arşiv_Günü','') or '').strip()
+        if not day:
+            raw_day=str(rec.get('Tarih','') or '').strip()
+            try:
+                ts=pd.to_datetime(raw_day,dayfirst=True,errors='coerce')
+                day=ts.strftime('%d.%m.%Y') if pd.notna(ts) else ''
+            except Exception:
+                day=''
+        if not day:
+            continue
+        rec[V146_ARCHIVE_DAY_FIELD]=day
+        if not str(rec.get('URL','') or '').strip() and str(rec.get('Gerçek Bağlantı','') or '').strip():
+            rec['URL']=str(rec.get('Gerçek Bağlantı','')).strip()
+        try:
+            rec=_v154_enrich_record(rec)
+        except Exception:
+            pass
+        u=str(rec.get('URL','') or '').strip().lower().rstrip('/')
+        title=str(rec.get('Başlık','') or '').strip()
+        sig=(day,u,title[:220])
+        if sig in seen:
+            continue
+        seen.add(sig)
+        unique.append(rec)
+    return unique
+
+
+def _v160_scan_current_app_dir():
+    root=Path(__file__).resolve().parent
+    names=set()
+    patterns=[
+        'terorsuz_turkiye_osint_history.db',
+        'terorsuz_turkiye_osint_history.db-wal',
+        'terorsuz_turkiye_osint_history.db-shm',
+        '*.db','*.sqlite','*.sqlite3','*.db-wal','*.wal','*.bak'
+    ]
+    for pat in patterns:
+        try:
+            for p in root.glob(pat):
+                if p.is_file():
+                    names.add(p)
+        except Exception:
+            pass
+
+    all_rows=[]
+    diag=[f'Taranan klasör: {root}',f'Aday dosya sayısı: {len(names)}']
+    for p in sorted(names,key=lambda x:x.name.lower()):
+        try:
+            size=p.stat().st_size
+        except Exception:
+            size=0
+        diag.append(f'{p.name}: {size:,} bayt')
+        # Gerçek SQLite tablosu varsa önce yapısal olarak oku.
+        if p.suffix.lower() in {'.db','.sqlite','.sqlite3'}:
+            rr,dd=_v160_sqlite_rows(p)
+            all_rows.extend(rr); diag.extend(dd)
+        # DB ve WAL dosyalarının ham sayfalarında silinmiş JSON kalıntılarını ara.
+        if size and size <= 80*1024*1024:
+            try:
+                blob=p.read_bytes()
+                rr=_v160_json_from_blob(blob,p.name)
+                if rr:
+                    diag.append(f'{p.name}: ham sayfalardan {len(rr)} aday kayıt')
+                    all_rows.extend(rr)
+            except Exception as e:
+                diag.append(f'{p.name}: ham tarama başarısız ({type(e).__name__})')
+    rows=_v160_normalize_candidates(all_rows)
+    return rows,diag
+
+
+def _v160_docx_rows(name,data):
+    """Uygulamanın eski Son Durum/Analiz raporundaki Word dipnot URL'lerini kurtar."""
+    out=[]
+    diag=[]
+    try:
+        z=_v160_zipfile.ZipFile(BytesIO(data))
+        if 'word/document.xml' not in z.namelist():
+            return [],['DOCX içinde document.xml bulunamadı.']
+        doc=_v160_ET.fromstring(z.read('word/document.xml'))
+        foot=None
+        if 'word/footnotes.xml' in z.namelist():
+            foot=_v160_ET.fromstring(z.read('word/footnotes.xml'))
+        ns={'w':'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+        foot_urls={}
+        if foot is not None:
+            for fn in foot.findall('.//w:footnote',ns):
+                fid=fn.attrib.get('{%s}id'%ns['w'])
+                txt=''.join((t.text or '') for t in fn.findall('.//w:t',ns))
+                foot_urls[fid]=re.findall(r'https?://[^\s<>\]\)]+',txt)
+
+        paras=[]
+        inferred_day=''
+        for par in doc.findall('.//w:body//w:p',ns):
+            txt=''.join((t.text or '') for t in par.findall('.//w:t',ns)).strip()
+            if not inferred_day:
+                m=re.search(r'\b(\d{1,2}[./-]\d{1,2}[./-]20\d{2})\b',txt)
+                if m:
+                    try:
+                        ts=pd.to_datetime(m.group(1),dayfirst=True,errors='coerce')
+                        if pd.notna(ts): inferred_day=ts.strftime('%d.%m.%Y')
+                    except Exception:
+                        pass
+            refs=[
+                x.attrib.get('{%s}id'%ns['w'])
+                for x in par.findall('.//w:footnoteReference',ns)
+            ]
+            urls=[]
+            for fid in refs:
+                urls.extend(foot_urls.get(fid,[]))
+            if txt and urls:
+                paras.append((txt,urls))
+
+        for txt,urls in paras:
+            for u in urls:
+                u=str(u).rstrip('.,;')
+                rec={
+                    V146_ARCHIVE_DAY_FIELD: inferred_day,
+                    'Tarih': inferred_day,
+                    'Başlık': txt[:240],
+                    'İçerik_Özeti': txt,
+                    'URL':u,
+                    'Gerçek Bağlantı':u,
+                    '_Kurtarma_Güveni':'Yüksek',
+                    '_Kurtarma_Temeli':'Yüklenen eski Word raporunun dipnotundan doğrudan kurtarıldı',
+                    '_Kurtarma_Kaynağı':f'Word raporu: {name}'
+                }
+                out.append(rec)
+        diag.append(f'Word raporu: {len(out)} dipnot bağlantısı bulundu; tarih: {inferred_day or "tespit edilemedi"}')
+    except Exception as e:
+        diag.append(f'Word raporu okunamadı ({type(e).__name__})')
+    return _v160_normalize_candidates(out),diag
+
+
+def _v160_scan_uploaded_bytes(name,data):
+    all_rows=[]
+    diag=[f'Yüklenen dosya: {name} ({len(data):,} bayt)']
+    lower=str(name or '').lower()
+
+    if lower.endswith('.docx'):
+        rr,dd=_v160_docx_rows(name,data)
+        all_rows.extend(rr); diag.extend(dd)
+        return _v160_normalize_candidates(all_rows),diag
+
+    # DB/WAL/backup formatlarında ham JSON kalıntılarını dene.
+    raw=_v160_json_from_blob(data,name)
+    all_rows.extend(raw)
+    if raw:
+        diag.append(f'Ham tarama: {len(raw)} aday kayıt')
+
+    if lower.endswith(('.db','.sqlite','.sqlite3')):
+        tmp=None
+        try:
+            with _v160_tempfile.NamedTemporaryFile(delete=False,suffix='.db') as fh:
+                fh.write(data)
+                tmp=Path(fh.name)
+            rr,dd=_v160_sqlite_rows(tmp)
+            all_rows.extend(rr); diag.extend(dd)
+        except Exception as e:
+            diag.append(f'Yüklenen SQLite yapısal taraması başarısız ({type(e).__name__})')
+        finally:
+            try:
+                if tmp and tmp.exists(): tmp.unlink()
+            except Exception:
+                pass
+    return _v160_normalize_candidates(all_rows),diag
+
+
+def _v160_recovery_json(rows,origin='V160 adli kurtarma'):
+    days={}
+    for r in rows or []:
+        d=str(r.get(V146_ARCHIVE_DAY_FIELD,'') or r.get('_Arşiv_Günü','') or r.get('Tarih','') or 'Tarihsiz')
+        days[d]=days.get(d,0)+1
+    payload={
+        'metadata':{
+            'name':'V160 Adli Arşiv Kurtarma Çıktısı',
+            'origin':origin,
+            'record_count':len(rows or []),
+            'day_counts':days
+        },
+        'records':rows or []
+    }
+    return json.dumps(payload,ensure_ascii=False,indent=2,default=str).encode('utf-8')
+
+
+def _v160_render_forensic_panel():
+    with st.expander('🧬 Eski SQLite / WAL İzlerini Tara (V160)',expanded=False):
+        st.caption(
+            'Bu araç yalnız uygulamanın kendi klasöründeki SQLite/DB/WAL dosyalarını salt-okunur tarar. '
+            'Eski container veya WAL sayfaları hâlâ mevcutsa, silinmiş arşiv kayıtlarının JSON kalıntılarını bulabilir. '
+            'Hiçbir kayıt otomatik olarak arşive yazılmaz.'
+        )
+        c1,c2=st.columns(2)
+        with c1:
+            if st.button('🔎 SUNUCUDA DB/WAL İZLERİNİ TARA',use_container_width=True,key='v160_forensic_local_btn'):
+                rows,diag=_v160_scan_current_app_dir()
+                st.session_state['v160_forensic_rows']=rows
+                st.session_state['v160_forensic_diag']=diag
+        with c2:
+            up=st.file_uploader(
+                'Varsa eski .db / .db-wal / .sqlite veya günlük .docx raporunuzu yükleyin',
+                type=None,
+                key='v160_forensic_upload'
+            )
+            if up is not None and st.button('🔍 YÜKLENEN DOSYAYI TARA',use_container_width=True,key='v160_forensic_upload_btn'):
+                rows,diag=_v160_scan_uploaded_bytes(up.name,up.getvalue())
+                st.session_state['v160_forensic_rows']=rows
+                st.session_state['v160_forensic_diag']=diag
+
+        diag=st.session_state.get('v160_forensic_diag') or []
+        if diag:
+            with st.expander('Tarama ayrıntıları',False):
+                st.code('\n'.join(str(x) for x in diag))
+
+        rows=st.session_state.get('v160_forensic_rows') or []
+        if rows:
+            days={}
+            for r in rows:
+                d=str(r.get(V146_ARCHIVE_DAY_FIELD,'') or r.get('_Arşiv_Günü','') or r.get('Tarih','') or 'Tarihsiz')
+                days[d]=days.get(d,0)+1
+            st.success(
+                '🧬 %d kurtarma adayı bulundu. %s' % (
+                    len(rows),
+                    ' • '.join(f'{d}: {n}' for d,n in sorted(days.items()))
+                )
+            )
+            preview=pd.DataFrame(rows)
+            show=[c for c in ['_Arşiv_Günü','Tarih','Kaynak','Başlık','URL','_Kurtarma_Güveni','_Kurtarma_Kaynağı'] if c in preview.columns]
+            if show:
+                st.dataframe(preview[show].head(200),hide_index=True,use_container_width=True,height=min(500,120+32*min(12,len(preview))))
+
+            payload=_v160_recovery_json(rows)
+            st.download_button(
+                '⬇️ Bulunan kayıtları JSON olarak indir',
+                payload,
+                'V160_Adli_Arsiv_Kurtarma.json',
+                'application/json',
+                use_container_width=True,
+                key='v160_forensic_download'
+            )
+            confirm=st.checkbox(
+                'Bulunan adayları mevcut Günlük Rapor Arşivine eklemeyi onaylıyorum.',
+                key='v160_forensic_restore_confirm'
+            )
+            if st.button(
+                '♻️ BULUNAN KAYITLARI ARŞİVE EKLE',
+                use_container_width=True,
+                disabled=not confirm,
+                key='v160_forensic_restore_btn'
+            ):
+                added,skipped,err=_v159_restore_archive_payload(payload)
+                if err:
+                    st.error(err)
+                else:
+                    st.success(f'✅ {added} kayıt arşive eklendi. Atlanan: {skipped}.')
+                    st.rerun()
+        elif diag:
+            st.info(
+                'Bu çalışma ortamında okunabilir eski arşiv izi bulunamadı. '
+                'Bu sonuç eski Streamlit containerının artık mevcut olmadığını gösterebilir; '
+                'varsa eski .db/.db-wal dosyası veya 10–11 Eylül günlük Word raporu yukarıdan ayrıca taranabilir.'
+            )
+
+
+def _v136_render_basket(title, description, getter, remover, table_name, session_key, key_prefix, file_prefix):
+    if table_name==V136_ARCHIVE_TABLE:
+        _v160_render_forensic_panel()
+    return _V160_BASE_RENDER_BASKET(
+        title,description,getter,remover,table_name,session_key,key_prefix,file_prefix
+    )
+
+# ============================================================
+# /V160 YEREL SQLITE / WAL ADLİ KURTARMA TARAMASI
+# ============================================================
+
 rows=st.session_state.rows
 
 if rows is None:
