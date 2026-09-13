@@ -41538,6 +41538,29 @@ _v161_bootstrap_remote_once()
 # /V161 KALICI / MANUEL ARŞİV DOSYASI
 # ============================================================
 
+# ============================================================
+# V162 — ESKİ KURTARMA PANELLERİNİ ÜRETİM EKRANINDAN KALDIR
+#
+# TABAN: V161. Yalnız artık ihtiyaç kalmayan iki kurtarma paneli
+# (V159 JSON geri yükleme ve V160 SQLite/WAL adli tarama) normal
+# Günlük Rapor Arşivi ekranından kaldırılır. Kurtarma yardımcı
+# fonksiyonları dosyada pasif olarak korunur; tarama, kaynak, Gephi,
+# rapor, manuel link, serbest arşiv tarihi ve V161 kalıcı GitHub
+# arşiv senkronizasyonu aynen korunur.
+# ============================================================
+
+def _v136_render_basket(title, description, getter, remover, table_name, session_key, key_prefix, file_prefix):
+    # V159/V160'ın yalnız kurtarma amaçlı UI sarmalayıcılarını atla.
+    # V158 renderer'ı; serbest hedef tarih seçimini, V146/V161 günlük
+    # arşiv görünümünü ve V161 kalıcı arşiv panelini aynen taşır.
+    return _V159_BASE_RENDER_BASKET(
+        title,description,getter,remover,table_name,session_key,key_prefix,file_prefix
+    )
+
+# ============================================================
+# /V162
+# ============================================================
+
 rows=st.session_state.rows
 
 if rows is None:
