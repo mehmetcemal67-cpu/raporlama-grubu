@@ -10234,9 +10234,11 @@ def _v166_leaflet_html(points):
 html,body,#map{height:100%;margin:0;background:#07111f;font-family:Arial,sans-serif}#map{border-radius:14px;overflow:hidden}
 .leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#0b1526;color:#f8fafc}.leaflet-popup-content{margin:12px 14px;line-height:1.35;min-width:250px;max-width:360px}
 .v166-title{font-weight:700;font-size:14px;margin-bottom:6px}.v166-meta{font-size:12px;color:#cbd5e1;margin:2px 0}.v166-link{display:inline-block;margin-top:8px;padding:6px 9px;border-radius:7px;background:#2563eb;color:white!important;text-decoration:none;font-weight:700}.leaflet-control-attribution{font-size:9px!important}
+
+.leaflet-tile-pane{filter:grayscale(1) invert(1) brightness(.58) contrast(1.12) hue-rotate(180deg);}
 </style></head><body><div id="map"></div><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
 const points=__POINTS__; const colors=__COLORS__; const map=L.map('map',{zoomControl:true,worldCopyJump:true}).setView([39,35],4);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors',crossOrigin:true}).addTo(map);
 const bounds=[]; function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));}
 for(const p of points){const color=colors[p.category]||'#38bdf8'; const marker=L.circleMarker([p.lat,p.lon],{radius:8,color:'#e2e8f0',weight:1.4,fillColor:color,fillOpacity:.9}).addTo(map);
 const link=(p.url&&/^https?:\/\//i.test(p.url))?`<a class="v166-link" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">Haberi aç ↗</a>`:'';
@@ -10263,6 +10265,11 @@ def _v166_render_interactive_map(df_base):
 # ============================================================
 # /V166
 # ============================================================
+
+# V167 — Harita zemin sağlayıcısı CARTO API anahtarı gerektirdiği için
+# API anahtarı istemeyen OpenStreetMap katmanına geçirildi. Koyu görünüm
+# yalnız CSS filtresiyle uygulanır; nokta/popup/link etkileşimi değişmez.
+
 
 # -----------------------------
 # UI
