@@ -10199,13 +10199,13 @@ for _loc in _V164_LOCATION_DB:
 _V164_LOCATION_PATTERNS.sort(key=lambda x: x[0], reverse=True)
 
 def _v164_apply_global_theme():
-    _bg = f"data:image/jpeg;base64,{_V164_BG_IMAGE_B64}"
-    st.markdown(f"""
+    _bg = "data:image/jpeg;base64," + _V164_BG_IMAGE_B64
+    _css = """
     <style>
     .stApp {
         background-image:
             linear-gradient(rgba(2,6,18,0.80), rgba(2,6,18,0.90)),
-            url('{_bg}');
+            url('__V164_BG__');
         background-size: cover;
         background-position: center top;
         background-attachment: fixed;
@@ -10235,7 +10235,7 @@ def _v164_apply_global_theme():
         overflow: hidden;
         border-radius: 14px;
         border: 1px solid rgba(255,255,255,0.10);
-        background-image: linear-gradient(rgba(4,8,18,0.10), rgba(4,8,18,0.20)), url('{_bg}');
+        background-image: linear-gradient(rgba(4,8,18,0.10), rgba(4,8,18,0.20)), url('__V164_BG__');
         background-size: cover;
         background-position: center center;
     }
@@ -10265,7 +10265,8 @@ def _v164_apply_global_theme():
         white-space: nowrap;
     }
     </style>
-    """, unsafe_allow_html=True)
+    """.replace('__V164_BG__', _bg)
+    st.markdown(_css, unsafe_allow_html=True)
 
 
 def _v164_pick_row_value(row, keys):
@@ -42855,3 +42856,11 @@ Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bi
     )
 
 # V128 warning: analysis-note UI anchor not found
+
+
+# ============================================================
+# V165 — V164 CSS F-STRING RUNTIME HATASI DÜZELTMESİ
+# V163 kararlı taban korunur. V164 özellikleri aynıdır; yalnız global tema CSS'i
+# f-string içindeki CSS süslü parantezlerinin Python ifadesi gibi değerlendirilmesi
+# nedeniyle oluşan çalışma zamanı hatası giderilmiştir.
+# ============================================================
