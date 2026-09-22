@@ -10231,16 +10231,17 @@ def _v166_leaflet_html(points):
     payload=json.dumps(points,ensure_ascii=False).replace('</','<\/'); colors=json.dumps(_V166_CATEGORY_COLORS,ensure_ascii=False)
     template=r'''<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/><style>
-html,body,#map{height:100%;margin:0;background:#07111f;font-family:Arial,sans-serif}#map{border-radius:14px;overflow:hidden}
+html,body,#map{height:100%;margin:0;background:#dbe7f3;font-family:Arial,sans-serif}#map{border-radius:14px;overflow:hidden;border:1px solid rgba(255,255,255,0.10)}
+.leaflet-container{background:#dbe7f3}
 .leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#0b1526;color:#f8fafc}.leaflet-popup-content{margin:12px 14px;line-height:1.35;min-width:250px;max-width:360px}
-.v166-title{font-weight:700;font-size:14px;margin-bottom:6px}.v166-meta{font-size:12px;color:#cbd5e1;margin:2px 0}.v166-link{display:inline-block;margin-top:8px;padding:6px 9px;border-radius:7px;background:#2563eb;color:white!important;text-decoration:none;font-weight:700}.leaflet-control-attribution{font-size:9px!important}
-
-.leaflet-tile-pane{filter:grayscale(1) invert(1) brightness(.58) contrast(1.12) hue-rotate(180deg);}
-</style></head><body><div id="map"></div><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
+.v166-title{font-weight:700;font-size:14px;margin-bottom:6px}.v166-meta{font-size:12px;color:#cbd5e1;margin:2px 0}.v166-link{display:inline-block;margin-top:8px;padding:6px 9px;border-radius:7px;background:#2563eb;color:white!important;text-decoration:none;font-weight:700}.leaflet-control-attribution{font-size:9px!important;background:rgba(255,255,255,0.72)!important}.leaflet-control-zoom a{background:#fff!important;color:#0f172a!important}
+.v166-legend{position:absolute;right:12px;bottom:12px;z-index:9999;background:rgba(255,255,255,0.88);border:1px solid rgba(15,23,42,.12);border-radius:10px;padding:8px 10px;box-shadow:0 8px 24px rgba(15,23,42,.12);font-size:11px;color:#0f172a;max-width:230px}
+.v166-legend-title{font-weight:700;margin-bottom:6px}.v166-legend-row{display:flex;align-items:center;gap:6px;margin:3px 0}.v166-legend-dot{width:10px;height:10px;border-radius:999px;border:1px solid rgba(15,23,42,.18);display:inline-block}
+</style></head><body><div id="map"></div><div class="v166-legend"><div class="v166-legend-title">Harita Notu</div><div>Kara alanları açık, deniz alanları daha koyu/mavi tonda gösterilir.</div><div style="margin-top:6px">Noktaya tıklayarak ayrıntı ve bağlantıyı açabilirsiniz.</div></div><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
 const points=__POINTS__; const colors=__COLORS__; const map=L.map('map',{zoomControl:true,worldCopyJump:true}).setView([39,35],4);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors',crossOrigin:true}).addTo(map);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{subdomains:'abcd',maxZoom:20,attribution:'&copy; OpenStreetMap contributors &copy; CARTO',crossOrigin:true}).addTo(map);
 const bounds=[]; function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));}
-for(const p of points){const color=colors[p.category]||'#38bdf8'; const marker=L.circleMarker([p.lat,p.lon],{radius:8,color:'#e2e8f0',weight:1.4,fillColor:color,fillOpacity:.9}).addTo(map);
+for(const p of points){const color=colors[p.category]||'#38bdf8'; const marker=L.circleMarker([p.lat,p.lon],{radius:9,color:'#ffffff',weight:2,fillColor:color,fillOpacity:.96}).addTo(map);
 const link=(p.url&&/^https?:\/\//i.test(p.url))?`<a class="v166-link" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">Haberi aç ↗</a>`:'';
 const summary=p.summary?`<div class="v166-meta" style="margin-top:6px">${esc(p.summary)}</div>`:'';
 marker.bindPopup(`<div class="v166-title">${esc(p.title)}</div><div class="v166-meta"><b>Konum:</b> ${esc(p.location)}</div><div class="v166-meta"><b>Kaynak:</b> ${esc(p.source||'-')}</div><div class="v166-meta"><b>Kategori:</b> ${esc(p.category||'-')}</div><div class="v166-meta"><b>Tarih:</b> ${esc(p.date||'-')}</div>${summary}${link}`); bounds.push([p.lat,p.lon]);}
@@ -10266,9 +10267,9 @@ def _v166_render_interactive_map(df_base):
 # /V166
 # ============================================================
 
-# V167 — Harita zemin sağlayıcısı CARTO API anahtarı gerektirdiği için
-# API anahtarı istemeyen OpenStreetMap katmanına geçirildi. Koyu görünüm
-# yalnız CSS filtresiyle uygulanır; nokta/popup/link etkileşimi değişmez.
+# V168 — Harita görünürlüğü iyileştirildi.
+# Açık zeminli, daha anlaşılır bir basemap kullanılır; kara/deniz ayrımı belirginleştirilir.
+# Nokta, popup ve bağlantı mantığı korunur.
 
 
 # -----------------------------
