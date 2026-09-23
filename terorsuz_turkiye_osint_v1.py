@@ -10246,7 +10246,7 @@ html,body{height:100%;margin:0;background:#050b16;font-family:Arial,sans-serif;c
 .point-ring{fill:none;stroke:#e8f1fb;stroke-width:2.2;vector-effect:non-scaling-stroke}
 .point-core{stroke:#08111f;stroke-width:.7;vector-effect:non-scaling-stroke}
 .count-bg{fill:#e8eef7;stroke:#27364a;stroke-width:.7;vector-effect:non-scaling-stroke}
-.count-text{fill:#08111f;font-size:10px;font-weight:800;text-anchor:middle;dominant-baseline:middle;pointer-events:none}
+.count-text{fill:#08111f;font-size:9px;font-weight:800;text-anchor:middle;dominant-baseline:middle;pointer-events:none}
 .controls{position:absolute;left:12px;top:12px;z-index:8;display:flex;flex-direction:column;gap:5px}
 .controls button{width:36px;height:36px;border:1px solid #456483;background:#0b1b2f;color:#eef6ff;border-radius:7px;font-size:20px;line-height:1;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.22)}
 .controls button:hover{background:#163653}
@@ -10266,7 +10266,7 @@ html,body{height:100%;margin:0;background:#050b16;font-family:Arial,sans-serif;c
 </style></head><body><div id="wrap">
 <svg id="map" viewBox="0 0 1200 600" role="img" aria-label="Etkileşimli dünya olay haritası"><rect x="0" y="0" width="1200" height="600" fill="#06101d"></rect><g id="countries"></g><g id="points"></g></svg>
 <div class="controls"><button id="zin" type="button" title="Yakınlaştır">+</button><button id="zout" type="button" title="Uzaklaştır">−</button><button id="reset" type="button" title="Olaylara sığdır">⌂</button></div>
-<div class="status">Gerçek ülke sınırları · çevrimdışı vektör harita · noktalar tıklanabilir</div>
+<div class="status">Gerçek ülke sınırları · çevrimdışı vektör harita · yakınlaştırdıkça noktalar ayrışır</div>
 <div id="tip" class="tip"></div>
 <div id="panel" class="panel"><div class="panel-head"><div id="ptitle" class="panel-title"></div><div id="psub" class="panel-sub"></div><button id="close" class="close" type="button" aria-label="Kapat">×</button></div><div id="items" class="items"></div></div>
 </div><script>
@@ -10283,14 +10283,24 @@ const groups=new Map();
 for(const p of points){const key=`${Number(p.lat).toFixed(4)}|${Number(p.lon).toFixed(4)}|${p.location||''}`;if(!groups.has(key))groups.set(key,{lat:Number(p.lat),lon:Number(p.lon),location:p.location||'Konum',items:[]});groups.get(key).items.push(p);}
 function showGroup(g){panel.classList.add('open');ptitle.textContent=`${g.location} · ${g.items.length} kayıt`;psub.textContent=`Bu konumdaki ${g.items.length} kaydın tamamı listeleniyor.`;items.innerHTML='';g.items.forEach((p,i)=>{const div=document.createElement('div');div.className='item';const link=(p.url&&/^https?:\/\//i.test(p.url))?`<a class="link" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">Haberi aç ↗</a>`:'';const sm=p.summary?`<div class="meta summary">${esc(p.summary)}</div>`:'';div.innerHTML=`<div class="item-title"><span class="idx">${i+1}</span>${esc(p.title||'Başlık yok')}</div><div class="meta"><b>Kaynak:</b> ${esc(p.source||'-')}</div><div class="meta"><b>Kategori:</b> ${esc(p.category||'-')}</div><div class="meta"><b>Tarih:</b> ${esc(p.date||'-')}</div>${sm}${link}`;items.appendChild(div);});items.scrollTop=0;}
 const projected=[];
-for(const g of groups.values()){const [x,y]=proj([g.lon,g.lat]);projected.push([x,y]);const color=colors[(g.items[0]||{}).category]||'#38bdf8';const group=document.createElementNS(NS,'g');group.setAttribute('class','point');group.setAttribute('transform',`translate(${x} ${y})`);group.setAttribute('tabindex','0');group.setAttribute('role','button');group.setAttribute('aria-label',`${g.location} ${g.items.length} kayıt`);
- const ring=document.createElementNS(NS,'circle');ring.setAttribute('r','9');ring.setAttribute('class','point-ring');group.appendChild(ring);const core=document.createElementNS(NS,'circle');core.setAttribute('r','7.2');core.setAttribute('class','point-core');core.setAttribute('fill',color);group.appendChild(core);
- if(g.items.length>1){const bg=document.createElementNS(NS,'rect');bg.setAttribute('x','8');bg.setAttribute('y','-16');bg.setAttribute('rx','7');bg.setAttribute('ry','7');const t=String(g.items.length);bg.setAttribute('width',String(Math.max(18,10+t.length*7)));bg.setAttribute('height','17');bg.setAttribute('class','count-bg');group.appendChild(bg);const tx=document.createElementNS(NS,'text');tx.setAttribute('x',String(8+Math.max(18,10+t.length*7)/2));tx.setAttribute('y','-7.5');tx.setAttribute('class','count-text');tx.textContent=t;group.appendChild(tx);}
+for(const g of groups.values()){const [x,y]=proj([g.lon,g.lat]);projected.push([x,y]);const color=colors[(g.items[0]||{}).category]||'#38bdf8';const group=document.createElementNS(NS,'g');group.setAttribute('class','point');group.dataset.x=String(x);group.dataset.y=String(y);group.setAttribute('transform',`translate(${x} ${y})`);group.setAttribute('tabindex','0');group.setAttribute('role','button');group.setAttribute('aria-label',`${g.location} ${g.items.length} kayıt`);
+ const hit=document.createElementNS(NS,'circle');hit.setAttribute('r','12');hit.setAttribute('fill','transparent');group.appendChild(hit);const ring=document.createElementNS(NS,'circle');ring.setAttribute('r','7.8');ring.setAttribute('class','point-ring');group.appendChild(ring);const core=document.createElementNS(NS,'circle');core.setAttribute('r','6');core.setAttribute('class','point-core');core.setAttribute('fill',color);group.appendChild(core);
+ if(g.items.length>1){const bg=document.createElementNS(NS,'rect');bg.setAttribute('x','7');bg.setAttribute('y','-14');bg.setAttribute('rx','6');bg.setAttribute('ry','6');const t=String(g.items.length);const bw=Math.max(17,9+t.length*6.2);bg.setAttribute('width',String(bw));bg.setAttribute('height','15');bg.setAttribute('class','count-bg');group.appendChild(bg);const tx=document.createElementNS(NS,'text');tx.setAttribute('x',String(7+bw/2));tx.setAttribute('y','-6.5');tx.setAttribute('class','count-text');tx.textContent=t;group.appendChild(tx);}
  group.addEventListener('click',e=>{e.stopPropagation();showGroup(g);});group.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();showGroup(g);}});group.addEventListener('pointermove',e=>{tip.textContent=`${g.location} · ${g.items.length}`;tip.style.display='block';tip.style.left=(e.offsetX+13)+'px';tip.style.top=(e.offsetY+12)+'px';});group.addEventListener('pointerleave',()=>{tip.style.display='none';});pointsG.appendChild(group);}
 document.getElementById('close').addEventListener('click',()=>panel.classList.remove('open'));
 let view={x:0,y:0,w:W,h:H}; let home={...view};
 function clampView(v){v.w=Math.max(70,Math.min(W*1.08,v.w));v.h=v.w*(H/W);if(v.h>H*1.08){v.h=H*1.08;v.w=v.h*(W/H);}v.x=Math.max(-W*.04,Math.min(W-v.w+W*.04,v.x));v.y=Math.max(-H*.04,Math.min(H-v.h+H*.04,v.y));return v;}
-function apply(){svg.setAttribute('viewBox',`${view.x} ${view.y} ${view.w} ${view.h}`);}
+function apply(){
+ svg.setAttribute('viewBox',`${view.x} ${view.y} ${view.w} ${view.h}`);
+ // V172: SVG viewBox zoomu haritayı büyütürken olay balonlarını büyütmesin.
+ // Balonları ters ölçekleyerek ekranda yaklaşık sabit piksel boyutunda tutuyoruz.
+ // Böylece yakınlaştırıldıkça coğrafi noktalar birbirinden gerçekten ayrışır.
+ const inv=view.w/W;
+ for(const el of pointsG.querySelectorAll('.point')){
+   const x=Number(el.dataset.x||0), y=Number(el.dataset.y||0);
+   el.setAttribute('transform',`translate(${x} ${y}) scale(${inv})`);
+ }
+}
 function fitPoints(){if(!projected.length){view={x:0,y:0,w:W,h:H};home={...view};apply();return;}let xs=projected.map(p=>p[0]),ys=projected.map(p=>p[1]);let minx=Math.min(...xs),maxx=Math.max(...xs),miny=Math.min(...ys),maxy=Math.max(...ys);let spanx=Math.max(maxx-minx,170),spany=Math.max(maxy-miny,85);spanx*=1.45;spany*=1.65;let vw=Math.max(spanx,spany*(W/H));let vh=vw*(H/W);let cx=(minx+maxx)/2,cy=(miny+maxy)/2;view=clampView({x:cx-vw/2,y:cy-vh/2,w:vw,h:vh});home={...view};apply();}
 function zoomAt(factor,cx,cy){const rect=svg.getBoundingClientRect();const sx=view.x+(cx-rect.left)/rect.width*view.w;const sy=view.y+(cy-rect.top)/rect.height*view.h;const nw=view.w*factor,nh=view.h*factor;view=clampView({x:sx-(sx-view.x)*factor,y:sy-(sy-view.y)*factor,w:nw,h:nh});apply();}
 svg.addEventListener('wheel',e=>{e.preventDefault();zoomAt(e.deltaY>0?1.16:.86,e.clientX,e.clientY);},{passive:false});
@@ -10322,6 +10332,15 @@ def _v166_render_interactive_map(df_base):
 # Harita gerçek Natural Earth ülke sınırlarını kod içinde gömülü vektör GeoJSON olarak çizer.
 # Böylece API anahtarı / tile sağlayıcısı yoktur; kara-deniz ayrımı nettir ve etkileşim korunur.
 
+
+# ============================================================
+# V172 — HARİTA YAKINLAŞTIRMA / NOKTA AYRIŞMASI
+# - V171 tabanı korunur.
+# - Olay balonları SVG viewBox ile birlikte büyütülmez; ekranda sabit boyutta kalır.
+# - Yakınlaştırıldıkça coğrafi mesafe ekranda büyür ve yakın noktalar birbirinden ayrışır.
+# - Sayı etiketleri küçültülür; tıklama alanı korunur.
+# - Haber paneli, tüm kayıtlar ve bağlantılar değişmez.
+# ============================================================
 
 # ============================================================
 # V171 — HARİTA BOŞ EKRAN / CDN BAĞIMLILIĞI DÜZELTMESİ
