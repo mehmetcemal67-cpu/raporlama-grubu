@@ -629,7 +629,7 @@ def _official_radar_rows(df):
 st.set_page_config(page_title='Terörsüz Türkiye OSINT Radarı', page_icon='🛡️', layout='wide')
 _v166_apply_background()
 # V153 görünür sürüm teyidi: yanlış dosya çalıştırılıyorsa kullanıcı hemen fark eder.
-st.sidebar.success('✅ AKTİF SÜRÜM: V175 — Ayrı Akademik Mod + Rapor Çekirdeği')
+st.sidebar.success('✅ AKTİF SÜRÜM: V176 — Geniş Akademik Tarama + Rapor Çekirdeği')
 
 # ============================================================
 # V55 — ŞİFRE KORUMASI
@@ -10361,36 +10361,44 @@ def _v166_render_interactive_map(df_base):
 # ============================================================
 
 # ============================================================
-# V175 — TAMAMEN AYRI AKADEMİK VERİ TOPLAMA MODU
+# V176 — TAMAMEN AYRI AKADEMİK VERİ TOPLAMA MODU
 # ============================================================
-# Akademik mod seçildiğinde bu bölüm çalışır ve st.stop() ile raporlama UI'sına geçilmez.
-# Sabit 24 saat; yayın tarihi zorunlu; yalnız dört medya ailesi; duygu/ideoloji filtresi yok.
+# Raporlama çekirdeğine dokunmaz. Akademik mod seçildiğinde yalnız bu ekran
+# çalışır ve st.stop() ile raporlama UI'sına geçilmez.
+# Amaç: dört medya ailesinden Terörsüz Türkiye süreciyle gerçekten ilişkili
+# haberleri taraf/tutum ayrımı yapmadan toplamak ve Kaynak ↔ Çerçeve ağı üretmek.
 
-V175_ACADEMIC_PROTOCOL='V175-A1'
-V175_HOURS=24
-V175_FAMILIES=('Yerli Basın','Kürt Bölgesel Medyası','PKK/KCK Açık Kaynak','Yabancı Basın')
+V176_ACADEMIC_PROTOCOL='V176-A1'
+V176_FAMILIES=('Yerli Basın','Kürt Bölgesel Medyası','PKK/KCK Açık Kaynak','Yabancı Basın')
+V176_PERIODS={
+    '📅 Son 24 saat':24,
+    '📆 Son 48 saat':48,
+    '📆 Son 1 hafta':168,
+    '🗓️ Son 1 ay':720,
+}
 
-V175_KURDISH_DOMAINS=[
+V176_KURDISH_DOMAINS=[
     'rudaw.net','kurdistan24.net','shafaq.com','basnews.com','thenewregion.com',
     'peyamakurd.com','kurdpress.com','kurdpress.net','waarmedia.com','welattv.com','welattv.net',
     'botantimes.com','en.botantimes.com','diyarname.com','theamargi.com','theamargi.org',
     'ilketv.com.tr','guneydoguekspres.com'
 ]
-V175_MOVEMENT_DOMAINS=[
+V176_MOVEMENT_DOMAINS=[
     'anf-news.com','anfenglish.com','anfturkce.com','medyanews.net','hawarnews.com',
     'medyahabertv.digital','medyahabertv.com','sterktv.org','rojnews.news','rojnews.video',
     'mezopotamyaajansi.com','mezopotamyaajansi.org','mezopotamyaajansi35.com',
     'jinnews.net','jinnews.org','yeniyasamgazetesi9.com','nuceciwan101.com',
     'numedya24.com','numedya24.tv','ronahi.tv','ajansawelat1.com','azadiyawelat1.com',
-    'gerilla.tv','gerillatv.net'
+    'gerilla.tv','gerillatv.net','ciratv.com','ozgurpolitika.com','politikahaber.com'
 ]
-V175_TURKISH_DOMAINS=list(dict.fromkeys(list(TT_TR_MAIN)))
-V175_FOREIGN_DOMAINS=list(dict.fromkeys([
+V176_TURKISH_DOMAINS=list(dict.fromkeys(list(TT_TR_MAIN)))
+V176_FOREIGN_DOMAINS=list(dict.fromkeys([
     d for d in (list(TT_GLOBAL_MAIN)+list(TT_MENA))
-    if d not in set(V175_KURDISH_DOMAINS)
+    if d not in set(V176_KURDISH_DOMAINS)
 ]))
 
-V175_FRAME_TERMS={
+# Akademik üst çerçeveler: tek habere tek baskın çerçeve.
+V176_FRAME_TERMS={
     'Silahsızlanma / Güvenlik':['silahsızlanma','silah bırakma','silah birakma','fesih','tasfiye','disarmament','dissolution','disbandment','reintegration','terörle mücadele','terrorism','security','operasyon','operation','saldırı','attack','çatışma','clash','ateşkes','ceasefire','hpg','yja star'],
     'Öcalan / Siyasi Süreç':['öcalan','ocalan','imralı','imrali','dem parti','mhp','ak parti','bahçeli','bahceli','erdoğan','erdogan','siyasi süreç','siyasi surec','diyalog','heyet','görüşme','gorusme','çağrı','cagri','mesaj','political process','delegation','talks'],
     'Hukuk / Meclis':['tbmm','meclis','komisyon','yasa','kanun','mevzuat','hukuki','hukuk','infaz','af','umut hakkı','umut hakki','legal framework','law','legislation','parliament','amnesty','pardon','rights','haklar','anayasa','constitution'],
@@ -10399,44 +10407,81 @@ V175_FRAME_TERMS={
     'Toplumsal Tepki / Kamuoyu':['kamuoyu','toplum','şehit aile','sehit aile','gazi','mağdur','magdur','kamu vicdanı','kamu vicdani','tepki','protesto','eylem','aile','victim','veteran','public opinion','public reaction','society','protest','demonstration'],
 }
 
-# Pozitif konu kapısı: belirli bir alakasızlık türünü değil, doğrudan süreç ilişkisini test eder.
-V175_EXACT_PROCESS=['terörsüz türkiye','terorsuz turkiye','terror-free turkey','terror-free türkiye','turkey pkk peace process','türkiye pkk peace process','pkk peace process','kurdish peace process','barış süreci','baris sureci','çözüm süreci','cozum sureci','barış ve demokratik toplum','baris ve demokratik toplum','pkk disarmament','pkk dissolution','pkk disbandment']
-V175_ACTOR_CORE=['pkk','pkk/kck','kck','öcalan','ocalan','abdullah öcalan','abdullah ocalan','imralı','imrali']
-V175_TRANSITION_CORE=['silahsızlanma','silahsizlanma','silah bırakma','silah birakma','fesih','tasfiye','disarmament','dissolution','disbandment','weapons surrender','ateşkes','ateskes','ceasefire','entegrasyon','integration','reintegration','çağrı','cagri','appeal','call','milli dayanışma','milli dayanişma','komisyon','meclis komisyonu','legal framework','hukuki güvence','hukuki guvence','umut hakkı','umut hakki','dem heyeti','imralı heyeti','imrali heyeti']
-V175_POLITICAL_CONTEXT=['dem parti','mhp','bahçeli','bahceli','ak parti','erdoğan','erdogan','tbmm','meclis','komisyon']
-V175_REGIONAL_CONTEXT=['sdg','sdf','ypg','pyd','mazlum abdi','mazloum abdi','suriye','syria','şam','damascus','ırak','irak','iraq','ikby','krg','kandil','qandil','erbil','barzani','kdp']
-V175_COMMENTARY_TERMS=['köşe yazısı','kose yazisi','opinion','columnist','editorial','viewpoint','yazarlar','yazar:','yorum:','commentary','analysis:','analiz:']
+# İlgililik kapısı: belirli bir "alakasız konu" kara listesi kullanmaz.
+# Bunun yerine haberin süreçle doğrudan bağ kurmasını arar. Tutum/duygu/ideoloji yoktur.
+V176_PROCESS_PHRASES=[
+    'terörsüz türkiye','terorsuz turkiye','terörsüz bölge','terorsuz bolge',
+    'terror-free turkey','terror-free türkiye','terror free turkey','terror free türkiye',
+    'turkey pkk peace process','türkiye pkk peace process','pkk peace process',
+    'kurdish peace process','barış süreci','baris sureci','çözüm süreci','cozum sureci',
+    'barış ve demokratik toplum','baris ve demokratik toplum',
+    'pkk disarmament','pkk dissolution','pkk disbandment',
+    'milli dayanışma kardeşlik demokrasi komisyonu','milli dayanişma kardeşlik demokrasi komisyonu'
+]
+V176_ACTOR_CORE=['pkk','pkk/kck','kck','öcalan','ocalan','abdullah öcalan','abdullah ocalan','imralı','imrali']
+V176_PROCESS_ACTIONS=[
+    'silahsızlanma','silahsizlanma','silah bırakma','silah birakma','silah teslim','silahların teslimi',
+    'fesih','tasfiye','disarmament','dissolution','disbandment','weapons surrender',
+    'ateşkes','ateskes','ceasefire','entegrasyon','integration','reintegration',
+    'çağrı','cagri','appeal','call','mesaj','görüşme','gorusme','meeting','talks','delegation','heyet',
+    'komisyon','meclis komisyonu','legal framework','hukuki güvence','hukuki guvence',
+    'umut hakkı','umut hakki','dem heyeti','imralı heyeti','imrali heyeti','uygulama','takvim'
+]
+V176_POLITICAL_CONTEXT=['dem parti','mhp','bahçeli','bahceli','ak parti','erdoğan','erdogan','tbmm','meclis','komisyon','chp','deva parti']
+V176_REGIONAL_CONTEXT=['sdg','sdf','ypg','pyd','mazlum abdi','mazloum abdi','suriye','syria','şam','damascus','ırak','irak','iraq','ikby','krg','kandil','qandil','erbil','barzani','kdp','rojava']
+V176_LEGAL_SOCIAL_CONTEXT=['yasa','kanun','hukuk','hukuki','infaz','af','amnesty','parliament','legislation','anayasa','constitution','kamuoyu','şehit aile','sehit aile','gazi','mağdur','magdur','kamu vicdanı','kamu vicdani','toplumsal barış','toplumsal baris','demokratik çözüm','demokratik cozum','haklar','rights']
+V176_SECURITY_CONTEXT=['terörle mücadele','operasyon','operation','saldırı','attack','çatışma','clash','güvenlik','security','hpg','yja star']
+V176_TURKEY_CONTEXT=['türkiye','turkiye','turkey','ankara','türk','turk']
+V176_GENERIC_PROCESS=['süreç','surec','process','barış','baris','peace','diyalog','dialogue','çözüm','cozum','solution']
+V176_COMMENTARY_TERMS=['köşe yazısı','kose yazisi','opinion','columnist','editorial','viewpoint','yazarlar','yazar:','yorum:','commentary','analysis:','analiz:']
 
 
-def _v175_has(text,term):
+def _v176_has(text,term):
     t=norm(text); n=norm(term)
     if not n: return False
     if ' ' in n or len(n)>=5: return n in t
     return re.search(r'(?<![a-z0-9çğıöşü])'+re.escape(n)+r'(?![a-z0-9çğıöşü])',t) is not None
 
 
-def _v175_any(text,terms): return any(_v175_has(text,x) for x in terms)
+def _v176_any(text,terms): return any(_v176_has(text,x) for x in terms)
 
 
-def _v175_relevant(title,summary):
-    """Yalnız konu ilişkisine bakar; olumlu/olumsuz tutum veya ideoloji kullanmaz."""
+def _v176_relevant(title,summary):
+    """Yüksek yakalama, düşük alakasızlık: süreçle semantik bağ arar; tutuma bakmaz."""
     text=f'{title} {summary}'
-    if _v175_any(text,V175_EXACT_PROCESS): return True
-    actor=_v175_any(text,V175_ACTOR_CORE)
-    transition=_v175_any(text,V175_TRANSITION_CORE)
-    political=_v175_any(text,V175_POLITICAL_CONTEXT)
-    regional=_v175_any(text,V175_REGIONAL_CONTEXT)
-    if actor and transition: return True
-    if actor and political and transition: return True
-    if regional and actor and transition: return True
+    # Sürecin doğrudan adı/yerleşik karşılığı geçiyorsa doğrudan kabul.
+    if _v176_any(text,V176_PROCESS_PHRASES):
+        return True
+
+    actor=_v176_any(text,V176_ACTOR_CORE)
+    action=_v176_any(text,V176_PROCESS_ACTIONS)
+    political=_v176_any(text,V176_POLITICAL_CONTEXT)
+    regional=_v176_any(text,V176_REGIONAL_CONTEXT)
+    legal_social=_v176_any(text,V176_LEGAL_SOCIAL_CONTEXT)
+    security=_v176_any(text,V176_SECURITY_CONTEXT)
+    turkey=_v176_any(text,V176_TURKEY_CONTEXT)
+    generic_process=_v176_any(text,V176_GENERIC_PROCESS)
+
+    # PKK/KCK/Öcalan/İmralı haberleri: süreçle bağlantıyı gösteren ikinci bir bağlam yeterli.
+    if actor and (action or political or legal_social or generic_process):
+        return True
+    # Güvenlik/operasyon hattı da süreç tartışmasının parçası olabilir; aktör bağlantısı zorunlu.
+    if actor and security:
+        return True
+    # Suriye/SDG-YPG/Irak-Kandil boyutu: Türkiye + süreç/aktör/politik bağ olmalı.
+    if regional and turkey and (actor or action or political or generic_process):
+        return True
+    # Bölgesel haberde PKK/Öcalan + Türkiye ifadesi varsa süreç bağlamını kaçırmamak için kabul.
+    if regional and actor and turkey:
+        return True
     return False
 
 
-def _v175_is_commentary(title,summary,url=''):
-    return _v175_any(f'{title} {summary} {url}',V175_COMMENTARY_TERMS)
+def _v176_is_commentary(title,summary,url=''):
+    return _v176_any(f'{title} {summary} {url}',V176_COMMENTARY_TERMS)
 
 
-def _v175_parse_date(value):
+def _v176_parse_date(value):
     if value is None or str(value).strip()=='': return None
     try:
         d=parsedate_to_datetime(str(value))
@@ -10450,7 +10495,7 @@ def _v175_parse_date(value):
     except Exception: return None
 
 
-def _v175_domain_from_item(item):
+def _v176_domain_from_item(item):
     for v in [item.get('source_url'),item.get('url')]:
         try:
             d=domain(v)
@@ -10461,12 +10506,12 @@ def _v175_domain_from_item(item):
     return ''
 
 
-def _v175_domain_in(d,domains):
+def _v176_domain_in(d,domains):
     d=str(d or '').lower().replace('www.','')
     return any(d==x or d.endswith('.'+x) for x in domains)
 
 
-def _v175_google(query,hl='tr',gl='TR',ceid='TR:tr'):
+def _v176_google(query,hl='tr',gl='TR',ceid='TR:tr'):
     try:
         rr=requests.get('https://news.google.com/rss/search',params={'q':query,'hl':hl,'gl':gl,'ceid':ceid},headers=HEADERS,timeout=8)
         rr.raise_for_status(); root=ET.fromstring(rr.content); out=[]
@@ -10477,7 +10522,7 @@ def _v175_google(query,hl='tr',gl='TR',ceid='TR:tr'):
     except Exception: return []
 
 
-def _v175_bing(query,mkt='tr-TR'):
+def _v176_bing(query,mkt='tr-TR'):
     try:
         rr=requests.get('https://www.bing.com/news/search',params={'q':query,'format':'rss','mkt':mkt},headers=HEADERS,timeout=8)
         rr.raise_for_status(); root=ET.fromstring(rr.content); out=[]
@@ -10488,39 +10533,74 @@ def _v175_bing(query,mkt='tr-TR'):
     except Exception: return []
 
 
-def _v175_chunks(seq,n=6):
+def _v176_ddgs(query,hours=24):
+    try:
+        out=_v9_ddgs_raw(query,55,hours) or []
+        for r in out:
+            r['engine']='DDGS'
+        return out
+    except Exception:
+        return []
+
+
+def _v176_chunks(seq,n=7):
     seq=list(dict.fromkeys(seq)); return [seq[i:i+n] for i in range(0,len(seq),n)]
 
 
-def _v175_queries_for_domains(domains):
-    queries=[]
-    for group in _v175_chunks(domains,6):
+def _v176_when(hours):
+    h=int(hours or 24)
+    if h<=24: return '1d'
+    if h<=48: return '2d'
+    if h<=168: return '7d'
+    return '30d'
+
+
+def _v176_queries_for_domains(domains,hours):
+    when=_v176_when(hours); queries=[]
+    for group in _v176_chunks(domains,7):
         sites='('+' OR '.join('site:'+d for d in group)+')'
-        queries.extend([
-            f'(PKK OR KCK OR Öcalan OR Ocalan OR İmralı OR Imrali OR "Terörsüz Türkiye" OR "terror-free Turkey") (silahsızlanma OR "silah bırakma" OR disarmament OR fesih OR dissolution OR "barış süreci" OR "peace process" OR komisyon OR "legal framework" OR entegrasyon OR integration) {sites} when:1d',
-            f'(SDG OR SDF OR YPG OR "Mazlum Abdi" OR Kandil OR Qandil OR "DEM Parti" OR MHP OR TBMM) (PKK OR Öcalan OR Ocalan OR "Terörsüz Türkiye" OR disarmament OR silahsızlanma OR "peace process" OR fesih) {sites} when:1d'
-        ])
+        # 1) Doğrudan süreç adları ve yerleşik süreç ifadeleri.
+        queries.append(
+            f'("Terörsüz Türkiye" OR "terörsüz bölge" OR "barış süreci" OR "çözüm süreci" OR '
+            f'"Turkey PKK peace process" OR "PKK peace process" OR "PKK disarmament" OR '
+            f'"PKK dissolution" OR "Kurdish peace process") {sites} when:{when}'
+        )
+        # 2) Çekirdek aktörler geniş tutulur; asıl ilgililik daha sonra içerik filtresinde yapılır.
+        queries.append(
+            f'(PKK OR KCK OR Öcalan OR Ocalan OR İmralı OR Imrali) '
+            f'(süreç OR process OR barış OR peace OR silahsızlanma OR disarmament OR fesih OR dissolution OR '
+            f'DEM OR MHP OR TBMM OR komisyon OR yasa OR hukuk OR Suriye OR Syria OR SDG OR SDF OR YPG OR '
+            f'Kandil OR Qandil OR Irak OR Iraq OR "umut hakkı" OR görüşme OR talks OR çağrı OR call OR güvenlik OR security) '
+            f'{sites} when:{when}'
+        )
+        # 3) Suriye/bölgesel ve siyasi yan kollar; PKK/Öcalan adı başlıkta geçmese de süreç bağlantılı içerikleri yakalar.
+        queries.append(
+            f'(SDG OR SDF OR YPG OR PYD OR "Mazlum Abdi" OR Kandil OR Qandil OR "DEM Parti" OR MHP OR TBMM) '
+            f'("Terörsüz Türkiye" OR Türkiye OR Turkey OR PKK OR Öcalan OR Ocalan OR silahsızlanma OR disarmament OR '
+            f'fesih OR dissolution OR entegrasyon OR integration OR "peace process" OR "barış süreci") '
+            f'{sites} when:{when}'
+        )
     return list(dict.fromkeys(queries))
 
 
-def _v175_query_sets():
+def _v176_query_sets(hours):
     return {
-        'Yerli Basın':(V175_TURKISH_DOMAINS,_v175_queries_for_domains(V175_TURKISH_DOMAINS),'tr','TR','TR:tr','tr-TR'),
-        'Yabancı Basın':(V175_FOREIGN_DOMAINS,_v175_queries_for_domains(V175_FOREIGN_DOMAINS),'en-US','US','US:en','en-US'),
-        'Kürt Bölgesel Medyası':(V175_KURDISH_DOMAINS,_v175_queries_for_domains(V175_KURDISH_DOMAINS),'tr','TR','TR:tr','tr-TR'),
-        'PKK/KCK Açık Kaynak':(V175_MOVEMENT_DOMAINS,_v175_queries_for_domains(V175_MOVEMENT_DOMAINS),'tr','TR','TR:tr','tr-TR'),
+        'Yerli Basın':(V176_TURKISH_DOMAINS,_v176_queries_for_domains(V176_TURKISH_DOMAINS,hours),'tr','TR','TR:tr','tr-TR'),
+        'Yabancı Basın':(V176_FOREIGN_DOMAINS,_v176_queries_for_domains(V176_FOREIGN_DOMAINS,hours),'en-US','US','US:en','en-US'),
+        'Kürt Bölgesel Medyası':(V176_KURDISH_DOMAINS,_v176_queries_for_domains(V176_KURDISH_DOMAINS,hours),'tr','TR','TR:tr','tr-TR'),
+        'PKK/KCK Açık Kaynak':(V176_MOVEMENT_DOMAINS,_v176_queries_for_domains(V176_MOVEMENT_DOMAINS,hours),'tr','TR','TR:tr','tr-TR'),
     }
 
 
-def _v175_protocol_hash():
-    qs=_v175_query_sets()
-    payload={'v':V175_ACADEMIC_PROTOCOL,'hours':24,'families':V175_FAMILIES,'sources':{k:v[0] for k,v in qs.items()},'queries':{k:v[1] for k,v in qs.items()},'frames':V175_FRAME_TERMS,'relevance':{'exact':V175_EXACT_PROCESS,'actor':V175_ACTOR_CORE,'transition':V175_TRANSITION_CORE,'political':V175_POLITICAL_CONTEXT,'regional':V175_REGIONAL_CONTEXT}}
+def _v176_protocol_hash(hours=24):
+    qs=_v176_query_sets(hours)
+    payload={'v':V176_ACADEMIC_PROTOCOL,'hours':int(hours),'families':V176_FAMILIES,'sources':{k:v[0] for k,v in qs.items()},'queries':{k:v[1] for k,v in qs.items()},'frames':V176_FRAME_TERMS,'relevance':{'phrases':V176_PROCESS_PHRASES,'actors':V176_ACTOR_CORE,'actions':V176_PROCESS_ACTIONS,'political':V176_POLITICAL_CONTEXT,'regional':V176_REGIONAL_CONTEXT,'legal_social':V176_LEGAL_SOCIAL_CONTEXT,'security':V176_SECURITY_CONTEXT}}
     return hashlib.sha1(json.dumps(payload,ensure_ascii=False,sort_keys=True).encode('utf-8','ignore')).hexdigest()[:16]
 
 
-def _v175_frame(title,summary):
+def _v176_frame(title,summary):
     title_n=norm(title); body=norm(f'{title} {summary}'); scores=[]
-    for order,(label,terms) in enumerate(V175_FRAME_TERMS.items()):
+    for order,(label,terms) in enumerate(V176_FRAME_TERMS.items()):
         sc=0
         for term in terms:
             n=norm(term)
@@ -10531,56 +10611,79 @@ def _v175_frame(title,summary):
     return 'Genel Süreç'
 
 
-def _v175_tables():
+def _v176_tables():
     if not _init_history_db(): return False
     try:
         with _history_connect() as conn:
-            conn.execute("""CREATE TABLE IF NOT EXISTS academic_items_v175(
+            conn.execute("""CREATE TABLE IF NOT EXISTS academic_items_v176(
                 id INTEGER PRIMARY KEY AUTOINCREMENT, content_key TEXT UNIQUE NOT NULL,
                 first_collected_at TEXT NOT NULL, last_collected_at TEXT NOT NULL,
                 published_at TEXT NOT NULL, source_family TEXT NOT NULL, source TEXT, domain TEXT,
                 title TEXT NOT NULL, summary TEXT, url TEXT, academic_frame TEXT NOT NULL,
                 engine TEXT, protocol_version TEXT, protocol_hash TEXT)""")
-            conn.execute("""CREATE TABLE IF NOT EXISTS academic_scans_v175(
+            conn.execute("""CREATE TABLE IF NOT EXISTS academic_scans_v176(
                 id INTEGER PRIMARY KEY AUTOINCREMENT, scanned_at TEXT NOT NULL, period_hours INTEGER,
                 protocol_version TEXT, protocol_hash TEXT, total_items INTEGER, local_items INTEGER,
                 foreign_items INTEGER, kurdish_items INTEGER, movement_items INTEGER,
                 rejected_old INTEGER, rejected_nodate INTEGER, rejected_irrelevant INTEGER,
                 rejected_commentary INTEGER, rejected_source INTEGER)""")
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v175_pub ON academic_items_v175(published_at)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v175_family ON academic_items_v175(source_family)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v175_frame ON academic_items_v175(academic_frame)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v176_pub ON academic_items_v176(published_at)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v176_family ON academic_items_v176(source_family)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v176_frame ON academic_items_v176(academic_frame)')
             conn.commit()
         return True
     except Exception: return False
 
 
-def _v175_scan():
-    now=datetime.now(timezone.utc); cutoff=now-timedelta(hours=24); raw=[]; diagnostics=[]; jobs=[]
-    for fam,(domains,queries,hl,gl,ceid,mkt) in _v175_query_sets().items():
+def _v176_scan(hours=24):
+    hours=int(hours or 24); now=datetime.now(timezone.utc); cutoff=now-timedelta(hours=hours); raw=[]; diagnostics=[]; jobs=[]
+    for fam,(domains,queries,hl,gl,ceid,mkt) in _v176_query_sets(hours).items():
         for q in queries:
-            jobs.append((fam,domains,q,'google',hl,gl,ceid,mkt)); jobs.append((fam,domains,q,'bing',hl,gl,ceid,mkt))
+            jobs.append((fam,domains,q,'google',hl,gl,ceid,mkt))
+            jobs.append((fam,domains,q,'bing',hl,gl,ceid,mkt))
+            jobs.append((fam,domains,q,'ddgs',hl,gl,ceid,mkt))
     def one(job):
         fam,domains,q,engine,hl,gl,ceid,mkt=job
-        rows=_v175_google(q,hl,gl,ceid) if engine=='google' else _v175_bing(q,mkt)
+        if engine=='google': rows=_v176_google(q,hl,gl,ceid)
+        elif engine=='bing': rows=_v176_bing(q,mkt)
+        else: rows=_v176_ddgs(q,hours)
         return fam,domains,engine,rows
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(20,max(1,len(jobs)))) as ex:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(24,max(1,len(jobs)))) as ex:
         for fam,domains,engine,rows in ex.map(one,jobs):
             diagnostics.append((fam,engine,len(rows)))
             for z in rows: z['_family']=fam; z['_allowed_domains']=domains; raw.append(z)
+
+    # Arama motorlarında düzensiz indekslenen Kürt bölgesel ve PKK/KCK açık kaynakları
+    # için panelin mevcut doğrudan kaynak katmanını da kullan. Aynı tarih ve ilgililik
+    # kontrolleri aşağıda bu kayıtlara da aynen uygulanır.
+    try:
+        direct_movement=_v138_direct_movement_sources(hours) or []
+    except Exception:
+        direct_movement=[]
+    for z in direct_movement:
+        z=dict(z); z['engine']='Doğrudan Kaynak'; z['_family']='PKK/KCK Açık Kaynak'; z['_allowed_domains']=V176_MOVEMENT_DOMAINS; raw.append(z)
+    diagnostics.append(('PKK/KCK Açık Kaynak','Doğrudan Kaynak',len(direct_movement)))
+
+    try:
+        direct_kurdish=_v153_direct_kurdish_sources(hours) or []
+    except Exception:
+        direct_kurdish=[]
+    for z in direct_kurdish:
+        z=dict(z); z['engine']='Doğrudan Kaynak'; z['_family']='Kürt Bölgesel Medyası'; z['_allowed_domains']=V176_KURDISH_DOMAINS; raw.append(z)
+    diagnostics.append(('Kürt Bölgesel Medyası','Doğrudan Kaynak',len(direct_kurdish)))
     rejected={'eski':0,'tarihsiz':0,'ilgisiz':0,'yorum':0,'kaynak':0,'tekrar':0}; accepted=[]; seen=set()
     for item in raw:
-        dt=_v175_parse_date(item.get('date'))
+        dt=_v176_parse_date(item.get('date'))
         if dt is None: rejected['tarihsiz']+=1; continue
-        # when:1d sonucuna güvenilmez; gerçek yayın tarihi ayrıca kesin doğrulanır.
+        # Arama motorunun tarih filtresine tek başına güvenilmez; gerçek pubDate seçilen pencereyle doğrulanır.
         if dt < cutoff or dt > now+timedelta(minutes=15): rejected['eski']+=1; continue
         title=re.sub(r'\s+',' ',str(item.get('title') or '')).strip(); summary=re.sub(r'\s+',' ',str(item.get('snippet') or '')).strip()
         if not title: rejected['ilgisiz']+=1; continue
-        if _v175_is_commentary(title,summary,item.get('url','')): rejected['yorum']+=1; continue
-        if not _v175_relevant(title,summary): rejected['ilgisiz']+=1; continue
-        d=_v175_domain_from_item(item)
-        if not d or not _v175_domain_in(d,item.get('_allowed_domains') or []): rejected['kaynak']+=1; continue
-        fam=item['_family']; src=str(item.get('source') or d).strip(); frame=_v175_frame(title,summary)
+        if _v176_is_commentary(title,summary,item.get('url','')): rejected['yorum']+=1; continue
+        if not _v176_relevant(title,summary): rejected['ilgisiz']+=1; continue
+        d=_v176_domain_from_item(item)
+        if not d or not _v176_domain_in(d,item.get('_allowed_domains') or []): rejected['kaynak']+=1; continue
+        fam=item['_family']; src=str(item.get('source') or d).strip(); frame=_v176_frame(title,summary)
         keybase=f'{d}|{title_key(title)}|{dt.strftime("%Y-%m-%d")}'
         ck=hashlib.sha1(keybase.encode('utf-8','ignore')).hexdigest()
         if ck in seen: rejected['tekrar']+=1; continue
@@ -10590,28 +10693,28 @@ def _v175_scan():
     return accepted,rejected,diagnostics
 
 
-def _v175_save(rows,rejected):
-    if not _v175_tables(): return 0,0
-    now=datetime.now(timezone.utc).isoformat(); ph=_v175_protocol_hash(); new_count=0
+def _v176_save(rows,rejected,hours):
+    if not _v176_tables(): return 0,0
+    hours=int(hours or 24); now=datetime.now(timezone.utc).isoformat(); ph=_v176_protocol_hash(hours); new_count=0
     with _history_connect() as conn:
         for r in rows:
-            exists=conn.execute('SELECT 1 FROM academic_items_v175 WHERE content_key=?',(r['content_key'],)).fetchone()
+            exists=conn.execute('SELECT 1 FROM academic_items_v176 WHERE content_key=?',(r['content_key'],)).fetchone()
             if not exists: new_count+=1
-            conn.execute("""INSERT INTO academic_items_v175(content_key,first_collected_at,last_collected_at,published_at,source_family,source,domain,title,summary,url,academic_frame,engine,protocol_version,protocol_hash)
+            conn.execute("""INSERT INTO academic_items_v176(content_key,first_collected_at,last_collected_at,published_at,source_family,source,domain,title,summary,url,academic_frame,engine,protocol_version,protocol_hash)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(content_key) DO UPDATE SET
                 last_collected_at=excluded.last_collected_at,source_family=excluded.source_family,source=excluded.source,domain=excluded.domain,title=excluded.title,summary=excluded.summary,url=excluded.url,academic_frame=excluded.academic_frame,engine=excluded.engine,protocol_version=excluded.protocol_version,protocol_hash=excluded.protocol_hash""",
-                (r['content_key'],now,now,r['Tarih_dt'].isoformat(),r['Kaynak Ailesi'],r['Kaynak'],r['Domain'],r['Başlık'],r['İçerik_Özeti'],r['URL'],r['Akademik Çerçeve'],r['Motor'],V175_ACADEMIC_PROTOCOL,ph))
+                (r['content_key'],now,now,r['Tarih_dt'].isoformat(),r['Kaynak Ailesi'],r['Kaynak'],r['Domain'],r['Başlık'],r['İçerik_Özeti'],r['URL'],r['Akademik Çerçeve'],r['Motor'],V176_ACADEMIC_PROTOCOL,ph))
         fam=pd.Series([r['Kaynak Ailesi'] for r in rows],dtype='object').value_counts().to_dict()
-        conn.execute("""INSERT INTO academic_scans_v175(scanned_at,period_hours,protocol_version,protocol_hash,total_items,local_items,foreign_items,kurdish_items,movement_items,rejected_old,rejected_nodate,rejected_irrelevant,rejected_commentary,rejected_source)
+        conn.execute("""INSERT INTO academic_scans_v176(scanned_at,period_hours,protocol_version,protocol_hash,total_items,local_items,foreign_items,kurdish_items,movement_items,rejected_old,rejected_nodate,rejected_irrelevant,rejected_commentary,rejected_source)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (now,24,V175_ACADEMIC_PROTOCOL,ph,len(rows),int(fam.get('Yerli Basın',0)),int(fam.get('Yabancı Basın',0)),int(fam.get('Kürt Bölgesel Medyası',0)),int(fam.get('PKK/KCK Açık Kaynak',0)),int(rejected.get('eski',0)),int(rejected.get('tarihsiz',0)),int(rejected.get('ilgisiz',0)),int(rejected.get('yorum',0)),int(rejected.get('kaynak',0))))
-        conn.commit(); total=int(conn.execute('SELECT COUNT(*) FROM academic_items_v175').fetchone()[0])
+            (now,hours,V176_ACADEMIC_PROTOCOL,ph,len(rows),int(fam.get('Yerli Basın',0)),int(fam.get('Yabancı Basın',0)),int(fam.get('Kürt Bölgesel Medyası',0)),int(fam.get('PKK/KCK Açık Kaynak',0)),int(rejected.get('eski',0)),int(rejected.get('tarihsiz',0)),int(rejected.get('ilgisiz',0)),int(rejected.get('yorum',0)),int(rejected.get('kaynak',0))))
+        conn.commit(); total=int(conn.execute('SELECT COUNT(*) FROM academic_items_v176').fetchone()[0])
     return new_count,total
 
 
-def _v175_archive(start_date=None,end_date=None):
-    if not _v175_tables(): return pd.DataFrame()
-    sql='SELECT published_at,source_family,source,domain,title,summary,url,academic_frame,engine,protocol_version,protocol_hash FROM academic_items_v175'; clauses=[]; params=[]
+def _v176_archive(start_date=None,end_date=None):
+    if not _v176_tables(): return pd.DataFrame()
+    sql='SELECT published_at,source_family,source,domain,title,summary,url,academic_frame,engine,protocol_version,protocol_hash FROM academic_items_v176'; clauses=[]; params=[]
     if start_date is not None: clauses.append('date(published_at)>=date(?)'); params.append(str(start_date))
     if end_date is not None: clauses.append('date(published_at)<=date(?)'); params.append(str(end_date))
     if clauses: sql+=' WHERE '+' AND '.join(clauses)
@@ -10621,7 +10724,7 @@ def _v175_archive(start_date=None,end_date=None):
     except Exception: return pd.DataFrame()
 
 
-def _v175_gephi(df):
+def _v176_gephi(df):
     if df is None or df.empty: return pd.DataFrame(),pd.DataFrame()
     x=df.copy(); x['source_key']=x['domain'].fillna('').astype(str).str.lower(); x['source_key']=x['source_key'].where(x['source_key'].str.len()>0,x['source'].fillna('').astype(str).str.lower())
     g=x.groupby(['source_key','source','domain','source_family','academic_frame']).size().reset_index(name='RawCount')
@@ -10634,9 +10737,9 @@ def _v175_gephi(df):
     return pd.DataFrame(nodes),edges
 
 
-def _v175_gexf(nodes,edges):
+def _v176_gexf(nodes,edges):
     if nodes is None or edges is None or nodes.empty or edges.empty: return b''
-    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'}); meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')}); ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT — Akademik V175'; ET.SubElement(meta,'description').text='Kaynak-Çerçeve ağı; Weight=RawCount/SourceTotal.'
+    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'}); meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')}); ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT — Akademik V176'; ET.SubElement(meta,'description').text='Kaynak-Çerçeve ağı; Weight=RawCount/SourceTotal.'
     graph=ET.SubElement(root,'graph',{'mode':'static','defaultedgetype':'undirected'}); na=ET.SubElement(graph,'attributes',{'class':'node'}); ET.SubElement(na,'attribute',{'id':'0','title':'NodeType','type':'string'}); ET.SubElement(na,'attribute',{'id':'1','title':'SourceFamily','type':'string'}); ET.SubElement(na,'attribute',{'id':'2','title':'Domain','type':'string'}); ea=ET.SubElement(graph,'attributes',{'class':'edge'}); ET.SubElement(ea,'attribute',{'id':'10','title':'RawCount','type':'integer'}); ET.SubElement(ea,'attribute',{'id':'11','title':'SourceTotal','type':'integer'}); ET.SubElement(ea,'attribute',{'id':'12','title':'NormalizedWeight','type':'double'})
     ng=ET.SubElement(graph,'nodes')
     for _,n in nodes.iterrows():
@@ -10647,47 +10750,58 @@ def _v175_gexf(nodes,edges):
     return ET.tostring(root,encoding='utf-8',xml_declaration=True)
 
 
-def _v175_render_academic_mode():
+def _v176_render_academic_mode():
     st.title('🎓 Akademik Veri Toplama')
     st.caption('Raporlama sisteminden tamamen bağımsız · yalnız Kaynak ↔ Çerçeve Gephi analizi için')
-    st.info('**Korpus:** Yerli Basın + Kürt Bölgesel Medyası + PKK/KCK Açık Kaynak + Yabancı Basın  ·  **Yok:** Sosyal medya, Think Tank, Yazar/Yorum  ·  **Pencere:** kesin 24 saat  ·  **Manuel seçim:** yok  ·  **Duygu/ideoloji filtresi:** yok')
-    st.caption('İlgililik filtresi tutuma bakmaz. Haber yalnız Terörsüz Türkiye süreciyle doğrudan içerik bağı kuruyorsa alınır; tek gevşek anahtar kelime yeterli değildir. Yayın tarihi doğrulanamayan veya son 24 saatin dışında kalan kayıt alınmaz.')
-    a,b,c,d=st.columns(4); a.metric('Kaynak Ailesi','4'); b.metric('Tarama','24 saat'); c.metric('Çerçeve','6 + Genel'); d.metric('Protokol',V175_ACADEMIC_PROTOCOL)
-    st.caption(f'Protokol hash: `{_v175_protocol_hash()}`')
-    if st.button('🔎 AKADEMİK 24 SAAT TARAMASINI BAŞLAT',type='primary',use_container_width=True,key='v175_scan'):
+    st.info('**Korpus:** Yerli Basın + Kürt Bölgesel Medyası + PKK/KCK Açık Kaynak + Yabancı Basın  ·  **Yok:** Sosyal medya, Think Tank, Yazar/Yorum  ·  **Manuel seçim:** yok  ·  **Duygu/ideoloji filtresi:** yok')
+    st.caption('İlgililik filtresi belirli bir konu kara listesine göre değil, haberin Terörsüz Türkiye süreciyle doğrudan bağ kurup kurmadığına göre çalışır. Olumlu, olumsuz, eleştirel veya destekleyici ayrımı yapılmaz. Seçilen zaman penceresinin dışında kalan veya yayın tarihi doğrulanamayan kayıt alınmaz.')
+
+    period_label=st.selectbox('🕒 Akademik tarama dönemi',list(V176_PERIODS.keys()),index=0,key='v176_period')
+    hours=V176_PERIODS[period_label]
+    a,b,c,d=st.columns(4); a.metric('Kaynak Ailesi','4'); b.metric('Tarama',period_label.replace('📅 ','').replace('📆 ','').replace('🗓️ ','')); c.metric('Çerçeve','6 + Genel'); d.metric('Protokol',V176_ACADEMIC_PROTOCOL)
+    st.caption(f'Protokol hash: `{_v176_protocol_hash(hours)}`')
+
+    if st.button(f'🔎 {period_label.upper()} AKADEMİK TARAMASINI BAŞLAT',type='primary',use_container_width=True,key='v176_scan'):
         box=st.status('Akademik tarama çalışıyor...',expanded=True)
         try:
-            rows,rejected,diag=_v175_scan(); new_count,total=_v175_save(rows,rejected); st.session_state['_v175_last_rows']=rows
+            rows,rejected,diag=_v176_scan(hours); new_count,total=_v176_save(rows,rejected,hours)
+            st.session_state['_v176_last_rows']=rows; st.session_state['_v176_last_period']=period_label
             box.write(f'{len(rows)} uygun ve tekil haber bulundu; {new_count} yeni kayıt arşive eklendi.')
-            box.write(f"Dışlanan: {rejected['eski']} zaman dışı/eski · {rejected['tarihsiz']} tarihi doğrulanamayan · {rejected['ilgisiz']} konu dışı · {rejected['yorum']} yazar/yorum · {rejected['kaynak']} kaynak ailesi dışı · {rejected['tekrar']} tekrar")
+            box.write(f"Dışlanan: {rejected['eski']} zaman dışı · {rejected['tarihsiz']} tarihi doğrulanamayan · {rejected['ilgisiz']} süreçle doğrudan ilgisiz · {rejected['yorum']} yazar/yorum · {rejected['kaynak']} kaynak ailesi dışı · {rejected['tekrar']} tekrar")
             box.update(label=f'✅ Tarama tamamlandı — {len(rows)} kayıt / arşiv {total}',state='complete')
-        except Exception as e: box.update(label='Akademik tarama başarısız',state='error'); st.error(str(e))
-    last=st.session_state.get('_v175_last_rows') or []
+        except Exception as e:
+            box.update(label='Akademik tarama başarısız',state='error'); st.error(str(e))
+
+    last=st.session_state.get('_v176_last_rows') or []
     if last:
-        x=pd.DataFrame(last); st.subheader('Son 24 Saat — Akademik Korpus'); fam=x['Kaynak Ailesi'].value_counts(); c1,c2,c3,c4=st.columns(4); c1.metric('Yerli',int(fam.get('Yerli Basın',0))); c2.metric('Kürt Bölgesel',int(fam.get('Kürt Bölgesel Medyası',0))); c3.metric('PKK/KCK',int(fam.get('PKK/KCK Açık Kaynak',0))); c4.metric('Yabancı',int(fam.get('Yabancı Basın',0)))
-        st.dataframe(x[['Tarih','Kaynak Ailesi','Kaynak','Akademik Çerçeve','Başlık','URL']],hide_index=True,use_container_width=True,height=min(560,130+32*min(14,len(x))),column_config={'URL':st.column_config.LinkColumn('Bağlantı',display_text='Aç')})
+        x=pd.DataFrame(last); shown_period=st.session_state.get('_v176_last_period',period_label)
+        st.subheader(f'{shown_period} — Akademik Korpus')
+        fam=x['Kaynak Ailesi'].value_counts(); c1,c2,c3,c4=st.columns(4); c1.metric('Yerli',int(fam.get('Yerli Basın',0))); c2.metric('Kürt Bölgesel',int(fam.get('Kürt Bölgesel Medyası',0))); c3.metric('PKK/KCK',int(fam.get('PKK/KCK Açık Kaynak',0))); c4.metric('Yabancı',int(fam.get('Yabancı Basın',0)))
+        st.dataframe(x[['Tarih','Kaynak Ailesi','Kaynak','Akademik Çerçeve','Başlık','URL']],hide_index=True,use_container_width=True,height=min(620,130+32*min(16,len(x))),column_config={'URL':st.column_config.LinkColumn('Bağlantı',display_text='Aç')})
+
     st.markdown('---'); st.subheader('Kaynak ↔ Çerçeve Gephi Çıktısı'); today=date.today(); d1,d2=st.columns(2)
-    with d1: start=st.date_input('Başlangıç',value=today-timedelta(days=6),key='v175_start')
-    with d2: end=st.date_input('Bitiş',value=today,key='v175_end')
+    with d1: start=st.date_input('Başlangıç',value=today-timedelta(days=6),key='v176_start')
+    with d2: end=st.date_input('Bitiş',value=today,key='v176_end')
     if start>end: st.warning('Başlangıç tarihi bitiş tarihinden sonra olamaz.'); return
-    arc=_v175_archive(start,end)
+    arc=_v176_archive(start,end)
     if arc.empty: st.info('Bu tarih aralığında akademik kayıt yok.'); return
-    st.caption(f'Seçili dönem: **{len(arc)} haber** · **{arc["source"].nunique()} kaynak**'); nodes,edges=_v175_gephi(arc); gexf=_v175_gexf(nodes,edges); stamp=f'{start}_{end}'; q1,q2,q3=st.columns(3)
+    st.caption(f'Seçili dönem: **{len(arc)} haber** · **{arc["source"].nunique()} kaynak**'); nodes,edges=_v176_gephi(arc); gexf=_v176_gexf(nodes,edges); stamp=f'{start}_{end}'; q1,q2,q3=st.columns(3)
     q1.download_button('⬇️ Nodes CSV',nodes.to_csv(index=False).encode('utf-8-sig'),f'Akademik_Nodes_{stamp}.csv','text/csv',use_container_width=True); q2.download_button('⬇️ Edges CSV',edges.to_csv(index=False).encode('utf-8-sig'),f'Akademik_Edges_{stamp}.csv','text/csv',use_container_width=True); q3.download_button('⬇️ GEXF',gexf,f'Akademik_Kaynak_Cerceve_{stamp}.gexf','application/xml',use_container_width=True)
     with st.expander('Gephi ağı',False): st.write('Düğüm türleri yalnız **Source** ve **Frame**. `RawCount` kaynak-çerçeve haber sayısıdır. `Weight = RawCount / SourceTotal`; Gephi içinde Weighted Degree ve Betweenness Centrality hesaplanabilir.')
 
 # ============================================================
-# /V175 AKADEMİK MOD
+# /V176 AKADEMİK MOD
 # ============================================================
+
 
 # -----------------------------
 # UI / MOD SEÇİMİ
 # -----------------------------
 with st.sidebar:
-    _v175_app_mode = st.radio('🧭 Çalışma Modu',['📰 Raporlama Modu','🎓 Akademik Veri Toplama'],index=0,key='v175_app_mode',help='Akademik mod tamamen ayrı çalışır; raporlama ekranı, harita, sepetler ve diğer paneller gösterilmez.')
+    _v176_app_mode = st.radio('🧭 Çalışma Modu',['📰 Raporlama Modu','🎓 Akademik Veri Toplama'],index=0,key='v176_app_mode',help='Akademik mod tamamen ayrı çalışır; raporlama ekranı, harita, sepetler ve diğer paneller gösterilmez.')
 
-if _v175_app_mode == '🎓 Akademik Veri Toplama':
-    _v175_render_academic_mode()
+if _v176_app_mode == '🎓 Akademik Veri Toplama':
+    _v176_render_academic_mode()
     st.stop()
 
 st.title('Terörsüz Türkiye Açık Kaynak Analiz ve İzleme Merkezi')
