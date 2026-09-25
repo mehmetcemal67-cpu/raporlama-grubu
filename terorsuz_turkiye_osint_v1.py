@@ -629,7 +629,7 @@ def _official_radar_rows(df):
 st.set_page_config(page_title='Terörsüz Türkiye OSINT Radarı', page_icon='🛡️', layout='wide')
 _v166_apply_background()
 # V153 görünür sürüm teyidi: yanlış dosya çalıştırılıyorsa kullanıcı hemen fark eder.
-st.sidebar.success('✅ AKTİF SÜRÜM: V181 — Akademik Mod / Raporlama Havuzu + İlgililik')
+st.sidebar.success('✅ AKTİF SÜRÜM: V182 — Akademik Mod / Hata Düzeltme')
 
 # ============================================================
 # V55 — ŞİFRE KORUMASI
@@ -43027,6 +43027,107 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
 # ============================================================
 # /V162
 # ============================================================
+
+
+# ============================================================
+# V182 — V181 AKADEMİK TARİH/KAYNAK YARDIMCI FONKSİYONLARI
+# V181 oluşturulurken V180 bloğu değiştirilmiş ancak aşağıdaki yardımcı
+# fonksiyonlar taşınmamıştı. Bu blok yalnız NameError hatasını düzeltir;
+# raporlama tarama motoruna, sorgularına veya kaynak toplama mantığına dokunmaz.
+# ============================================================
+
+_V180_BAD_SOURCE_NAMES={
+    'google','google news','google haberler','news.google.com','bing','bing news','bing.com',
+    'duckduckgo','ddgs','gdelt','article.wn.com','wn.com'
+}
+
+def _v180_initial_dt(row):
+    dt=_to_utc_datetime(row.get('Tarih_dt')) or _to_utc_datetime(row.get('Tarih'))
+    if dt is not None:
+        return dt,'raporlama'
+    try:
+        d,src=_v17_extract_explicit_date(
+            row.get('Başlık',''),
+            row.get('İçerik_Özeti','') or row.get('İçerik / Özet',''),
+            row.get('URL','') or row.get('Gerçek Bağlantı','')
+        )
+        if d is not None:
+            return d,'metin/url'
+    except Exception:
+        pass
+    return None,''
+
+def _v180_bad_source(value):
+    s=norm(str(value or '')).strip()
+    if not s:
+        return True
+    if s in {norm(x) for x in _V180_BAD_SOURCE_NAMES}:
+        return True
+    return any(s==norm(x) or s.endswith('.'+norm(x)) for x in _V180_BAD_SOURCE_NAMES if '.' in x)
+
+def _v180_source_identity(row, detail=None):
+    """Arama motoru adını değil mümkün olduğunca gerçek yayıncıyı göster."""
+    detail=detail or {}
+    vals=[detail.get('source'), row.get('Yayıncı'), row.get('Kaynak'), row.get('SourceLabel')]
+    source=''
+    for v in vals:
+        v=str(v or '').strip()
+        if v and not _v180_bad_source(v):
+            source=v
+            break
+
+    canonical=str(detail.get('canonical') or row.get('Gerçek Bağlantı') or row.get('URL') or '').strip()
+    try:
+        domain_val=infer_source(
+            source or row.get('Yayıncı','') or row.get('Kaynak',''),
+            row.get('Yayıncı_URL',''),
+            canonical
+        )
+    except Exception:
+        domain_val=''
+    try:
+        domain_val=_tt_norm_domain(domain_val or row.get('Domain') or canonical)
+    except Exception:
+        domain_val=str(row.get('Domain') or '').strip()
+
+    if domain_val in {'bing.com','news.google.com','google.com','article.wn.com','wn.com'}:
+        domain_val=''
+    if not source:
+        source=domain_val or str(row.get('Kaynak') or row.get('Yayıncı') or 'Açık Kaynak').strip()
+    return source,domain_val,canonical
+
+def _v180_resolve_missing_dates(rows, max_workers=8):
+    """Tarihi boş raporlama sonuçlarında yalnız yayın sayfası metadata'sından tarihi tamamlar."""
+    out={}
+    jobs=[]
+    for i,row in enumerate(rows):
+        dt,_=_v180_initial_dt(row)
+        if dt is None:
+            jobs.append((i,row))
+    if not jobs:
+        return out
+
+    def one(job):
+        i,row=job
+        try:
+            detail=article_detail(row) or {}
+        except Exception:
+            detail={}
+        dt=_to_utc_datetime(detail.get('published'))
+        return i,detail,dt
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_workers,max(1,len(jobs)))) as ex:
+            for i,detail,dt in ex.map(one,jobs):
+                out[i]=(detail or {},dt)
+    except Exception:
+        for job in jobs:
+            try:
+                i,detail,dt=one(job)
+                out[i]=(detail or {},dt)
+            except Exception:
+                pass
+    return out
 
 # ============================================================
 # V181 — AKADEMİK MOD: RAPORLAMA HAVUZUNU BİREBİR KULLAN + AKADEMİK İLGİLİLİK
