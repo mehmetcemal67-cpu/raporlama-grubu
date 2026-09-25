@@ -10540,7 +10540,7 @@ def _v166_render_interactive_map(df_base):
 # Tek ek koruma: yayın tarihi seçilen pencerenin dışındaysa kayıt kesinlikle
 # alınmaz. Sosyal medya / Think Tank / ayrı Yazar-Yorum kanalı çalıştırılmaz.
 
-V177_ACADEMIC_PROTOCOL='V178-A1-REPORT-PARITY-STRICT-DATE'
+V177_ACADEMIC_PROTOCOL='V180-A1-EXACT-REPORT-POOL-STRICT-DATE'
 V177_FAMILIES=('Yerli Basın','Kürt Bölgesel Medyası','PKK/KCK Açık Kaynak','Yabancı Basın')
 V177_PERIODS={
     '📅 Son 24 saat':24,
@@ -11035,21 +11035,21 @@ def _v177_tables():
     if not _init_history_db(): return False
     try:
         with _history_connect() as conn:
-            conn.execute("""CREATE TABLE IF NOT EXISTS academic_items_v179(
+            conn.execute("""CREATE TABLE IF NOT EXISTS academic_items_v180(
                 id INTEGER PRIMARY KEY AUTOINCREMENT, content_key TEXT UNIQUE NOT NULL,
                 first_collected_at TEXT NOT NULL, last_collected_at TEXT NOT NULL,
                 published_at TEXT NOT NULL, source_family TEXT NOT NULL, source TEXT, domain TEXT,
                 title TEXT NOT NULL, summary TEXT, url TEXT, academic_frame TEXT NOT NULL,
                 engine TEXT, protocol_version TEXT, protocol_hash TEXT)""")
-            conn.execute("""CREATE TABLE IF NOT EXISTS academic_scans_v179(
+            conn.execute("""CREATE TABLE IF NOT EXISTS academic_scans_v180(
                 id INTEGER PRIMARY KEY AUTOINCREMENT, scanned_at TEXT NOT NULL, period_hours INTEGER,
                 protocol_version TEXT, protocol_hash TEXT, total_items INTEGER, local_items INTEGER,
                 foreign_items INTEGER, kurdish_items INTEGER, movement_items INTEGER,
                 rejected_old INTEGER, rejected_nodate INTEGER, rejected_irrelevant INTEGER,
                 rejected_source INTEGER)""")
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v178_pub ON academic_items_v179(published_at)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v178_family ON academic_items_v179(source_family)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v178_frame ON academic_items_v179(academic_frame)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v178_pub ON academic_items_v180(published_at)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v178_family ON academic_items_v180(source_family)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v178_frame ON academic_items_v180(academic_frame)')
             conn.commit()
         return True
     except Exception: return False
@@ -11060,23 +11060,23 @@ def _v177_save(rows,rejected,hours):
     hours=int(hours or 24); now=datetime.now(timezone.utc).isoformat(); ph=_v177_protocol_hash(hours); new_count=0
     with _history_connect() as conn:
         for r in rows:
-            exists=conn.execute('SELECT 1 FROM academic_items_v179 WHERE content_key=?',(r['content_key'],)).fetchone()
+            exists=conn.execute('SELECT 1 FROM academic_items_v180 WHERE content_key=?',(r['content_key'],)).fetchone()
             if not exists: new_count+=1
-            conn.execute("""INSERT INTO academic_items_v179(content_key,first_collected_at,last_collected_at,published_at,source_family,source,domain,title,summary,url,academic_frame,engine,protocol_version,protocol_hash)
+            conn.execute("""INSERT INTO academic_items_v180(content_key,first_collected_at,last_collected_at,published_at,source_family,source,domain,title,summary,url,academic_frame,engine,protocol_version,protocol_hash)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(content_key) DO UPDATE SET
                 last_collected_at=excluded.last_collected_at,source_family=excluded.source_family,source=excluded.source,domain=excluded.domain,title=excluded.title,summary=excluded.summary,url=excluded.url,academic_frame=excluded.academic_frame,engine=excluded.engine,protocol_version=excluded.protocol_version,protocol_hash=excluded.protocol_hash""",
                 (r['content_key'],now,now,r['Tarih_dt'].isoformat(),r['Kaynak Ailesi'],r['Kaynak'],r['Domain'],r['Başlık'],r['İçerik_Özeti'],r['URL'],r['Akademik Çerçeve'],r['Motor'],V177_ACADEMIC_PROTOCOL,ph))
         fam=pd.Series([r['Kaynak Ailesi'] for r in rows],dtype='object').value_counts().to_dict()
-        conn.execute("""INSERT INTO academic_scans_v179(scanned_at,period_hours,protocol_version,protocol_hash,total_items,local_items,foreign_items,kurdish_items,movement_items,rejected_old,rejected_nodate,rejected_irrelevant,rejected_source)
+        conn.execute("""INSERT INTO academic_scans_v180(scanned_at,period_hours,protocol_version,protocol_hash,total_items,local_items,foreign_items,kurdish_items,movement_items,rejected_old,rejected_nodate,rejected_irrelevant,rejected_source)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (now,hours,V177_ACADEMIC_PROTOCOL,ph,len(rows),int(fam.get('Yerli Basın',0)),int(fam.get('Yabancı Basın',0)),int(fam.get('Kürt Bölgesel Medyası',0)),int(fam.get('PKK/KCK Açık Kaynak',0)),int(rejected.get('eski',0)),int(rejected.get('tarihsiz',0)),int(rejected.get('ilgisiz',0)),int(rejected.get('kaynak',0))))
-        conn.commit(); total=int(conn.execute('SELECT COUNT(*) FROM academic_items_v179').fetchone()[0])
+        conn.commit(); total=int(conn.execute('SELECT COUNT(*) FROM academic_items_v180').fetchone()[0])
     return new_count,total
 
 
 def _v177_archive(start_date=None,end_date=None):
     if not _v177_tables(): return pd.DataFrame()
-    sql='SELECT published_at,source_family,source,domain,title,summary,url,academic_frame,engine,protocol_version,protocol_hash FROM academic_items_v179'; clauses=[]; params=[]
+    sql='SELECT published_at,source_family,source,domain,title,summary,url,academic_frame,engine,protocol_version,protocol_hash FROM academic_items_v180'; clauses=[]; params=[]
     if start_date is not None: clauses.append('date(published_at)>=date(?)'); params.append(str(start_date))
     if end_date is not None: clauses.append('date(published_at)<=date(?)'); params.append(str(end_date))
     if clauses: sql+=' WHERE '+' AND '.join(clauses)
@@ -11101,7 +11101,7 @@ def _v177_gephi(df):
 
 def _v177_gexf(nodes,edges):
     if nodes is None or edges is None or nodes.empty or edges.empty: return b''
-    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'}); meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')}); ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT — Akademik V179'; ET.SubElement(meta,'description').text='Kaynak-Çerçeve ağı; Weight=RawCount/SourceTotal.'
+    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'}); meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')}); ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT — Akademik V180'; ET.SubElement(meta,'description').text='Kaynak-Çerçeve ağı; Weight=RawCount/SourceTotal.'
     graph=ET.SubElement(root,'graph',{'mode':'static','defaultedgetype':'undirected'}); na=ET.SubElement(graph,'attributes',{'class':'node'}); ET.SubElement(na,'attribute',{'id':'0','title':'NodeType','type':'string'}); ET.SubElement(na,'attribute',{'id':'1','title':'SourceFamily','type':'string'}); ET.SubElement(na,'attribute',{'id':'2','title':'Domain','type':'string'}); ea=ET.SubElement(graph,'attributes',{'class':'edge'}); ET.SubElement(ea,'attribute',{'id':'10','title':'RawCount','type':'integer'}); ET.SubElement(ea,'attribute',{'id':'11','title':'SourceTotal','type':'integer'}); ET.SubElement(ea,'attribute',{'id':'12','title':'NormalizedWeight','type':'double'})
     ng=ET.SubElement(graph,'nodes')
     for _,n in nodes.iterrows():
@@ -42963,12 +42963,160 @@ def _v136_render_basket(title, description, getter, remover, table_name, session
 # ============================================================
 
 # ============================================================
-# V179 — AKADEMİK MOD: ANA RAPORLAMA TARAMASININ ÇIKTISINI KULLAN
+# V180 — AKADEMİK MOD: RAPORLAMA SONUÇ HAVUZUNU BİREBİR KULLAN
 # ============================================================
-# Burada yeni arama YOKTUR. Üstteki `if run:` bloğu raporlama için hangi
-# sorgu/motor/normalize/pool/doğrudan-kaynak mantığını çalıştırdıysa akademik
-# mod da TAM OLARAK onun `st.session_state.rows` çıktısını kullanır.
-# Tek fark: kaynak ailesi + kesin tarih + içerik türü filtresi ve sade frame.
+# Akademik mod için ayrı arama / ayrı kaynak keşfi / ayrı kaynak sınıflandırması YOKTUR.
+# Üstte çalışan ana raporlama V22 taraması hangi kayıtları üretmişse akademik mod
+# doğrudan st.session_state.rows içindeki O AYNI kayıtları kullanır.
+# Akademik tarafta yalnız:
+#   1) Sosyal / Think Tank / ayrı Yazar-Yorum kanalı çıkarılır,
+#   2) Raporlama satırındaki Kaynak_Grubu etiketi AYNEN esas alınır,
+#   3) yayın tarihi seçilen pencere için doğrulanır,
+#   4) Kaynak ↔ Çerçeve akademik çıktısı üretilir.
+# Böylece arama motoru, sorgu, pool, snapshot, doğrudan kaynak ve normalize mantığı
+# raporlama tarafıyla aynı kalır.
+
+_V180_REPORT_GROUP_MAP={
+    '🇹🇷 Yerli Basın':'Yerli Basın',
+    '🇹🇷 Türk Medyası':'Yerli Basın',
+    '🇹🇷 Türk Medyası / Ekonomi':'Yerli Basın',
+    '🇹🇷 Resmi / Kurumsal':'Yerli Basın',
+    '🏛️ Türkiye Resmî / Siyasi Kaynak':'Yerli Basın',
+    '🌍 Yabancı Basın':'Yabancı Basın',
+    '🌍 Uluslararası Ana Akım':'Yabancı Basın',
+    '🌐 Bölgesel / Ortadoğu Medyası':'Yabancı Basın',
+    '🟣 Kürt Bölgesel Medyası':'Kürt Bölgesel Medyası',
+    '🟣 Kürt Medyası / Hareket Çevresi Açık Kaynak':'Kürt Bölgesel Medyası',
+    '🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak':'PKK/KCK Açık Kaynak',
+}
+
+_V180_BAD_SOURCE_NAMES={
+    'google','google news','google haberler','news.google.com','bing','bing news','bing.com',
+    'duckduckgo','ddgs','gdelt','article.wn.com','wn.com'
+}
+
+
+def _v180_report_family(row):
+    """Raporlama motorunun verdiği aile etiketini yeniden yorumlamadan kullan."""
+    raw=str(row.get('Kaynak_Grubu','') or '').strip()
+    if raw in _V180_REPORT_GROUP_MAP:
+        return _V180_REPORT_GROUP_MAP[raw]
+    n=norm(raw)
+    if 'pkk/kck' in n or 'hareket söylemi' in n or 'hareket soylemi' in n:
+        return 'PKK/KCK Açık Kaynak'
+    if 'kürt bölgesel' in n or 'kurt bolgesel' in n:
+        return 'Kürt Bölgesel Medyası'
+    if 'yabancı basın' in n or 'yabanci basin' in n or 'uluslararası ana akım' in n or 'uluslararasi ana akim' in n:
+        return 'Yabancı Basın'
+    if 'yerli basın' in n or 'yerli basin' in n or 'türk medya' in n or 'turk medya' in n or 'resmi' in n or 'resmî' in n:
+        return 'Yerli Basın'
+
+    # Son emniyet: raporlama satırının kendi tarama kanalı. Kaynak ailesini
+    # yeniden domain/ideoloji üzerinden kurmak yerine yalnız eksik etiketi tamamlar.
+    mode=str(row.get('_mode','') or row.get('Tarama Kanalı','') or '').strip().lower()
+    return {
+        'turkish':'Yerli Basın','official':'Yerli Basın','statistics':'Yerli Basın','negative':'Yerli Basın',
+        'foreign':'Yabancı Basın','kurdish':'Kürt Bölgesel Medyası','movement':'PKK/KCK Açık Kaynak'
+    }.get(mode,'')
+
+
+def _v180_initial_dt(row):
+    dt=_to_utc_datetime(row.get('Tarih_dt')) or _to_utc_datetime(row.get('Tarih'))
+    if dt is not None:
+        return dt,'raporlama'
+    try:
+        d,src=_v17_extract_explicit_date(
+            row.get('Başlık',''),
+            row.get('İçerik_Özeti','') or row.get('İçerik / Özet',''),
+            row.get('URL','') or row.get('Gerçek Bağlantı','')
+        )
+        if d is not None:
+            return d,'metin/url'
+    except Exception:
+        pass
+    return None,''
+
+
+def _v180_bad_source(value):
+    s=norm(str(value or '')).strip()
+    if not s:
+        return True
+    if s in {norm(x) for x in _V180_BAD_SOURCE_NAMES}:
+        return True
+    return any(s==norm(x) or s.endswith('.'+norm(x)) for x in _V180_BAD_SOURCE_NAMES if '.' in x)
+
+
+def _v180_source_identity(row, detail=None):
+    """Arama motoru adını değil mümkün olduğunca gerçek yayıncıyı göster."""
+    detail=detail or {}
+    vals=[
+        detail.get('source'), row.get('Yayıncı'), row.get('Kaynak'), row.get('SourceLabel')
+    ]
+    source=''
+    for v in vals:
+        v=str(v or '').strip()
+        if v and not _v180_bad_source(v):
+            source=v; break
+
+    canonical=str(detail.get('canonical') or row.get('Gerçek Bağlantı') or row.get('URL') or '').strip()
+    try:
+        domain_val=infer_source(
+            source or row.get('Yayıncı','') or row.get('Kaynak',''),
+            row.get('Yayıncı_URL',''),
+            canonical
+        )
+    except Exception:
+        domain_val=''
+    try:
+        domain_val=_tt_norm_domain(domain_val or row.get('Domain') or canonical)
+    except Exception:
+        domain_val=str(row.get('Domain') or '').strip()
+
+    # Motor/ara katman domainini kaynak gibi göstermeyelim.
+    if domain_val in {'bing.com','news.google.com','google.com','article.wn.com','wn.com'}:
+        domain_val=''
+    if not source:
+        source=domain_val or str(row.get('Kaynak') or row.get('Yayıncı') or 'Açık Kaynak').strip()
+    return source,domain_val,canonical
+
+
+def _v180_resolve_missing_dates(rows, max_workers=8):
+    """
+    Raporlama motorunda tarihi boş bırakılmış DDGS/Bing vb. sonuçlarda arama
+    mantığını değiştirmeden yalnız yayın sayfası metadata'sından tarihi tamamlar.
+    Akademik 24/48 saat sınırının gerçekten uygulanabilmesi için kullanılır.
+    """
+    out={}
+    jobs=[]
+    for i,row in enumerate(rows):
+        dt,_=_v180_initial_dt(row)
+        if dt is None:
+            jobs.append((i,row))
+    if not jobs:
+        return out
+
+    def one(job):
+        i,row=job
+        try:
+            detail=article_detail(row) or {}
+        except Exception:
+            detail={}
+        dt=_to_utc_datetime(detail.get('published'))
+        return i,detail,dt
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_workers,max(1,len(jobs)))) as ex:
+            for i,detail,dt in ex.map(one,jobs):
+                out[i]=(detail or {},dt)
+    except Exception:
+        for job in jobs:
+            try:
+                i,detail,dt=one(job); out[i]=(detail or {},dt)
+            except Exception:
+                pass
+    return out
+
+
 if _v177_app_mode == '🎓 Akademik Veri Toplama':
     _raw_academic=st.session_state.rows or []
     if isinstance(_raw_academic,pd.DataFrame):
@@ -42976,38 +43124,42 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
 
     _now_utc=datetime.now(timezone.utc)
     _cutoff_utc=_now_utc-timedelta(hours=int(hours))
-    _fam_out={
-        'Yerli Basın':'Yerli Basın',
-        'Yabancı Basın':'Yabancı Basın',
-        'Kürt Bölgesel Medyası':'Kürt Bölgesel Medyası',
-        'PKK/KCK Açık Kaynak':'PKK/KCK Açık Kaynak',
-    }
-    _academic_rows=[]
-    _drop_old=0; _drop_nodate=0; _drop_type=0; _drop_family=0
 
+    # Önce yalnız raporlama motorunun hedef dört ailesindeki satırları ayır.
+    # Burada domain/profil üzerinden YENİDEN sınıflandırma yapılmaz.
+    _candidate_rows=[]
+    _drop_type=0; _drop_family=0
     for _r0 in _raw_academic:
         if not isinstance(_r0,dict):
             continue
         _r=dict(_r0)
-        try:
-            _family=_v23_source_family(_r)
-        except Exception:
-            _family=''
-        if _family not in _fam_out:
+        _family=_v180_report_family(_r)
+        if _family not in V177_FAMILIES:
             _drop_family+=1
             continue
-
-        # Yazar / söyleşi / rapor-politika analizi akademik modda istenmiyor.
+        _mode=str(_r.get('_mode','') or _r.get('Tarama Kanalı','') or '').lower().strip()
         _ctype=str(_r.get('İçerik Türü','') or '')
-        if _ctype.startswith(('✍️','🎙️','📑')):
+        # Akademik tasarım gereği ayrı commentary kanalı ve açıkça yorum/analiz türleri yok.
+        if _mode=='commentary' or _ctype.startswith(('✍️','🎙️','📑')):
             _drop_type+=1
             continue
+        _r['_v180_family']=_family
+        _candidate_rows.append(_r)
 
-        # Rapor taramasının keşif mantığı aynen korunur; SADECE tarih akademik
-        # korpus için kesin olarak yeniden denetlenir.
-        _dt=_to_utc_datetime(_r.get('Tarih_dt'))
-        if _dt is None:
-            _dt=_to_utc_datetime(_r.get('Tarih'))
+    # Raporlamadaki tarihsiz sonuçları kaybetmemek için yalnız akademik doğrulama
+    # aşamasında gerçek yayın sayfasından tarih/canonical/source metadata'sı tamamlanır.
+    _resolved=_v180_resolve_missing_dates(_candidate_rows,8) if run else {}
+
+    _academic_rows=[]
+    _drop_old=0; _drop_nodate=0
+    for _idx,_r in enumerate(_candidate_rows):
+        _detail={}
+        _dt,_dt_src=_v180_initial_dt(_r)
+        if _dt is None and _idx in _resolved:
+            _detail,_dt=_resolved.get(_idx,({},None))
+            _dt_src='yayın sayfası' if _dt is not None else ''
+
+        # Tam yayın tarihi hâlâ doğrulanamıyorsa 24/48 saat iddiası kurulamaz.
         if _dt is None:
             _drop_nodate+=1
             continue
@@ -43019,9 +43171,8 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
         if not _title:
             continue
         _summary=re.sub(r'\s+',' ',str(_r.get('İçerik_Özeti','') or _r.get('İçerik / Özet','') or '')).strip()
-        _source=str(_r.get('Kaynak') or _r.get('Yayıncı') or _r.get('Domain') or 'Açık Kaynak').strip()
-        _domain=_tt_norm_domain(_r.get('Domain') or _r.get('URL') or _r.get('Yayıncı_URL') or '')
-        _url=str(_r.get('URL') or _r.get('Gerçek Bağlantı') or '').strip()
+        _source,_domain,_url=_v180_source_identity(_r,_detail)
+        _family=_r['_v180_family']
         _key_src=_domain or norm(_source)
         _content_key=hashlib.sha1(
             f'{_key_src}|{title_key(_title)}|{_dt.strftime("%Y-%m-%d")}'.encode('utf-8','ignore')
@@ -43030,18 +43181,19 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
             'content_key':_content_key,
             'Tarih_dt':_dt,
             'Tarih':_dt.astimezone().strftime('%d.%m.%Y %H:%M'),
-            'Kaynak Ailesi':_fam_out[_family],
+            'Kaynak Ailesi':_family,
             'Kaynak':_source,
             'Domain':_domain,
             'Başlık':_title,
             'İçerik_Özeti':_summary,
             'URL':_url,
             'Akademik Çerçeve':_v177_frame(_title,_summary),
-            'Motor':'Raporlama Ana Tarama Motoru'
+            'Motor':'Raporlama Ana Tarama Motoru',
+            'Tarih Kaynağı':_dt_src,
         })
 
-    # Ana rapor motoru zaten tekilleştirir; olası son tekrarları yalnız aynı
-    # akademik anahtar üzerinden temizle.
+    # Ana rapor motoru zaten tekilleştirir. Son koruma yalnız aynı kaynak+başlık+gün.
+    _pre_unique=len(_academic_rows)
     _seen=set(); _academic_unique=[]
     for _r in sorted(_academic_rows,key=lambda z:z['Tarih_dt'],reverse=True):
         if _r['content_key'] in _seen:
@@ -43055,7 +43207,7 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
             'tarihsiz':_drop_nodate,
             'ilgisiz':0,
             'kaynak':_drop_family,
-            'tekrar':max(0,len(_academic_rows)-len(_academic_unique))
+            'tekrar':max(0,_pre_unique-len(_academic_rows))
         }
         try:
             _new_count,_total_count=_v177_save(_academic_rows,_rej,hours)
@@ -43063,13 +43215,13 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
             st.session_state['_v177_last_period']=period
             st.success(
                 f'Akademik korpus hazır: {len(_academic_rows)} haber · {_new_count} yeni kayıt · '
-                f'toplam arşiv {_total_count}. Arama motoru raporlama bölümüyle aynıdır.'
+                f'toplam arşiv {_total_count}. Kaynak aileleri raporlama satırındaki sınıflandırmadan aynen alınmıştır.'
             )
+            if _drop_nodate:
+                st.caption(f'Not: {_drop_nodate} kaydın yayın tarihi raporlama verisi + yayın sayfası metadata kontrolüne rağmen doğrulanamadığı için kesin zaman penceresine alınmadı.')
         except Exception as _e:
             st.error(f'Akademik arşiv kaydı sırasında hata: {_e}')
     else:
-        # Mod değiştirildiğinde son akademik taramayı göster; rapor ekranındaki
-        # mevcut satırları otomatik olarak yeni akademik tarama sayma.
         _academic_rows=st.session_state.get('_v177_last_rows') or []
 
     st.markdown('---')
@@ -43083,8 +43235,9 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
         _c3.metric('PKK/KCK',int(_fam.get('PKK/KCK Açık Kaynak',0)))
         _c4.metric('Yabancı',int(_fam.get('Yabancı Basın',0)))
         st.caption(
-            'Bu sayılar raporlama taramasının AYNI sonuç havuzundan türetilir. '
-            'Fark yalnız Sosyal/Think Tank/Yazar-Yorum çıkarılması ve seçilen zaman penceresinin kesin uygulanmasıdır.'
+            'Arama mantığı ve sonuç havuzu raporlama taramasıyla aynıdır. Akademik mod kaynak ailesini yeniden tahmin etmez; '
+            'raporlama satırındaki Kaynak_Grubu etiketini doğrudan kullanır. Fark yalnız Sosyal/Think Tank/Yazar-Yorum çıkarılması '
+            've yayın tarihinin seçilen pencere için doğrulanmasıdır.'
         )
         st.dataframe(
             _ax[['Tarih','Kaynak Ailesi','Kaynak','Akademik Çerçeve','Başlık','URL']],
@@ -43093,15 +43246,15 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
             column_config={'URL':st.column_config.LinkColumn('Bağlantı',display_text='Aç')}
         )
     else:
-        st.info('Henüz akademik tarama çalıştırılmadı veya seçilen dönemde uygun haber bulunmadı.')
+        st.info('Henüz akademik tarama çalıştırılmadı veya seçilen dönemde tarihi doğrulanmış uygun haber bulunmadı.')
 
     st.markdown('---')
     st.subheader('Kaynak ↔ Çerçeve Gephi Çıktısı')
     _today=date.today(); _d1,_d2=st.columns(2)
     with _d1:
-        _start=st.date_input('Başlangıç',value=_today-timedelta(days=6),key='v179_start')
+        _start=st.date_input('Başlangıç',value=_today-timedelta(days=6),key='v180_start')
     with _d2:
-        _end=st.date_input('Bitiş',value=_today,key='v179_end')
+        _end=st.date_input('Bitiş',value=_today,key='v180_end')
     if _start<=_end:
         _arc=_v177_archive(_start,_end)
         if not _arc.empty:
@@ -43118,11 +43271,13 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
     else:
         st.warning('Başlangıç tarihi bitiş tarihinden sonra olamaz.')
 
-    # Akademik mod tamamen ayrı ekran: bundan sonra raporlama haritası/sepetleri/
-    # kontrol merkezi ve diğer rapor panelleri kesinlikle çizilmez.
+    # Akademik mod tamamen ayrı ekran.
     st.stop()
 
 # ============================================================
+# /V180 AKADEMİK MOD
+# ============================================================
+
 # /V179 AKADEMİK MOD
 # ============================================================
 
