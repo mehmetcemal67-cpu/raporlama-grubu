@@ -43145,7 +43145,7 @@ def _v180_resolve_missing_dates(rows, max_workers=8):
 #   5) Kaynak ↔ Çerçeve Gephi çıktısı üretir.
 # ============================================================
 
-V188_PROTOCOL='V191-A1-SAME-REPORTING-POOL-STRICT-DATE-AUTO-RELEVANCE-EXCLUSIVE-FRAME-DECISION-TREE'
+V188_PROTOCOL='V192-A1-SAME-REPORTING-POOL-STRICT-DATE-AUTO-RELEVANCE-11-EXCLUSIVE-FRAMES'
 V188_FAMILIES=('Yerli Basın','Kürt Bölgesel Medyası','PKK/KCK Açık Kaynak','Yabancı Basın')
 V188_FRAMES=(
     'Silahsızlanma / Fesih / Uygulama',
@@ -43700,7 +43700,7 @@ def _v188_gephi(df):
 
 def _v188_gexf(nodes,edges):
     if nodes is None or edges is None or nodes.empty or edges.empty: return b''
-    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'}); meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')}); ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT — Akademik V191'; ET.SubElement(meta,'description').text='Kaynak-Çerçeve ağı; Weight=RawCount/SourceTotal.'
+    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'}); meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')}); ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT — Akademik V192'; ET.SubElement(meta,'description').text='Kaynak-Çerçeve ağı; Weight=RawCount/SourceTotal.'
     graph=ET.SubElement(root,'graph',{'mode':'static','defaultedgetype':'undirected'}); na=ET.SubElement(graph,'attributes',{'class':'node'}); ET.SubElement(na,'attribute',{'id':'0','title':'NodeType','type':'string'}); ET.SubElement(na,'attribute',{'id':'1','title':'SourceFamily','type':'string'}); ET.SubElement(na,'attribute',{'id':'2','title':'Domain','type':'string'}); ea=ET.SubElement(graph,'attributes',{'class':'edge'}); ET.SubElement(ea,'attribute',{'id':'10','title':'RawCount','type':'integer'}); ET.SubElement(ea,'attribute',{'id':'11','title':'SourceTotal','type':'integer'}); ET.SubElement(ea,'attribute',{'id':'12','title':'NormalizedWeight','type':'double'})
     ng=ET.SubElement(graph,'nodes')
     for _,n in nodes.iterrows():
@@ -44068,6 +44068,19 @@ def _v188_dominant_frame(title,body):
 # /V191
 # ============================================================
 
+# V192 — Eski akademik sürümlerden kalan session_state kayıtlarının yeni
+# sınıflandırıcıyı maskelemesini engelle. Protokol değiştiğinde eski ekran
+# sonuçları/diagnostics temizlenir; kullanıcı yeni taramayı çalıştırır.
+_V192_STATE_VERSION=V188_PROTOCOL
+if st.session_state.get('_academic_active_protocol') != _V192_STATE_VERSION:
+    for _k in [
+        '_v188_last_rows','_v188_last_period','_v188_diag',
+        '_v191_last_rows','_v191_last_period','_v191_diag',
+        '_v177_last_rows','_v177_last_period'
+    ]:
+        st.session_state.pop(_k,None)
+    st.session_state['_academic_active_protocol']=_V192_STATE_VERSION
+
 if _v177_app_mode == '🎓 Akademik Veri Toplama':
     _raw=st.session_state.rows or []
     if isinstance(_raw,pd.DataFrame): _raw=_raw.to_dict('records')
@@ -44109,15 +44122,15 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
     dedupe=len(academic)-len(uniq); academic=uniq
     if run:
         try:
-            new,total=_v188_save(academic,_diag,hours); st.session_state['_v188_last_rows']=academic; st.session_state['_v188_last_period']=period; st.session_state['_v188_diag']={**_diag,'families_before':_family_before,'final':len(academic),'dedupe':dedupe,'excluded_samples':_excluded}; st.success(f'Akademik korpus hazır: {len(academic)} haber · {new} yeni kayıt · toplam akademik arşiv {total}.')
+            new,total=_v188_save(academic,_diag,hours); st.session_state['_v191_last_rows']=academic; st.session_state['_v191_last_period']=period; st.session_state['_v191_diag']={**_diag,'families_before':_family_before,'final':len(academic),'dedupe':dedupe,'excluded_samples':_excluded}; st.success(f'Akademik korpus hazır: {len(academic)} haber · {new} yeni kayıt · toplam akademik arşiv {total}.')
         except Exception as e: st.error(f'Akademik arşiv kaydı sırasında hata: {e}')
-    else: academic=st.session_state.get('_v188_last_rows') or []
-    st.markdown('---'); st.subheader(f'{st.session_state.get("_v188_last_period",period)} — Akademik Korpus')
+    else: academic=st.session_state.get('_v191_last_rows') or []
+    st.markdown('---'); st.subheader(f'{st.session_state.get("_v191_last_period",period)} — Akademik Korpus')
     if academic:
         ax=pd.DataFrame(academic); fam=ax['Kaynak Ailesi'].value_counts(); c1,c2,c3,c4=st.columns(4); c1.metric('Yerli',int(fam.get('Yerli Basın',0))); c2.metric('Kürt Bölgesel',int(fam.get('Kürt Bölgesel Medyası',0))); c3.metric('PKK/KCK',int(fam.get('PKK/KCK Açık Kaynak',0))); c4.metric('Yabancı',int(fam.get('Yabancı Basın',0)))
-        st.caption('Arama/sorgu/motor raporlama ile aynıdır. Akademik katman raporlama havuzunu kullanır; kesin zaman kapısı ve otomatik ilgililik denetiminden sonra her ilgili haberi tek ve dışlayıcı akademik çerçeveye atar.')
+        st.caption('Arama/sorgu/motor raporlama ile aynıdır. Akademik katman raporlama havuzunu kullanır; kesin zaman kapısı ve otomatik ilgililik denetiminden sonra her ilgili haberi 11 keskin çerçeveden tek birine atar. Aktif sınıflandırıcı: V192 / F01–F11.')
         st.dataframe(ax[['Tarih','Kaynak Ailesi','Kaynak','Akademik Çerçeve','Başlık','URL']],hide_index=True,use_container_width=True,height=min(680,130+32*min(17,len(ax))),column_config={'URL':st.column_config.LinkColumn('Bağlantı',display_text='Aç')})
-        diag=st.session_state.get('_v188_diag') or {}
+        diag=st.session_state.get('_v191_diag') or {}
         if diag:
             with st.expander('🔎 Akademik kalite kontrol özeti',False):
                 rf=diag.get('families_before') or {}; st.write('**Raporlama havuzundaki akademik kaynak aileleri:** '+f"Yerli {rf.get('Yerli Basın',0)} · Yabancı {rf.get('Yabancı Basın',0)} · Kürt Bölgesel {rf.get('Kürt Bölgesel Medyası',0)} · PKK/KCK {rf.get('PKK/KCK Açık Kaynak',0)}"); st.write(f"Dört akademik aile + kanal filtresi sonrası: **{diag.get('eligible_pool',0)}** · nihai akademik korpus: **{diag.get('final',0)}**"); st.write(f"Çıkarılan: kanal **{diag.get('kanal',0)}**, aile dışı **{diag.get('aile_disi',0)}**, zaman dışı **{diag.get('eski',0)}**, tarihi doğrulanamayan **{diag.get('tarihsiz',0)}**, konu dışı **{diag.get('ilgisiz',0)}**, tekrar **{diag.get('dedupe',0)}**.")
