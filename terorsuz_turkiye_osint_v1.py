@@ -43700,7 +43700,7 @@ def _v188_gephi(df):
 
 def _v188_gexf(nodes,edges):
     if nodes is None or edges is None or nodes.empty or edges.empty: return b''
-    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'}); meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')}); ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT — Akademik V195'; ET.SubElement(meta,'description').text='Kaynak-Çerçeve ağı; Weight=RawCount/SourceTotal.'
+    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'}); meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')}); ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT — Akademik V196'; ET.SubElement(meta,'description').text='Kaynak-Çerçeve ağı; Weight=RawCount/SourceTotal.'
     graph=ET.SubElement(root,'graph',{'mode':'static','defaultedgetype':'undirected'}); na=ET.SubElement(graph,'attributes',{'class':'node'}); ET.SubElement(na,'attribute',{'id':'0','title':'NodeType','type':'string'}); ET.SubElement(na,'attribute',{'id':'1','title':'SourceFamily','type':'string'}); ET.SubElement(na,'attribute',{'id':'2','title':'Domain','type':'string'}); ea=ET.SubElement(graph,'attributes',{'class':'edge'}); ET.SubElement(ea,'attribute',{'id':'10','title':'RawCount','type':'integer'}); ET.SubElement(ea,'attribute',{'id':'11','title':'SourceTotal','type':'integer'}); ET.SubElement(ea,'attribute',{'id':'12','title':'NormalizedWeight','type':'double'})
     ng=ET.SubElement(graph,'nodes')
     for _,n in nodes.iterrows():
@@ -44785,6 +44785,294 @@ def _v188_archive(start_date=None,end_date=None):
 # /V195 AKADEMİK KALİTE MOTORU
 # ============================================================
 
+
+# ============================================================
+# V196 — İÇERİK-ODAKLI AKADEMİK ÇERÇEVE MOTORU
+#
+# Yalnız AKADEMİK katmanı değiştirir. Raporlama araması, sorgular, kaynaklar,
+# tarih ve ilgililik kapıları V195'teki gibi korunur.
+#
+# Temel ilke:
+#   - Haberin kaynağı/aktörü çerçeveyi belirlemez.
+#   - Mümkünse makalenin tam metni; değilse RSS/arama özeti okunur.
+#   - Başlık + ilk paragraflar + gövdedeki konu cümleleri birlikte değerlendirilir.
+#   - F01-F06/F08-F10/F12 somut KONULAR; F07 ve F11 yalnız somut konu
+#     baskın değilse aktör/hareket pozisyonu olarak kullanılır.
+#   - F06 fallback değildir; yalnız gerçekten süreç takvimi/aşaması/izleme/
+#     ilerleme haberlerinde oluşur.
+# ============================================================
+
+V188_PROTOCOL='V196-A1-SAME-REPORTING-POOL-SAME-DATE-RELEVANCE-CONTENT-FIRST-12-EXCLUSIVE-FRAMES'
+
+V196_PROGRESS_CUES=list(dict.fromkeys(list(V191_PROGRESS_CUES)+[
+    'sonuca yakla','sonuca yaklaşı','sonuca yaklas','sona yakla','son aşama','son asama',
+    'kritik aşama','kritik asama','ikinci aşama','ikinci asama','üçüncü aşama','ucuncu asama',
+    'yeni dönem','yeni donem','süreçte gelinen nokta','surecte gelinen nokta','gelinen nokta',
+    'bundan sonraki adım','bundan sonraki adim','sonraki adım','sonraki adim',
+    'süreçte mesafe','surecte mesafe','süreç tamamlan','surec tamamlan','süreç sonuçlan','surec sonuclan',
+    'geçiş süreci','gecis sureci','geçiş süreçleri','gecis surecleri','izleme mekanizması','izleme mekanizmasi',
+    'uygulama takvimi','uygulama takvimi','yol haritası','yol haritasi','takvim netleş','takvim netles',
+    'sürecin geleceği','surecin gelecegi','sürecin bundan sonrası','surecin bundan sonrasi'
+]))
+
+V196_STANCE_CUES=list(dict.fromkeys(V195_STATEMENT_CUES+[
+    'destek','destekledi','karşı çıktı','karsi cikti','karşı','karsi','taviz','pazarlık','pazarlik',
+    'itiraz','eleştirdi','elestirdi','eleştiri','elestiri','pozisyon','tutum','yaklaşım','yaklasim',
+    'olumlu','olumsuz','sahiplendi','reddetti','kabul etti','koşul','kosul','şart','sart'
+]))
+
+V196_MOVEMENT_POSITION_CUES=list(dict.fromkeys(V191_MOVEMENT_INTERNAL+V196_STANCE_CUES+[
+    'silah bırakmayacağız','silah birakmayacagiz','silah bırakmayacak','silah birakmayacak',
+    'savaşa hazır','savasa hazir','hazırız','haziriz','kararımız','kararimiz','stratejik',
+    'kongre kararı','kongre karari','örgüt kararı','orgut karari','hareketin tutumu','hareketin yaklaşımı','hareketin yaklasimi'
+]))
+
+V196_PROCESS_ANCHORS=list(dict.fromkeys(V195_MULTI_DIRECT+[
+    'terörsüz türkiye süreci','terorsuz turkiye sureci','süreç','surec','sürece','surece','sürecin','surecin'
+]))
+
+
+def _v196_sentence_units(title, body):
+    """Başlık ve gerçek haber metnini konumsal ağırlıklarla cümlelere ayır."""
+    title=_v188_clean_age_noise(title)
+    body=_v188_clean_age_noise(body)
+    try:
+        sents=_v142_sentences(body)
+    except Exception:
+        sents=[x.strip() for x in re.split(r'(?<=[.!?])\s+',body or '') if x.strip()]
+    units=[]
+    if title:
+        units.append(('title',title,10.0))
+    seen=set()
+    for i,s in enumerate(sents[:40]):
+        ns=norm(s)
+        if not ns or ns in seen: continue
+        seen.add(ns)
+        if i<2: w=5.0
+        elif i<6: w=3.0
+        elif i<12: w=1.75
+        else: w=1.0
+        units.append((f's{i+1}',s,w))
+    return units
+
+
+def _v196_hits_in_unit(text, terms):
+    return _v191_hits(text,terms)
+
+
+def _v196_topic_score(units, terms, require_process=False):
+    score=0.0; ev=[]; sent=[]
+    for pos,s,w in units:
+        hits=_v196_hits_in_unit(s,terms)
+        if not hits: continue
+        if require_process and not _v196_hits_in_unit(s,V196_PROCESS_ANCHORS):
+            # Aynı cümlede süreç bağı yoksa gövde kanıtını zayıf say.
+            local=w*0.35*len(hits)
+        else:
+            local=w*len(hits)
+        score+=local
+        ev.extend(hits)
+        if local>=3 and len(sent)<2:
+            sent.append(s[:260])
+    return score,list(dict.fromkeys(ev))[:10],sent
+
+
+def _v196_pair_score(units, left_terms, right_terms, bonus=8.0):
+    """Aynı cümlede iki kavram kümesinin birlikte bulunmasını güçlü kanıt say."""
+    score=0.0; ev=[]; sent=[]
+    for pos,s,w in units:
+        a=_v196_hits_in_unit(s,left_terms); b=_v196_hits_in_unit(s,right_terms)
+        if a and b:
+            score += w*(len(a)+len(b)) + bonus*w
+            ev.extend(a+b)
+            if len(sent)<2: sent.append(s[:260])
+    return score,list(dict.fromkeys(ev))[:10],sent
+
+
+def _v196_process_present(units):
+    for _,s,_ in units[:14]:
+        if _v196_hits_in_unit(s,V196_PROCESS_ANCHORS): return True
+    return False
+
+
+def _v188_dominant_frame(title, body):
+    """
+    V196: Haber ne hakkındaysa o çerçeve.
+    Aktör adı veya kaynak ailesi tek başına çerçeve üretmez.
+    """
+    units=_v196_sentence_units(title,body)
+    head_text=' '.join(s for _,s,_ in units[:7])
+    process_present=_v196_process_present(units)
+    candidates=[]
+
+    def add(frame,score,ev,sents,rule):
+        if score<=0: return
+        evidence=list(dict.fromkeys(ev))[:8]
+        if sents:
+            evidence.append('kanıt cümlesi: '+sents[0][:220])
+        candidates.append({'frame':frame,'score':float(score),'ev':evidence,'rule':rule})
+
+    # F01 Silahsızlanma / fesih / uygulama
+    sc,ev,se=_v196_topic_score(units,V191_DISARM_CUES)
+    if sc>0: add('F01 — Silahsızlanma / Fesih / Uygulama',sc+8,ev,se,'haber ana konusu silahsızlanma/fesih/uygulama')
+
+    # F02 Hukuki / Meclis / komisyon / infaz-af
+    sc,ev,se=_v196_topic_score(units,V191_LEGAL_CUES)
+    if sc>0: add('F02 — Hukuki / Meclis / Komisyon / İnfaz-Af',sc+8,ev,se,'haber ana konusu somut hukuki/kurumsal düzenleme')
+
+    # F03 Öcalan/İmralı yalnız statü/rol/erişim birlikteyse güçlüdür.
+    sc,ev,se=_v196_pair_score(units,V191_OCALAN_ENTITY,list(dict.fromkeys(V191_OCALAN_STATUS+['konum','konumu','özgürlüğü','ozgurlugu','serbest bırak','serbest birak'])),8)
+    if sc>0: add('F03 — Öcalan / İmralı / Statü-Rol',sc+10,ev,se,'Öcalan/İmralı statüsü, rolü veya erişim koşulları')
+
+    # F04 Suriye: aktör/coğrafya + entegrasyon/statü/fesih aynı cümlede veya güçlü başlık/lead.
+    sc,ev,se=_v196_pair_score(units,V191_SYRIA_ENTITY,V191_SYRIA_ACTION,7)
+    if sc>0: add('F04 — Suriye / SDG-YPG / Şam-Entegrasyon',sc+8,ev,se,'Suriye/SDG-YPG dosyası ve entegrasyon/statü/fesih')
+
+    # F05 Irak/IKBY/Kandil/Sincar: saha + PKK/çekilme/silah/varlık aynı cümlede.
+    sc,ev,se=_v196_pair_score(units,V191_IRAQ_ENTITY,V191_IRAQ_ACTION,7)
+    if sc>0: add('F05 — Irak / IKBY / Kandil / Sincar',sc+8,ev,se,'Irak/IKBY/Kandil/Sincar sahasında PKK bağlantılı gelişme')
+
+    # F06 Sürecin seyri: açık ilerleme/takvim/aşama/izleme. Fallback DEĞİL.
+    sc,ev,se=_v196_topic_score(units,V196_PROGRESS_CUES,require_process=True)
+    if sc>0 and process_present:
+        add('F06 — Sürecin Takvimi / Aşaması / İzleme',sc+12,ev,se,'haber ana konusu sürecin seyri/takvimi/aşaması/izlenmesi')
+
+    # F08 Güvenlik/operasyon/çatışma; süreç veya PKK/SDG aktörüyle birlikte.
+    sc,ev,se=_v196_topic_score(units,V191_SECURITY_CONTEXT)
+    if sc>0 and (process_present or _v191_hits(head_text,['pkk','kck','sdg','sdf','ypg'])):
+        add('F08 — Güvenlik / Operasyon / Çatışma',sc+5,ev,se,'haber ana konusu güvenlik/operasyon/çatışma')
+
+    # F09 Toplumsal katılım/kamuoyu/mağduriyet
+    sc,ev,se=_v196_topic_score(units,V191_PUBLIC_CUES,require_process=True)
+    if sc>0 and process_present:
+        add('F09 — Toplumsal Katılım / Kamuoyu / Mağduriyet',sc+7,ev,se,'haber ana konusu toplumsal etkinlik/kamuoyu/mağduriyet')
+
+    # F10 Barış/demokratik çözüm/hak talepleri
+    sc,ev,se=_v196_topic_score(units,V191_RIGHTS_CUES)
+    if sc>0 and (process_present or _v191_hits(head_text,V191_OCALAN_ENTITY+['kürt','kurt'])):
+        add('F10 — Demokratik Çözüm / Barış / Hak Talepleri',sc+6,ev,se,'haber ana konusu barış/demokratik çözüm/hak talebi')
+
+    # F12 Ekonomi/kalkınma/refah, yalnız süreç aynı cümle/başlık bağında ise.
+    sc,ev,se=_v196_topic_score(units,V195_ECON_CUES,require_process=True)
+    if sc>0 and process_present:
+        add('F12 — Ekonomi / Kalkınma / Bölgesel Refah Etkileri',sc+9,ev,se,'haber ana konusu sürecin ekonomik/kalkınma etkileri')
+
+    # Önce SOMUT konu çerçeveleri arasından karar ver.
+    concrete=[x for x in candidates if not x['frame'].startswith(('F07 ','F11 '))]
+    concrete.sort(key=lambda x:x['score'],reverse=True)
+    if concrete:
+        top=concrete[0]
+        second=concrete[1]['score'] if len(concrete)>1 else 0.0
+        # Başlık/lead'e dayalı somut konu varsa aktör çerçevesiyle bozulmaz.
+        margin=max(0.0,top['score']-second)
+        conf=min(98,int(66+min(22,top['score']/2)+min(10,margin/2)))
+        return top['frame'],top['ev']+['karar kuralı: '+top['rule']],conf
+
+    # F11 — somut konu yoksa hareket aktörünün kendi stratejik/örgütsel pozisyonu.
+    ma_sc,ma_ev,ma_se=_v196_topic_score(units,V191_MOVEMENT_ACTORS)
+    mp_sc,mp_ev,mp_se=_v196_topic_score(units,V196_MOVEMENT_POSITION_CUES)
+    if ma_sc>0 and mp_sc>0:
+        score=ma_sc+mp_sc+8
+        conf=min(92,int(65+min(27,score/2)))
+        ev=list(dict.fromkeys(ma_ev+mp_ev))[:8]
+        if ma_se or mp_se: ev.append('kanıt cümlesi: '+(ma_se+mp_se)[0][:220])
+        return 'F11 — PKK/KCK Örgüt İçi / Hareket Pozisyonları',ev+['karar kuralı: hareket aktörünün genel/örgütsel pozisyonu'],conf
+
+    # F07 — somut konu yoksa siyasi/diplomatik aktörün genel pozisyonu.
+    act_sc,act_ev,act_se=_v196_topic_score(units,V191_PROCESS_ACTORS+V193_PROCESS_ACTOR_ALIASES+V193_PROCESS_OFFICES)
+    st_sc,st_ev,st_se=_v196_topic_score(units,V196_STANCE_CUES)
+    if act_sc>0 and (st_sc>0 or process_present):
+        score=act_sc+st_sc+5
+        conf=min(90,int(62+min(28,score/2)))
+        ev=list(dict.fromkeys(act_ev+st_ev))[:8]
+        if act_se or st_se: ev.append('kanıt cümlesi: '+(act_se+st_se)[0][:220])
+        return 'F07 — Siyasi / Diplomatik Aktör Pozisyonları',ev+['karar kuralı: somut alt konu baskın değil; aktörün süreç pozisyonu'],conf
+
+    # İlgililik kapısından geçmiş çok kısa içeriklerde son karar: metindeki en anlamlı
+    # tema sinyalini kullan. F06/F07 otomatik varsayılan değildir.
+    rescue=[]
+    rescue_defs=[
+        ('F01 — Silahsızlanma / Fesih / Uygulama',V191_DISARM_CUES),
+        ('F02 — Hukuki / Meclis / Komisyon / İnfaz-Af',V191_LEGAL_CUES),
+        ('F03 — Öcalan / İmralı / Statü-Rol',V191_OCALAN_ENTITY),
+        ('F04 — Suriye / SDG-YPG / Şam-Entegrasyon',V191_SYRIA_ENTITY),
+        ('F05 — Irak / IKBY / Kandil / Sincar',V191_IRAQ_ENTITY),
+        ('F08 — Güvenlik / Operasyon / Çatışma',V191_SECURITY_CONTEXT),
+        ('F09 — Toplumsal Katılım / Kamuoyu / Mağduriyet',V191_PUBLIC_CUES),
+        ('F10 — Demokratik Çözüm / Barış / Hak Talepleri',V191_RIGHTS_CUES),
+        ('F12 — Ekonomi / Kalkınma / Bölgesel Refah Etkileri',V195_ECON_CUES),
+    ]
+    for fr,terms in rescue_defs:
+        s,e,se=_v196_topic_score(units,terms)
+        if s>0: rescue.append((s,fr,e,se))
+    if rescue:
+        rescue.sort(reverse=True,key=lambda z:z[0]); s,fr,e,se=rescue[0]
+        if se: e=list(e)+['kanıt cümlesi: '+se[0][:220]]
+        return fr,list(dict.fromkeys(e))[:10]+['karar kuralı: tam metindeki baskın konu sinyali'],58
+
+    # Son derece kısa fakat ilgili kayıtlarda F07 yerine açık süreç seyri varsa F06;
+    # aksi halde F07. Bu bölüm normal koşullarda çok az çalışmalıdır.
+    if _v191_hits(head_text,V196_PROGRESS_CUES):
+        return 'F06 — Sürecin Takvimi / Aşaması / İzleme',['karar kuralı: kısa metinde açık süreç seyri/takvim ifadesi'],56
+    return 'F07 — Siyasi / Diplomatik Aktör Pozisyonları',['karar kuralı: içerik ilgili; tam metin/özet özgül konu ayrımı için yetersiz'],52
+
+
+# V196 ayrı akademik arşiv: V195 sınıflandırmaları yeni Gephi verisine karışmaz.
+def _v188_tables():
+    try:
+        conn=_history_connect()
+        try:
+            conn.execute("""CREATE TABLE IF NOT EXISTS academic_items_v196(
+                content_key TEXT PRIMARY KEY, published_at TEXT, source_family TEXT, source TEXT, domain TEXT,
+                title TEXT, summary TEXT, url TEXT, academic_frame TEXT, frame_evidence TEXT, frame_score INTEGER,
+                relevance_basis TEXT, relevance_score INTEGER, date_basis TEXT, engine TEXT, protocol_version TEXT,
+                protocol_hash TEXT, collected_at TEXT)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS academic_scans_v196(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, scanned_at TEXT, hours INTEGER, protocol_version TEXT, protocol_hash TEXT,
+                report_pool INTEGER, eligible_pool INTEGER, final_count INTEGER, excluded_channel INTEGER, excluded_family INTEGER,
+                excluded_date INTEGER, excluded_undated INTEGER, excluded_irrelevant INTEGER)""")
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v196_pub ON academic_items_v196(published_at)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v196_family ON academic_items_v196(source_family)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v196_frame ON academic_items_v196(academic_frame)')
+            conn.commit()
+        finally: conn.close()
+        return True
+    except Exception: return False
+
+
+def _v188_save(rows,diag,hours):
+    if not _v188_tables(): return 0,0
+    now_iso=datetime.now(timezone.utc).isoformat(); ph=_v188_protocol_hash(hours); new_count=0; conn=_history_connect()
+    try:
+        for r in rows:
+            if not conn.execute('SELECT 1 FROM academic_items_v196 WHERE content_key=?',(r['content_key'],)).fetchone(): new_count+=1
+            conn.execute("""INSERT INTO academic_items_v196(content_key,published_at,source_family,source,domain,title,summary,url,academic_frame,frame_evidence,frame_score,relevance_basis,relevance_score,date_basis,engine,protocol_version,protocol_hash,collected_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(content_key) DO UPDATE SET published_at=excluded.published_at,source_family=excluded.source_family,source=excluded.source,domain=excluded.domain,title=excluded.title,summary=excluded.summary,url=excluded.url,academic_frame=excluded.academic_frame,frame_evidence=excluded.frame_evidence,frame_score=excluded.frame_score,relevance_basis=excluded.relevance_basis,relevance_score=excluded.relevance_score,date_basis=excluded.date_basis,engine=excluded.engine,protocol_version=excluded.protocol_version,protocol_hash=excluded.protocol_hash,collected_at=excluded.collected_at""",
+            (r['content_key'],r['Tarih_dt'].isoformat(),r['Kaynak Ailesi'],r['Kaynak'],r['Domain'],r['Başlık'],r['İçerik_Özeti'],r['URL'],r['Akademik Çerçeve'],r['Çerçeve Kanıtı'],int(r['Çerçeve Skoru']),r['İlgililik Kanıtı'],int(r['İlgililik Skoru']),r['Tarih Kaynağı'],r['Motor'],V188_PROTOCOL,ph,now_iso))
+        conn.execute("""INSERT INTO academic_scans_v196(scanned_at,hours,protocol_version,protocol_hash,report_pool,eligible_pool,final_count,excluded_channel,excluded_family,excluded_date,excluded_undated,excluded_irrelevant) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (now_iso,int(hours),V188_PROTOCOL,ph,int(diag.get('report_pool',0)),int(diag.get('eligible_pool',0)),len(rows),int(diag.get('kanal',0)),int(diag.get('aile_disi',0)),int(diag.get('eski',0)),int(diag.get('tarihsiz',0)),int(diag.get('ilgisiz',0))))
+        conn.commit(); total=int(conn.execute('SELECT COUNT(*) FROM academic_items_v196').fetchone()[0])
+    finally: conn.close()
+    return new_count,total
+
+
+def _v188_archive(start_date=None,end_date=None):
+    if not _v188_tables(): return pd.DataFrame()
+    sql='SELECT published_at,source_family,source,domain,title,summary,url,academic_frame,frame_score,relevance_basis,relevance_score,date_basis,engine,protocol_version,protocol_hash FROM academic_items_v196'; params=[]; where=[]
+    if start_date is not None: where.append('published_at>=?'); params.append(datetime.combine(start_date,datetime.min.time(),tzinfo=timezone.utc).isoformat())
+    if end_date is not None: where.append('published_at<?'); params.append((datetime.combine(end_date,datetime.min.time(),tzinfo=timezone.utc)+timedelta(days=1)).isoformat())
+    if where: sql+=' WHERE '+' AND '.join(where)
+    sql+=' ORDER BY published_at DESC'
+    try:
+        conn=_history_connect()
+        try: return pd.read_sql_query(sql,conn,params=params)
+        finally: conn.close()
+    except Exception: return pd.DataFrame()
+
+# ============================================================
+# /V196
+# ============================================================
+
 # V192 — Eski akademik sürümlerden kalan session_state kayıtlarının yeni
 # sınıflandırıcıyı maskelemesini engelle. Protokol değiştiğinde eski ekran
 # sonuçları/diagnostics temizlenir; kullanıcı yeni taramayı çalıştırır.
@@ -44851,7 +45139,7 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
     st.markdown('---'); st.subheader(f'{st.session_state.get("_v191_last_period",period)} — Akademik Korpus')
     if academic:
         ax=pd.DataFrame(academic); fam=ax['Kaynak Ailesi'].value_counts(); c1,c2,c3,c4=st.columns(4); c1.metric('Yerli',int(fam.get('Yerli Basın',0))); c2.metric('Kürt Bölgesel',int(fam.get('Kürt Bölgesel Medyası',0))); c3.metric('PKK/KCK',int(fam.get('PKK/KCK Açık Kaynak',0))); c4.metric('Yabancı',int(fam.get('Yabancı Basın',0)))
-        st.caption('Arama/sorgu/motor raporlama ile aynıdır. Akademik katman raporlama havuzunu kullanır; kesin zaman kapısı ve otomatik ilgililik denetiminden sonra her ilgili haberi 12 keskin çerçeveden tek birine atar. Aktif sınıflandırıcı: V195 / F01–F12 · yayın-zamanı + haber-sayfası + doğrudan ilgililik + domain-aile + keskin çerçeve denetimi.')
+        st.caption('Arama/sorgu/motor raporlama ile aynıdır. Akademik katman raporlama havuzunu kullanır; kesin zaman kapısı ve otomatik ilgililik denetiminden sonra her ilgili haberi 12 keskin çerçeveden tek birine atar. Aktif sınıflandırıcı: V196 / F01–F12 · içerik-odaklı karar · yayın-zamanı + haber-sayfası + doğrudan ilgililik + domain-aile + keskin çerçeve denetimi.')
         st.dataframe(ax[['Tarih','Kaynak Ailesi','Kaynak','Akademik Çerçeve','Başlık','URL']],hide_index=True,use_container_width=True,height=min(680,130+32*min(17,len(ax))),column_config={'URL':st.column_config.LinkColumn('Bağlantı',display_text='Aç')})
 
         # V193 — Tüm F01–F12 çerçevelerini, hiç haber yoksa dahi 0 ile göster.
@@ -44877,7 +45165,7 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
         diag=st.session_state.get('_v191_diag') or {}
         if diag:
             with st.expander('🔎 Akademik kalite kontrol özeti',False):
-                rf=diag.get('families_before') or {}; st.write('**Raporlama havuzundaki akademik kaynak aileleri:** '+f"Yerli {rf.get('Yerli Basın',0)} · Yabancı {rf.get('Yabancı Basın',0)} · Kürt Bölgesel {rf.get('Kürt Bölgesel Medyası',0)} · PKK/KCK {rf.get('PKK/KCK Açık Kaynak',0)}"); st.write(f"Dört akademik aile + kanal filtresi sonrası: **{diag.get('eligible_pool',0)}** · nihai akademik korpus: **{diag.get('final',0)}**"); st.write(f"Çıkarılan: kanal **{diag.get('kanal',0)}**, aile dışı **{diag.get('aile_disi',0)}**, zaman dışı **{diag.get('eski',0)}**, tarihi doğrulanamayan **{diag.get('tarihsiz',0)}**, konu dışı **{diag.get('ilgisiz',0)}**, tekrar **{diag.get('dedupe',0)}**."); st.write(f"Düşük çerçeve güveni (korpusta tutuldu): **{diag.get('dusuk_cerceve_guveni',0)}**. V195'te koruyucu kabul yoktur; konu bağı doğrulanmayan kayıt otomatik çıkarılır.")
+                rf=diag.get('families_before') or {}; st.write('**Raporlama havuzundaki akademik kaynak aileleri:** '+f"Yerli {rf.get('Yerli Basın',0)} · Yabancı {rf.get('Yabancı Basın',0)} · Kürt Bölgesel {rf.get('Kürt Bölgesel Medyası',0)} · PKK/KCK {rf.get('PKK/KCK Açık Kaynak',0)}"); st.write(f"Dört akademik aile + kanal filtresi sonrası: **{diag.get('eligible_pool',0)}** · nihai akademik korpus: **{diag.get('final',0)}**"); st.write(f"Çıkarılan: kanal **{diag.get('kanal',0)}**, aile dışı **{diag.get('aile_disi',0)}**, zaman dışı **{diag.get('eski',0)}**, tarihi doğrulanamayan **{diag.get('tarihsiz',0)}**, konu dışı **{diag.get('ilgisiz',0)}**, tekrar **{diag.get('dedupe',0)}**."); st.write(f"Düşük çerçeve güveni (korpusta tutuldu): **{diag.get('dusuk_cerceve_guveni',0)}**. V196'da çerçeve haberi tam metin/özet içeriğinden belirlenir; koruyucu kabul yoktur; konu bağı doğrulanmayan kayıt otomatik çıkarılır.")
                 samp=diag.get('excluded_samples') or []
                 if samp: st.dataframe(pd.DataFrame(samp,columns=['Neden','Başlık']),hide_index=True,use_container_width=True,height=min(420,90+28*len(samp)))
         with st.expander('🧪 Çerçeve doğrulama örnekleri',False): st.dataframe(ax[['Başlık','Akademik Çerçeve','Çerçeve Kanıtı','Çerçeve Skoru','İlgililik Kanıtı','İlgililik Skoru','Tarih Kaynağı']].head(80),hide_index=True,use_container_width=True,height=520)
