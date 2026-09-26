@@ -43145,7 +43145,7 @@ def _v180_resolve_missing_dates(rows, max_workers=8):
 #   5) Kaynak ↔ Çerçeve Gephi çıktısı üretir.
 # ============================================================
 
-V188_PROTOCOL='V189-A1-SAME-REPORTING-POOL-TRUST-REPORT-DATE-NEGATIVE-NOISE-GATE-CONTENT-FRAME'
+V188_PROTOCOL='V190-A1-SAME-REPORTING-POOL-DATE-GATE-CONSERVATIVE-RELEVANCE-ACTOR-CONTEXT-FRAME'
 V188_FAMILIES=('Yerli Basın','Kürt Bölgesel Medyası','PKK/KCK Açık Kaynak','Yabancı Basın')
 V188_FRAMES=(
     'Silahsızlanma / Fesih / Uygulama',
@@ -43326,6 +43326,31 @@ V188_REFERENCE_DOMAINS={'wikipedia.org','tr.wikipedia.org','en.wikipedia.org','w
 V188_ALWAYS_OFFTOPIC=['istanbul barosu seçimi','istanbul barosu seçimleri','baro seçimi','baro seçimleri','bar association election']
 
 
+# V190 — Akademik false-negative düzeltmesi
+# Raporlama motoru zaten konu odaklı bir ön filtre oluşturur. Akademik katmanda
+# doğrudan çekirdek kelime bulunmadığı için süreç aktörlerinin konuya ilişkin
+# açıklamalarını kaybetmemek amacıyla aktör + bağlam kapısı eklenmiştir.
+V190_PROCESS_ACTORS=[
+    'pervin buldan','tuncer bakırhan','tuncer bakirhan','tülay hatimoğulları','tulay hatimogullari',
+    'ahmet türk','ahmet turk','sırrı süreyya önder','sirri sureyya onder','meral danış beştaş','meral danis bestas',
+    'devlet bahçeli','devlet bahceli','ismet büyükataman','ismet buyukataman','feti yıldız','feti yildiz',
+    'numan kurtulmuş','numan kurtulmus','recep tayyip erdoğan','recep tayyip erdogan','efkan ala',
+    'cemil bayık','cemil bayik','murat karayılan','murat karayilan','duran kalkan','mustafa karasu','bese hozat',
+    'mazlum abdi','mazloum abdi','dem heyeti','imralı heyeti','imrali heyeti'
+]
+
+V190_PROCESS_CONTEXT_CUES=[
+    'süreç açıklaması','surec aciklamasi','sürece ilişkin','surece iliskin','sürece dair','surece dair',
+    'süreçte','surecte','sürecin','surecin','süreç hakkında','surec hakkinda','yeni aşama','yeni asama',
+    'önemli gelişmeler olacak','onemli gelismeler olacak','af yok','kesinlikle af yok','af olmayacak',
+    'genel af','af düzenlemesi','af duzenlemesi','infaz düzenlemesi','infaz duzenlemesi',
+    'yasal düzenleme','yasal duzenleme','hukuki düzenleme','hukuki duzenleme','komisyon',
+    'silah bırak','silah birak','silahsızlan','silahsizlan','fesih','tasfiye','umut hakkı','umut hakki',
+    'müzakere','muzakere','diyalog','barış süreci','baris sureci','çözüm süreci','cozum sureci',
+    'terörsüz türkiye','terorsuz turkiye','barış ve demokratik toplum','baris ve demokratik toplum'
+]
+
+
 def _v188_contains(text,terms):
     t=norm(text or '')
     return any(norm(x) in t for x in terms if norm(x))
@@ -43404,11 +43429,25 @@ def _v188_relevance(title,body,domain_name='',family=''):
     if reg_actor_hits and reg_link_hits:
         return True,'bölgesel aktör + süreç bağlantısı: '+', '.join((reg_actor_hits+reg_link_hits)[:5]),16
 
-    # 6) Siyasi aktör haberi tek başına yeterli değildir; süreç çekirdeğiyle birlikte olmalı.
+    # 6) Siyasi aktör haberi tek başına yeterli değildir; süreç çekirdeği veya
+    # süreç-bağlam ifadesiyle birlikte olmalıdır. Böylece 'Pervin Buldan'dan
+    # süreç açıklaması' ya da 'Büyükataman: kesinlikle af yok' gibi doğrudan
+    # ilgili içerikler, başlıkta PKK/Öcalan kelimesi bulunmadığı için kaybolmaz.
     pol_hits=[x for x in V188_POLITICAL_ACTORS if norm(x) and norm(x) in nh]
+    process_actor_hits=[x for x in V190_PROCESS_ACTORS if norm(x) and norm(x) in nh]
     body_core=[x for x in V188_DIRECT_PROCESS if norm(x) and norm(x) in na]
-    if pol_hits and body_core:
-        return True,'siyasi aktör + süreç bağlantısı: '+', '.join((pol_hits+body_core)[:5]),13
+    context_hits=[x for x in V190_PROCESS_CONTEXT_CUES if norm(x) and norm(x) in nh]
+    if (pol_hits or process_actor_hits) and body_core:
+        return True,'siyasi/süreç aktörü + doğrudan süreç bağlantısı: '+', '.join((pol_hits+process_actor_hits+body_core)[:6]),15
+    if process_actor_hits and context_hits:
+        return True,'süreç aktörü + süreç bağlamı: '+', '.join((process_actor_hits+context_hits)[:6]),14
+
+    # Raporlama motorunun ön filtresinden geçen ve başlığında açıkça 'süreç
+    # açıklaması / sürece ilişkin' gibi ifadeler taşıyan kayıtlar, konu başka
+    # bir sürece açıkça işaret etmiyorsa akademik korpusta tutulur.
+    strong_context=[x for x in ['süreç açıklaması','surec aciklamasi','sürece ilişkin','surece iliskin','sürece dair','surece dair'] if norm(x) in nh]
+    if strong_context and (pol_hits or process_actor_hits):
+        return True,'aktörlü açık süreç açıklaması: '+', '.join((pol_hits+process_actor_hits+strong_context)[:6]),13
 
     # 7) Dar kaynak ailelerinde (Kürt bölgesel / PKK-KCK) tam metinde güçlü süreç
     # aktörü/eylemi bulunması, başlık farklı dilde olsa da kabul için yeterlidir.
@@ -43519,7 +43558,9 @@ def _v188_dominant_frame(title,body):
             'meclis komisyonu','tbmm komisyonu','milli dayanışma kardeşlik ve demokrasi komisyonu',
             'çerçeve yasa','cerceve yasa','yasal düzenleme','yasal duzenleme','kanun teklifi','yasa teklifi',
             'hukuki güvence','hukuki guvence','infaz düzenlemesi','infaz duzenlemesi','legal framework',
-            'legislation','parliamentary commission','law package','yasa uygulanacak','yasa uygulanmayacak'
+            'legislation','parliamentary commission','law package','yasa uygulanacak','yasa uygulanmayacak',
+            'kesinlikle af yok','af yok','af olmayacak','genel af','af düzenlemesi','af duzenlemesi',
+            'ceza indirimi','infaz yasası','infaz yasasi'
         ],
         'Güvenlik / Terörle Mücadele':[
             'terörle mücadele','terorle mucadele','askeri operasyon','güvenlik operasyonu','guvenlik operasyonu',
@@ -43553,10 +43594,12 @@ def _v188_dominant_frame(title,body):
 
     # Siyasi süreç çerçevesi: aktör/kurum + süreç bağı gerekir.
     pol=[x for x in V188_POLITICAL_FRAME if norm(x) and norm(x) in norm(head)]
+    actor_ctx=[x for x in V190_PROCESS_ACTORS if norm(x) and norm(x) in norm(head)]
     core=[x for x in V188_DIRECT_PROCESS if norm(x) and norm(x) in norm(head)]
-    if pol and core:
-        score=62 + min(15,3*len(pol)) + min(10,2*len(core))
-        scored.append((score,'Siyasi Süreç / Aktör Pozisyonları',list(dict.fromkeys(pol+core))[:8]))
+    ctx=[x for x in V190_PROCESS_CONTEXT_CUES if norm(x) and norm(x) in norm(head)]
+    if (pol or actor_ctx) and (core or ctx):
+        score=62 + min(15,3*len(pol+actor_ctx)) + min(10,2*len(core+ctx))
+        scored.append((score,'Siyasi Süreç / Aktör Pozisyonları',list(dict.fromkeys(pol+actor_ctx+core+ctx))[:8]))
 
     # Terörsüz Türkiye temalı toplantı/buluşma doğrudan toplumsal-söylemsel çerçevedir.
     if _v188_contains(title,['terörsüz türkiye','terorsuz turkiye']) and _v188_contains(title,V188_PUBLIC_EVENT):
@@ -43595,16 +43638,16 @@ def _v188_tables():
     try:
         conn=_history_connect()
         try:
-            conn.execute("""CREATE TABLE IF NOT EXISTS academic_items_v189(
+            conn.execute("""CREATE TABLE IF NOT EXISTS academic_items_v190(
                 content_key TEXT PRIMARY KEY, published_at TEXT, source_family TEXT, source TEXT, domain TEXT,
                 title TEXT, summary TEXT, url TEXT, academic_frame TEXT, frame_evidence TEXT, frame_score INTEGER,
                 relevance_basis TEXT, relevance_score INTEGER, date_basis TEXT, engine TEXT, protocol_version TEXT,
                 protocol_hash TEXT, collected_at TEXT)""")
-            conn.execute("""CREATE TABLE IF NOT EXISTS academic_scans_v189(
+            conn.execute("""CREATE TABLE IF NOT EXISTS academic_scans_v190(
                 id INTEGER PRIMARY KEY AUTOINCREMENT, scanned_at TEXT, hours INTEGER, protocol_version TEXT, protocol_hash TEXT,
                 report_pool INTEGER, eligible_pool INTEGER, final_count INTEGER, excluded_channel INTEGER, excluded_family INTEGER,
                 excluded_date INTEGER, excluded_undated INTEGER, excluded_irrelevant INTEGER)""")
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v189_pub ON academic_items_v189(published_at)'); conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v189_family ON academic_items_v189(source_family)'); conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v189_frame ON academic_items_v189(academic_frame)'); conn.commit()
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v190_pub ON academic_items_v190(published_at)'); conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v190_family ON academic_items_v190(source_family)'); conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v190_frame ON academic_items_v190(academic_frame)'); conn.commit()
         finally: conn.close()
         return True
     except Exception: return False
@@ -43619,20 +43662,20 @@ def _v188_save(rows,diag,hours):
     now_iso=datetime.now(timezone.utc).isoformat(); ph=_v188_protocol_hash(hours); new_count=0; conn=_history_connect()
     try:
         for r in rows:
-            if not conn.execute('SELECT 1 FROM academic_items_v189 WHERE content_key=?',(r['content_key'],)).fetchone(): new_count+=1
-            conn.execute("""INSERT INTO academic_items_v189(content_key,published_at,source_family,source,domain,title,summary,url,academic_frame,frame_evidence,frame_score,relevance_basis,relevance_score,date_basis,engine,protocol_version,protocol_hash,collected_at)
+            if not conn.execute('SELECT 1 FROM academic_items_v190 WHERE content_key=?',(r['content_key'],)).fetchone(): new_count+=1
+            conn.execute("""INSERT INTO academic_items_v190(content_key,published_at,source_family,source,domain,title,summary,url,academic_frame,frame_evidence,frame_score,relevance_basis,relevance_score,date_basis,engine,protocol_version,protocol_hash,collected_at)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(content_key) DO UPDATE SET published_at=excluded.published_at,source_family=excluded.source_family,source=excluded.source,domain=excluded.domain,title=excluded.title,summary=excluded.summary,url=excluded.url,academic_frame=excluded.academic_frame,frame_evidence=excluded.frame_evidence,frame_score=excluded.frame_score,relevance_basis=excluded.relevance_basis,relevance_score=excluded.relevance_score,date_basis=excluded.date_basis,engine=excluded.engine,protocol_version=excluded.protocol_version,protocol_hash=excluded.protocol_hash,collected_at=excluded.collected_at""",
             (r['content_key'],r['Tarih_dt'].isoformat(),r['Kaynak Ailesi'],r['Kaynak'],r['Domain'],r['Başlık'],r['İçerik_Özeti'],r['URL'],r['Akademik Çerçeve'],r['Çerçeve Kanıtı'],int(r['Çerçeve Skoru']),r['İlgililik Kanıtı'],int(r['İlgililik Skoru']),r['Tarih Kaynağı'],r['Motor'],V188_PROTOCOL,ph,now_iso))
-        conn.execute("""INSERT INTO academic_scans_v189(scanned_at,hours,protocol_version,protocol_hash,report_pool,eligible_pool,final_count,excluded_channel,excluded_family,excluded_date,excluded_undated,excluded_irrelevant) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+        conn.execute("""INSERT INTO academic_scans_v190(scanned_at,hours,protocol_version,protocol_hash,report_pool,eligible_pool,final_count,excluded_channel,excluded_family,excluded_date,excluded_undated,excluded_irrelevant) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
         (now_iso,int(hours),V188_PROTOCOL,ph,int(diag.get('report_pool',0)),int(diag.get('eligible_pool',0)),len(rows),int(diag.get('kanal',0)),int(diag.get('aile_disi',0)),int(diag.get('eski',0)),int(diag.get('tarihsiz',0)),int(diag.get('ilgisiz',0))))
-        conn.commit(); total=int(conn.execute('SELECT COUNT(*) FROM academic_items_v189').fetchone()[0])
+        conn.commit(); total=int(conn.execute('SELECT COUNT(*) FROM academic_items_v190').fetchone()[0])
     finally: conn.close()
     return new_count,total
 
 
 def _v188_archive(start_date=None,end_date=None):
     if not _v188_tables(): return pd.DataFrame()
-    sql='SELECT published_at,source_family,source,domain,title,summary,url,academic_frame,frame_score,relevance_basis,relevance_score,date_basis,engine,protocol_version,protocol_hash FROM academic_items_v189'; params=[]; where=[]
+    sql='SELECT published_at,source_family,source,domain,title,summary,url,academic_frame,frame_score,relevance_basis,relevance_score,date_basis,engine,protocol_version,protocol_hash FROM academic_items_v190'; params=[]; where=[]
     if start_date is not None: where.append('published_at>=?'); params.append(datetime.combine(start_date,datetime.min.time(),tzinfo=timezone.utc).isoformat())
     if end_date is not None: where.append('published_at<?'); params.append((datetime.combine(end_date,datetime.min.time(),tzinfo=timezone.utc)+timedelta(days=1)).isoformat())
     if where: sql+=' WHERE '+' AND '.join(where)
@@ -43657,7 +43700,7 @@ def _v188_gephi(df):
 
 def _v188_gexf(nodes,edges):
     if nodes is None or edges is None or nodes.empty or edges.empty: return b''
-    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'}); meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')}); ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT — Akademik V189'; ET.SubElement(meta,'description').text='Kaynak-Çerçeve ağı; Weight=RawCount/SourceTotal.'
+    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'}); meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')}); ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT — Akademik V190'; ET.SubElement(meta,'description').text='Kaynak-Çerçeve ağı; Weight=RawCount/SourceTotal.'
     graph=ET.SubElement(root,'graph',{'mode':'static','defaultedgetype':'undirected'}); na=ET.SubElement(graph,'attributes',{'class':'node'}); ET.SubElement(na,'attribute',{'id':'0','title':'NodeType','type':'string'}); ET.SubElement(na,'attribute',{'id':'1','title':'SourceFamily','type':'string'}); ET.SubElement(na,'attribute',{'id':'2','title':'Domain','type':'string'}); ea=ET.SubElement(graph,'attributes',{'class':'edge'}); ET.SubElement(ea,'attribute',{'id':'10','title':'RawCount','type':'integer'}); ET.SubElement(ea,'attribute',{'id':'11','title':'SourceTotal','type':'integer'}); ET.SubElement(ea,'attribute',{'id':'12','title':'NormalizedWeight','type':'double'})
     ng=ET.SubElement(graph,'nodes')
     for _,n in nodes.iterrows():
