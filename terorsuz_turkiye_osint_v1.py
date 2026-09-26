@@ -43145,7 +43145,7 @@ def _v180_resolve_missing_dates(rows, max_workers=8):
 #   5) Kaynak ↔ Çerçeve Gephi çıktısı üretir.
 # ============================================================
 
-V188_PROTOCOL='V193-A1-SAME-REPORTING-POOL-STRICT-DATE-TWO-STAGE-RELEVANCE-11-EXCLUSIVE-FRAMES-QA'
+V188_PROTOCOL='V194-A1-SAME-REPORTING-POOL-STRICT-DATE-RECALL-FIRST-HARD-EXCLUSION-11-EXCLUSIVE-FRAMES-QA'
 V188_FAMILIES=('Yerli Basın','Kürt Bölgesel Medyası','PKK/KCK Açık Kaynak','Yabancı Basın')
 V188_FRAMES=(
     'Silahsızlanma / Fesih / Uygulama',
@@ -43700,7 +43700,7 @@ def _v188_gephi(df):
 
 def _v188_gexf(nodes,edges):
     if nodes is None or edges is None or nodes.empty or edges.empty: return b''
-    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'}); meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')}); ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT — Akademik V193'; ET.SubElement(meta,'description').text='Kaynak-Çerçeve ağı; Weight=RawCount/SourceTotal.'
+    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'}); meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')}); ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT — Akademik V194'; ET.SubElement(meta,'description').text='Kaynak-Çerçeve ağı; Weight=RawCount/SourceTotal.'
     graph=ET.SubElement(root,'graph',{'mode':'static','defaultedgetype':'undirected'}); na=ET.SubElement(graph,'attributes',{'class':'node'}); ET.SubElement(na,'attribute',{'id':'0','title':'NodeType','type':'string'}); ET.SubElement(na,'attribute',{'id':'1','title':'SourceFamily','type':'string'}); ET.SubElement(na,'attribute',{'id':'2','title':'Domain','type':'string'}); ea=ET.SubElement(graph,'attributes',{'class':'edge'}); ET.SubElement(ea,'attribute',{'id':'10','title':'RawCount','type':'integer'}); ET.SubElement(ea,'attribute',{'id':'11','title':'SourceTotal','type':'integer'}); ET.SubElement(ea,'attribute',{'id':'12','title':'NormalizedWeight','type':'double'})
     ng=ET.SubElement(graph,'nodes')
     for _,n in nodes.iterrows():
@@ -44202,6 +44202,158 @@ def _v188_relevance(title,body,domain_name='',family=''):
 # /V193 OTOMATİK İKİNCİ KAPI
 # ============================================================
 
+# ============================================================
+# V194 — RECALL-FIRST AKADEMİK İLGİLİLİK
+#
+# Amaç:
+# - Akademik korpusta güçlü biçimde ilgili bir haberi kaçırma riskini asgariye indirmek.
+# - Raporlama motoru zaten konu odaklı ilk ön filtredir. Bu nedenle akademik katman
+#   yalnız KESİN dışlama kanıtı varsa haber çıkarır; belirsiz kayıtları korpusta tutar.
+# - Böylece "Büyükataman + af", "Ala + terörsüz bölge", "Buldan + süreç" gibi
+#   başlıklar tek tek manuel beyaz listeye ihtiyaç duymadan korunur.
+# - Kesin dışlama: referans/ansiklopedi, spor-magazin, açık servis/gürültü,
+#   açıkça süreç dışı ekonomi/enerji ve benzeri içerikler + süreç bağlantısı yokluğu.
+# - Belirsiz ama raporlama ön filtresinden geçmiş kayıt: AKADEMİK KORPUSTA TUTULUR,
+#   "koruyucu kabul" olarak işaretlenir ve F01-F11 karar ağacına gönderilir.
+# ============================================================
+
+V194_HARD_OFFTOPIC_FAMILIES={
+    'spor':[
+        'maç','mac','futbol','basketbol','voleybol','transfer','gol','uefa','fifa','şampiyonlar ligi',
+        'super lig','süper lig','match highlights','all goals','fixture','score'
+    ],
+    'magazin_eğlence':[
+        'magazin','dizi','fragman','sinema','şarkıcı','sarkici','konser','oyuncu','reality show','festival programı'
+    ],
+    'yerel_servis':[
+        'hava durumu','su kesintisi','elektrik kesintisi','nöbetçi eczane','nobetci eczane','trafik durumu',
+        'namaz vakti','burç','burc','yemek tarifi'
+    ],
+    'saf_ekonomi_enerji':[
+        'kalkınma yolu','kalkinma yolu','enerji koridoru','petrol fiyat','doğalgaz fiyat','dogalgaz fiyat',
+        'borsa','altın fiyat','altin fiyat','döviz','doviz','ticaret hacmi','ihracat rakam','enflasyon oranı'
+    ],
+    'genel_dis_politika':[
+        "iran'ın artık abd'ye güveni yok",'iran abdye güvenmiyor','iran abd ye güvenmiyor',
+        'ukrayna savaşı','ukrayna savasi','gazze savaşı','gazze savasi'
+    ]
+}
+
+V194_POSITIVE_ANCHORS=list(dict.fromkeys(
+    list(V188_DIRECT_PROCESS)
+    + list(V193_DIRECT_PROCESS_EXTRA)
+    + list(V191_OCALAN_ENTITY)
+    + list(V191_DISARM_CUES)
+    + list(V191_LEGAL_CUES)
+    + list(V191_SYRIA_ENTITY)
+    + list(V191_IRAQ_ENTITY)
+))
+
+
+def _v194_has_positive_process_signal(title, body):
+    """En az bir güçlü süreç sinyali ya da aktör+bağlam çifti var mı?"""
+    title=_v188_clean_age_noise(title); body=_v188_clean_age_noise(body)
+    try:
+        sents=_v142_sentences(body)
+    except Exception:
+        sents=re.split(r'(?<=[.!?])\\s+',body)
+    lead=' '.join(sents[:8])[:7500]
+    head=(title+' '+lead).strip()
+    alltxt=(head+' '+body[:26000]).strip()
+
+    direct=_v191_hits(head,V194_POSITIVE_ANCHORS)
+    if direct:
+        return True,['doğrudan:'+x for x in direct[:5]]
+
+    actors=_v191_hits(head,V191_PROCESS_ACTORS)
+    context=_v191_hits(head,V191_PROCESS_CONTEXT)
+    if actors and context:
+        return True,(actors+context)[:8]
+
+    # Bölgesel dosyalarda varlık + süreç eylemi birlikte aranır.
+    sy=_v191_hits(head,V191_SYRIA_ENTITY); sya=_v191_hits(alltxt,V191_SYRIA_ACTION)
+    if sy and sya:
+        return True,(sy+sya)[:8]
+    iq=_v191_hits(head,V191_IRAQ_ENTITY); iqa=_v191_hits(alltxt,V191_IRAQ_ACTION)
+    if iq and iqa:
+        return True,(iq+iqa)[:8]
+
+    # Güvenlik açıklaması süreç aktörü tarafından yapılıyorsa olumlu sinyal.
+    sec=_v191_hits(head,V191_SECURITY_CONTEXT)
+    if actors and sec:
+        return True,(actors+sec)[:8]
+
+    return False,[]
+
+
+def _v194_hard_offtopic(title, body, domain_name=''):
+    """
+    Yalnız yüksek kesinlikte konu dışı kayıtları dışlar.
+    Pozitif süreç sinyali varsa hiçbir genel konu ailesi haberi dışlamaz.
+    """
+    title=_v188_clean_age_noise(title); body=_v188_clean_age_noise(body)
+    try:
+        sents=_v142_sentences(body)
+    except Exception:
+        sents=re.split(r'(?<=[.!?])\\s+',body)
+    lead=' '.join(sents[:6])[:6000]
+    head=(title+' '+lead).strip()
+    d=str(domain_name or '').lower().replace('www.','')
+
+    positive,pev=_v194_has_positive_process_signal(title,body)
+    if positive:
+        return False,'',pev
+
+    # Referans/ansiklopedi sayfası.
+    if any(d==x or d.endswith('.'+x) for x in V188_REFERENCE_DOMAINS) or re.search(r'\\b(?:wikipedia|wikimedia)\\b',str(title),re.I):
+        return True,'referans/ansiklopedi sayfası',[]
+
+    nh=norm(head)
+    for fam,terms in V194_HARD_OFFTOPIC_FAMILIES.items():
+        hits=[x for x in terms if norm(x) and norm(x) in nh]
+        if hits:
+            return True,f'açık konu dışı/{fam}: {hits[0]}',hits[:4]
+
+    # Başlık yalnız kişi biyografisi/profil sayfası görünümündeyse ve süreç sinyali yoksa çıkar.
+    if re.fullmatch(r'\\s*(recep tayyip erdogan|recep tayyip erdoğan|abdullah ocalan|abdullah öcalan|syria|turkey|türkiye)\\s*(?:[-|].*)?', norm(title)):
+        return True,'genel profil/referans başlığı; süreç bağı yok',[]
+
+    return False,'',[]
+
+
+_V194_BASE_RELEVANCE=_v188_relevance
+
+def _v188_relevance(title,body,domain_name='',family=''):
+    """
+    V194 recall-first kuralı:
+    1) Önce V193/V191 güçlü kabul kuralları çalışır.
+    2) İlk kapı reddetse bile yalnız kesin dışlama varsa kayıt atılır.
+    3) Kesin dışlama yoksa raporlama motorunun konu ön-filtresine güvenilir ve
+       kayıt "koruyucu kabul" ile akademik korpusta tutulur.
+
+    Bu tasarım precision yerine önce recall'i korur; yani ilgili haberi kaçırmama
+    önceliklidir. Gürültü yalnız yüksek kesinlikli negatif kurallarla temizlenir.
+    """
+    ok,basis,score=_V194_BASE_RELEVANCE(title,body,domain_name,family)
+    if ok:
+        return True,basis,score
+
+    hard,reason,ev=_v194_hard_offtopic(title,body,domain_name)
+    if hard:
+        return False,reason,0
+
+    positive,pev=_v194_has_positive_process_signal(title,body)
+    if positive:
+        return True,'V194 koruyucu kabul — süreç sinyali: '+', '.join(pev[:6]),15
+
+    # Raporlama ana motoru zaten konu odaklı ön filtredir. Kesin konu dışı kanıt
+    # bulunmuyorsa haberi kaybetmemek için akademik korpusta tut.
+    return True,'V194 koruyucu kabul — raporlama ön filtresi; kesin dışlama kanıtı yok',8
+
+# ============================================================
+# /V194 RECALL-FIRST AKADEMİK İLGİLİLİK
+# ============================================================
+
 # V192 — Eski akademik sürümlerden kalan session_state kayıtlarının yeni
 # sınıflandırıcıyı maskelemesini engelle. Protokol değiştiğinde eski ekran
 # sonuçları/diagnostics temizlenir; kullanıcı yeni taramayı çalıştırır.
@@ -44218,7 +44370,7 @@ if st.session_state.get('_academic_active_protocol') != _V192_STATE_VERSION:
 if _v177_app_mode == '🎓 Akademik Veri Toplama':
     _raw=st.session_state.rows or []
     if isinstance(_raw,pd.DataFrame): _raw=_raw.to_dict('records')
-    _now=datetime.now(timezone.utc); _diag={'report_pool':len(_raw),'kanal':0,'aile_disi':0,'eski':0,'tarihsiz':0,'ilgisiz':0,'eligible_pool':0,'otomatik_kurtarma':0,'dusuk_cerceve_guveni':0}; _family_before={'Yerli Basın':0,'Yabancı Basın':0,'Kürt Bölgesel Medyası':0,'PKK/KCK Açık Kaynak':0}; _candidates=[]; _excluded=[]
+    _now=datetime.now(timezone.utc); _diag={'report_pool':len(_raw),'kanal':0,'aile_disi':0,'eski':0,'tarihsiz':0,'ilgisiz':0,'eligible_pool':0,'otomatik_kurtarma':0,'koruyucu_kabul':0,'dusuk_cerceve_guveni':0}; _family_before={'Yerli Basın':0,'Yabancı Basın':0,'Kürt Bölgesel Medyası':0,'PKK/KCK Açık Kaynak':0}; _candidates=[]; _excluded=[]
     for r0 in _raw:
         if not isinstance(r0,dict): continue
         r=dict(r0); fam=_v188_reporting_family(r)
@@ -44245,6 +44397,8 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
         source,dom,url=_v188_source_identity(r,detail); relevant,rel_basis,rel_score=_v188_relevance(title,body,dom,fam)
         if relevant and str(rel_basis).startswith('V193 otomatik ikinci kapı'):
             _diag['otomatik_kurtarma']+=1
+        if relevant and str(rel_basis).startswith('V194 koruyucu kabul'):
+            _diag['koruyucu_kabul']+=1
         if not relevant:
             _diag['ilgisiz']+=1
             if len(_excluded)<40: _excluded.append((rel_basis,title))
@@ -44266,7 +44420,7 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
     st.markdown('---'); st.subheader(f'{st.session_state.get("_v191_last_period",period)} — Akademik Korpus')
     if academic:
         ax=pd.DataFrame(academic); fam=ax['Kaynak Ailesi'].value_counts(); c1,c2,c3,c4=st.columns(4); c1.metric('Yerli',int(fam.get('Yerli Basın',0))); c2.metric('Kürt Bölgesel',int(fam.get('Kürt Bölgesel Medyası',0))); c3.metric('PKK/KCK',int(fam.get('PKK/KCK Açık Kaynak',0))); c4.metric('Yabancı',int(fam.get('Yabancı Basın',0)))
-        st.caption('Arama/sorgu/motor raporlama ile aynıdır. Akademik katman raporlama havuzunu kullanır; kesin zaman kapısı ve otomatik ilgililik denetiminden sonra her ilgili haberi 11 keskin çerçeveden tek birine atar. Aktif sınıflandırıcı: V193 / F01–F11 · iki aşamalı otomatik ilgililik denetimi.')
+        st.caption('Arama/sorgu/motor raporlama ile aynıdır. Akademik katman raporlama havuzunu kullanır; kesin zaman kapısı ve otomatik ilgililik denetiminden sonra her ilgili haberi 11 keskin çerçeveden tek birine atar. Aktif sınıflandırıcı: V194 / F01–F11 · recall-first akademik ilgililik + kesin dışlama denetimi.')
         st.dataframe(ax[['Tarih','Kaynak Ailesi','Kaynak','Akademik Çerçeve','Başlık','URL']],hide_index=True,use_container_width=True,height=min(680,130+32*min(17,len(ax))),column_config={'URL':st.column_config.LinkColumn('Bağlantı',display_text='Aç')})
 
         # V193 — Tüm F01–F11 çerçevelerini, hiç haber yoksa dahi 0 ile göster.
@@ -44283,7 +44437,7 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
         diag=st.session_state.get('_v191_diag') or {}
         if diag:
             with st.expander('🔎 Akademik kalite kontrol özeti',False):
-                rf=diag.get('families_before') or {}; st.write('**Raporlama havuzundaki akademik kaynak aileleri:** '+f"Yerli {rf.get('Yerli Basın',0)} · Yabancı {rf.get('Yabancı Basın',0)} · Kürt Bölgesel {rf.get('Kürt Bölgesel Medyası',0)} · PKK/KCK {rf.get('PKK/KCK Açık Kaynak',0)}"); st.write(f"Dört akademik aile + kanal filtresi sonrası: **{diag.get('eligible_pool',0)}** · nihai akademik korpus: **{diag.get('final',0)}**"); st.write(f"Çıkarılan: kanal **{diag.get('kanal',0)}**, aile dışı **{diag.get('aile_disi',0)}**, zaman dışı **{diag.get('eski',0)}**, tarihi doğrulanamayan **{diag.get('tarihsiz',0)}**, konu dışı **{diag.get('ilgisiz',0)}**, tekrar **{diag.get('dedupe',0)}**."); st.write(f"Otomatik ikinci kapıda kurtarılan ilgili haber: **{diag.get('otomatik_kurtarma',0)}** · düşük çerçeve güveni (korpusta tutuldu): **{diag.get('dusuk_cerceve_guveni',0)}**.")
+                rf=diag.get('families_before') or {}; st.write('**Raporlama havuzundaki akademik kaynak aileleri:** '+f"Yerli {rf.get('Yerli Basın',0)} · Yabancı {rf.get('Yabancı Basın',0)} · Kürt Bölgesel {rf.get('Kürt Bölgesel Medyası',0)} · PKK/KCK {rf.get('PKK/KCK Açık Kaynak',0)}"); st.write(f"Dört akademik aile + kanal filtresi sonrası: **{diag.get('eligible_pool',0)}** · nihai akademik korpus: **{diag.get('final',0)}**"); st.write(f"Çıkarılan: kanal **{diag.get('kanal',0)}**, aile dışı **{diag.get('aile_disi',0)}**, zaman dışı **{diag.get('eski',0)}**, tarihi doğrulanamayan **{diag.get('tarihsiz',0)}**, konu dışı **{diag.get('ilgisiz',0)}**, tekrar **{diag.get('dedupe',0)}**."); st.write(f"Otomatik ikinci kapıda kurtarılan ilgili haber: **{diag.get('otomatik_kurtarma',0)}** · koruyucu kabul ile korpusta tutulan belirsiz haber: **{diag.get('koruyucu_kabul',0)}** · düşük çerçeve güveni (korpusta tutuldu): **{diag.get('dusuk_cerceve_guveni',0)}**.")
                 samp=diag.get('excluded_samples') or []
                 if samp: st.dataframe(pd.DataFrame(samp,columns=['Neden','Başlık']),hide_index=True,use_container_width=True,height=min(420,90+28*len(samp)))
         with st.expander('🧪 Çerçeve doğrulama örnekleri',False): st.dataframe(ax[['Başlık','Akademik Çerçeve','Çerçeve Kanıtı','Çerçeve Skoru','İlgililik Kanıtı','İlgililik Skoru','Tarih Kaynağı']].head(80),hide_index=True,use_container_width=True,height=520)
