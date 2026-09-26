@@ -6,3 +6,4 @@ Pillow
 python-docx
 ddgs
 duckduckgo-search
+scikit-learn>=1.4,<2
