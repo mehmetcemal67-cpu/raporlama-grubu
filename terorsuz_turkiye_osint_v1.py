@@ -43130,72 +43130,124 @@ def _v180_resolve_missing_dates(rows, max_workers=8):
     return out
 
 # ============================================================
-# V184 — AKADEMİK MOD: RAPORLAMA MOTORU ÖN FİLTRE + İÇERİK TEMELLİ ÇERÇEVE
+# V185 — AKADEMİK MOD
+# RAPORLAMA MOTORU = TEK ARAMA MOTORU / AKADEMİK = SADECE SON FİLTRE + ÇERÇEVE
 # ============================================================
-V184_PROTOCOL='V184-A1-REPORT-ENGINE-PREFILTER-CONTENT-FRAME'
-V184_FAMILIES=('Yerli Basın','Kürt Bölgesel Medyası','PKK/KCK Açık Kaynak','Yabancı Basın')
-V184_FRAMES=(
+
+V185_PROTOCOL='V185-A1-SAME-REPORT-ENGINE-AUTO-FILTER-CONTENT-FRAME'
+V185_FAMILIES=('Yerli Basın','Kürt Bölgesel Medyası','PKK/KCK Açık Kaynak','Yabancı Basın')
+V185_FRAMES=(
     'Silahsızlanma / Fesih / Uygulama',
     'Öcalan / İmralı / Statü',
-    'Hukuki / Kurumsal Düzenlemeler',
+    'Hukuki / Meclis / Kurumsal Adımlar',
     'Siyasi Süreç / Aktör Pozisyonları',
     'Güvenlik / Terörle Mücadele',
     'Suriye-Irak / Bölgesel Boyut',
     'Toplumsal Barış / Kamuoyu / Tepki',
 )
 
-def _v184_academic_family(row):
-    mode=str(row.get('_mode','') or row.get('Tarama Kanalı','') or '').strip().lower()
-    mm={'turkish':'Yerli Basın','foreign':'Yabancı Basın','global':'Yabancı Basın','kurdish':'Kürt Bölgesel Medyası','movement':'PKK/KCK Açık Kaynak'}
-    if mode in mm: return mm[mode]
-    if mode in {'social','thinktank','commentary','greek'}: return ''
-    raw=norm(str(row.get('Kaynak Ailesi') or row.get('Kaynak_Grubu') or ''))
-    if 'pkk/kck' in raw or 'hareket soylemi' in raw: return 'PKK/KCK Açık Kaynak'
-    if 'kurt bolgesel' in raw: return 'Kürt Bölgesel Medyası'
-    if 'yabanci basin' in raw or 'uluslararasi ana akim' in raw: return 'Yabancı Basın'
-    if 'yerli basin' in raw or 'turk medyasi' in raw: return 'Yerli Basın'
+def _v185_domain_in(d, vals):
+    d=str(d or '').lower().replace('www.','').strip()
+    for x in vals or []:
+        x=str(x or '').lower().replace('www.','').strip()
+        if x and (d==x or d.endswith('.'+x)):
+            return True
+    return False
+
+def _v185_academic_family(row):
+    r=dict(row or {})
     try:
-        fam=str(_v36_family(row) or '')
-        if fam in V184_FAMILIES: return fam
-    except Exception: pass
+        fam=str(_v23_source_family(r) or '').strip()
+    except Exception:
+        fam=''
+    if fam=='PKK/KCK Açık Kaynak':
+        return fam
+    try:
+        d=_v113_row_domain(r)
+    except Exception:
+        try: d=_tt_norm_domain(r.get('Domain') or r.get('URL') or '')
+        except Exception: d=''
+    movement_domains=[]
+    for nm in ('TT_MOVEMENT_V9','V137_MOVEMENT_CURRENT','V113_MOVEMENT_CURRENT'):
+        try: movement_domains.extend(list(globals().get(nm,[]) or []))
+        except Exception: pass
+    if _v185_domain_in(d,movement_domains):
+        return 'PKK/KCK Açık Kaynak'
+    try:
+        if _v113_kurdish_umbrella_domain(d):
+            return 'Kürt Bölgesel Medyası'
+    except Exception:
+        pass
+    if fam in {'Kürt Bölgesel Medyası','Yerli Basın','Yabancı Basın'}:
+        return fam
+    raw=str(r.get('Kaynak_Grubu') or r.get('Kaynak Ailesi') or '').strip()
+    if raw=='🇹🇷 Yerli Basın': return 'Yerli Basın'
+    if raw=='🌍 Yabancı Basın': return 'Yabancı Basın'
+    if raw=='🟣 Kürt Bölgesel Medyası': return 'Kürt Bölgesel Medyası'
+    if raw=='🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak': return 'PKK/KCK Açık Kaynak'
+    nr=norm(raw)
+    if 'pkk/kck' in nr or 'hareket soylemi' in nr: return 'PKK/KCK Açık Kaynak'
+    if 'kurt medya' in nr or 'kurt bolgesel' in nr: return 'Kürt Bölgesel Medyası'
     return ''
 
-def _v184_has(text,terms):
+V185_EXACT_PROCESS=[
+    'terörsüz türkiye','terorsuz turkiye','terror-free turkey','terror free turkey',
+    'barış ve demokratik toplum','baris ve demokratik toplum','peace and democratic society',
+    'turkey pkk peace process','türkiye pkk peace process','kurdish peace process',
+    'çözüm süreci','cozum sureci','barış süreci','baris sureci',
+]
+V185_CORE_ACTORS=[
+    'pkk','pkk/kck','kck','abdullah öcalan','abdullah ocalan','öcalan','ocalan',
+    'imralı','imrali','rêber apo','reber apo','serok apo'
+]
+V185_PROCESS_ACTIONS=[
+    'silah bırakma','silah birakma','silahsızlanma','silahsizlanma','silah teslim',
+    'fesih','tasfiye','disarmament','dissolution','disbandment','weapons surrender',
+    'umut hakkı','umut hakki','çerçeve yasa','cerceve yasa','hukuki güvence',
+    'hukuki guvence','yasal düzenleme','yasal duzenleme','entegrasyon','integration',
+    'müzakere','muzakere','diyalog'
+]
+V185_REGIONAL=[
+    'sdg','sdf','ypg','pyd','mazlum abdi','mazloum abdi','suriye','syria','şam',
+    'damascus','ırak','irak','iraq','ikby','krg','kandil','qandil','şengal','sengal',
+    'sincar','sinjar','rojava','pjak'
+]
+V185_POLITICAL=[
+    'dem parti','mhp','ak parti','chp','tbmm','meclis','komisyon','bahçeli','bahceli',
+    'erdoğan','erdogan','numan kurtulmuş','numan kurtulmus','feti yıldız','feti yildiz'
+]
+
+def _v185_has(text, terms):
     t=norm(text or '')
     return any(norm(x) in t for x in terms if norm(x))
 
-V184_DIRECT_CORE=['terörsüz türkiye','terorsuz turkiye','terror-free turkey','terror free turkey','pkk','pkk/kck','kck','abdullah öcalan','abdullah ocalan','öcalan','ocalan','imralı','imrali','rêber apo','reber apo','serok apo','silah bırakma','silah birakma','silahsızlanma','silahsizlanma','silah teslim','örgütün feshi','orgutun feshi','pkk feshi','pkk dissolution','pkk disarmament','barış ve demokratik toplum','baris ve demokratik toplum','peace and democratic society','turkey pkk peace process','türkiye pkk peace process','kurdish peace process','çözüm süreci','cozum sureci','barış süreci','baris sureci','çerçeve yasa','cerceve yasa','umut hakkı','umut hakki','نزع سلاح حزب العمال الكردستاني','عبدالله أوجلان','عملية السلام تركيا']
-V184_REGIONAL=['suriye','syria','şam','damascus','sdg','sdf','ypg','pyd','mazlum abdi','mazloum abdi','ırak','irak','iraq','ikby','krg','kandil','qandil','şengal','sengal','sincar','sinjar','iran','pjak','rojava','rojhilat']
-V184_POLITICAL=['dem parti','mhp','ak parti','chp','tbmm','meclis','komisyon','bahçeli','bahceli','erdoğan','erdogan','numan kurtulmuş','numan kurtulmus','yılmaz tunç','yilmaz tunc','feti yıldız','feti yildiz','parliament','commission']
-V184_PROCESS_LINK=['terörsüz','terorsuz','pkk','kck','öcalan','ocalan','imralı','imrali','silah','silahsızlan','silahsizlan','fesih','tasfiye','barış','baris','peace process','çözüm','cozum','demokratik toplum','entegrasyon','integration','legal framework','çerçeve yasa','cerceve yasa']
+def _v185_relevant(text):
+    t=norm(text or '')
+    if not t: return False
+    if _v185_has(t,V185_EXACT_PROCESS): return True
+    if _v185_has(t,V185_CORE_ACTORS): return True
+    if _v185_has(t,V185_PROCESS_ACTIONS) and any(x in t for x in ['turkiye','turkey','pkk','kck','ocalan','öcalan','imrali','imralı','terorsuz','terörsüz']): return True
+    if _v185_has(t,V185_REGIONAL) and any(x in t for x in ['pkk','kck','ocalan','öcalan','silah','fesih','disarm','dissol','terorsuz','terörsüz','peace process','baris sureci','barış süreci','entegrasyon','integration']): return True
+    if _v185_has(t,V185_POLITICAL) and any(x in t for x in ['terorsuz','terörsüz','pkk','kck','ocalan','öcalan','imrali','imralı','silah','fesih','baris sureci','barış süreci','cozum sureci','çözüm süreci']): return True
+    return False
 
-def _v184_relevance_state(title,summary=''):
-    text=f'{title or ""} {summary or ""}'
-    if _v184_has(text,V184_DIRECT_CORE): return 'direct'
-    reg=_v184_has(text,V184_REGIONAL); pol=_v184_has(text,V184_POLITICAL); link=_v184_has(text,V184_PROCESS_LINK)
-    if (reg or pol) and link: return 'context'
-    if (reg or pol) and len(str(summary or '').strip())<120: return 'context'
-    return 'reject'
-
-def _v184_fulltext_core_hit(text):
-    return _v184_has(text,V184_DIRECT_CORE) or (_v184_has(text,V184_REGIONAL) and _v184_has(text,V184_PROCESS_LINK)) or (_v184_has(text,V184_POLITICAL) and _v184_has(text,V184_PROCESS_LINK))
-
-def _v184_article_key(row):
-    u=str(row.get('Gerçek Bağlantı') or row.get('URL') or '').strip(); t=str(row.get('Başlık') or '').strip()
+def _v185_article_key(row):
+    u=str((row or {}).get('Gerçek Bağlantı') or (row or {}).get('URL') or '').strip()
+    t=str((row or {}).get('Başlık') or '').strip()
     return u or ('title::'+title_key(t))
 
-def _v184_resolve_content_rows(rows,max_workers=10):
-    cache=st.session_state.setdefault('_v184_article_cache',{})
+def _v185_resolve_content_rows(rows,max_workers=10):
+    cache=st.session_state.setdefault('_v185_article_cache',{})
     out={}; jobs=[]
-    for i,row in enumerate(rows):
-        k=_v184_article_key(row)
+    for i,row in enumerate(rows or []):
+        k=_v185_article_key(row)
         if k in cache: out[i]=cache[k]
         else: jobs.append((i,k,row))
     def one(job):
         i,k,row=job
         try: d=article_detail(row) or {}
         except Exception: d={}
-        summary=str(row.get('İçerik_Özeti') or row.get('İçerik / Özet') or row.get('Özet') or '')
+        summary=str(row.get('İçerik_Özeti') or row.get('İçerik / Özet') or row.get('Özet') or '').strip()
         body=str(d.get('text') or '').strip()
         if len(body)<100: body=summary
         rec={'text':body,'published':str(d.get('published') or ''),'source':str(d.get('source') or ''),'canonical':str(d.get('canonical') or ''),'resolved':bool(len(str(d.get('text') or '').strip())>=100)}
@@ -43209,100 +43261,102 @@ def _v184_resolve_content_rows(rows,max_workers=10):
                 try:
                     i,k,rec=one(j); cache[k]=rec; out[i]=rec
                 except Exception: pass
-    st.session_state['_v184_article_cache']=cache
+    st.session_state['_v185_article_cache']=cache
     return out
 
-V184_FRAME_STRONG={
-'Silahsızlanma / Fesih / Uygulama':['silah bırakma','silah birakma','silahsızlanma','silahsizlanma','silah teslim','silahların teslimi','fesih','tasfiye','dissolution','disarmament','disbandment','weapons surrender','verified dissolution','uygulama takvimi'],
-'Öcalan / İmralı / Statü':['abdullah öcalan','abdullah ocalan','öcalan','ocalan','imralı','imrali','umut hakkı','umut hakki','fiziksel özgür','fiziki özgür','statü','statu','tecrit','imralı heyeti','imrali heyeti','rêber apo','reber apo'],
-'Hukuki / Kurumsal Düzenlemeler':['tbmm','meclis komisyonu','milli dayanışma kardeşlik demokrasi komisyonu','çerçeve yasa','cerceve yasa','yasal düzenleme','yasal duzenleme','kanun teklifi','hukuki güvence','hukuki guvence','infaz düzenlemesi','infaz duzenlemesi','legal framework','legislation','parliamentary commission','law package'],
-'Siyasi Süreç / Aktör Pozisyonları':['dem parti','mhp','ak parti','chp','bahçeli','bahceli','erdoğan','erdogan','numan kurtulmuş','numan kurtulmus','siyasi süreç','siyasi surec','diyalog','heyet görüşmesi','heyet gorusmesi','müzakere','muzakere','political process','party position','siyasi destek','karşı çıktı','karsi cikti','destek verdi'],
-'Güvenlik / Terörle Mücadele':['terörle mücadele','terorle mucadele','operasyon','saldırı','saldiri','çatışma','catisma','güvenlik güçleri','guvenlik gucleri','hpg','yja star','gerilla','guerrilla','security operation','counterterrorism','attack','clash'],
-'Suriye-Irak / Bölgesel Boyut':['suriye','syria','şam','damascus','sdg','sdf','ypg','pyd','mazlum abdi','mazloum abdi','entegrasyon','ırak','irak','iraq','ikby','krg','kandil','qandil','şengal','sengal','sincar','sinjar','erbil','hewler','rojava','pjak','iran'],
-'Toplumsal Barış / Kamuoyu / Tepki':['toplumsal barış','toplumsal baris','barış ve demokratik toplum','baris ve demokratik toplum','demokratik çözüm','demokratik cozum','kamuoyu','kamu vicdanı','kamu vicdani','şehit aile','sehit aile','gazi','gaziler','mağdur','magdur','tepki','protesto','eylem','toplumsal uzlaşı','toplumsal uzlasi','public opinion','reconciliation','protest']}
-V184_FRAME_WEAK={
-'Silahsızlanma / Fesih / Uygulama':['silah','fesih','uygulama','disarm','dissolv'],
-'Öcalan / İmralı / Statü':['öcalan','ocalan','imralı','imrali','özgürlük','ozgurluk','statü','statu'],
-'Hukuki / Kurumsal Düzenlemeler':['meclis','komisyon','yasa','kanun','hukuki','parliament','legal'],
-'Siyasi Süreç / Aktör Pozisyonları':['siyasi','parti','diyalog','görüşme','gorusme','destek','eleştiri','elestiri'],
-'Güvenlik / Terörle Mücadele':['güvenlik','guvenlik','operasyon','terör','teror','saldırı','saldiri','çatışma','catisma'],
-'Suriye-Irak / Bölgesel Boyut':['suriye','syria','ırak','irak','iraq','sdg','sdf','ypg','kandil','şengal','sincar','bölgesel','bolgesel'],
-'Toplumsal Barış / Kamuoyu / Tepki':['barış','baris','toplum','kamuoyu','tepki','aile','gazi','mağdur','magdur','peace']}
-V184_FRAME_PRIORITY={'Silahsızlanma / Fesih / Uygulama':7,'Hukuki / Kurumsal Düzenlemeler':6,'Suriye-Irak / Bölgesel Boyut':5,'Güvenlik / Terörle Mücadele':4,'Öcalan / İmralı / Statü':3,'Toplumsal Barış / Kamuoyu / Tepki':2,'Siyasi Süreç / Aktör Pozisyonları':1}
+V185_FRAME_TERMS={
+    'Silahsızlanma / Fesih / Uygulama':['silah bırakma','silah birakma','silahsızlanma','silahsizlanma','silah teslim','silahların teslimi','silahlar teslim','fesih','örgütün feshi','orgutun feshi','tasfiye','disarmament','dissolution','disbandment','weapons surrender','uygulama takvimi','doğrulama mekanizması','dogrulama mekanizmasi'],
+    'Öcalan / İmralı / Statü':['abdullah öcalan','abdullah ocalan','öcalan','ocalan','imralı','imrali','umut hakkı','umut hakki','fiziksel özgürlük','fiziki özgürlük','tecrit','statü','statu','imralı heyeti','imrali heyeti','rêber apo','reber apo'],
+    'Hukuki / Meclis / Kurumsal Adımlar':['tbmm','meclis komisyonu','milli dayanışma kardeşlik demokrasi komisyonu','komisyon','çerçeve yasa','cerceve yasa','yasal düzenleme','yasal duzenleme','kanun teklifi','hukuki güvence','hukuki guvence','infaz düzenlemesi','infaz duzenlemesi','legal framework','legislation','parliamentary commission','law package','yasa uygulan','meclis'],
+    'Siyasi Süreç / Aktör Pozisyonları':['dem parti','mhp','ak parti','chp','bahçeli','bahceli','erdoğan','erdogan','numan kurtulmuş','numan kurtulmus','feti yıldız','feti yildiz','siyasi süreç','siyasi surec','diyalog','müzakere','muzakere','heyet görüşmesi','heyet gorusmesi','siyasi destek','destek verdi','karşı çıktı','karsi cikti','açıklama yaptı','aciklama yapti'],
+    'Güvenlik / Terörle Mücadele':['terörle mücadele','terorle mucadele','operasyon','saldırı','saldiri','çatışma','catisma','güvenlik güçleri','guvenlik gucleri','hpg','yja star','gerilla','guerrilla','counterterrorism','security operation','attack','clash','teslim oldu','etkisiz hale'],
+    'Suriye-Irak / Bölgesel Boyut':['suriye','syria','şam','damascus','sdg','sdf','ypg','pyd','mazlum abdi','mazloum abdi','entegrasyon','integration','ırak','irak','iraq','ikby','krg','kandil','qandil','şengal','sengal','sincar','sinjar','erbil','hewler','rojava','pjak','iran'],
+    'Toplumsal Barış / Kamuoyu / Tepki':['toplumsal barış','toplumsal baris','barış ve demokratik toplum','baris ve demokratik toplum','demokratik çözüm','demokratik cozum','toplumsal uzlaşı','toplumsal uzlasi','kamuoyu','kamu vicdanı','kamu vicdani','şehit aile','sehit aile','gazi','gaziler','mağdur','magdur','tepki','protesto','eylem','buluşma','bulusma','panel','konferans','anlatıldı','anlatildi','public opinion','reconciliation','protest']
+}
+V185_FRAME_PRIORITY={'Silahsızlanma / Fesih / Uygulama':7,'Hukuki / Meclis / Kurumsal Adımlar':6,'Öcalan / İmralı / Statü':5,'Suriye-Irak / Bölgesel Boyut':4,'Güvenlik / Terörle Mücadele':3,'Toplumsal Barış / Kamuoyu / Tepki':2,'Siyasi Süreç / Aktör Pozisyonları':1}
 
-def _v184_dominant_frame(title,body):
-    tn=norm(title or ''); bn=norm(body or ''); scored=[]
-    for frame in V184_FRAMES:
-        score=0; strong=[]; weak=[]
-        for term in sorted(V184_FRAME_STRONG.get(frame,[]),key=lambda z:len(norm(z)),reverse=True):
-            n=norm(term)
-            if not n: continue
-            if n in tn: score+=9; strong.append(n)
-            elif n in bn: score+=4; strong.append(n)
-        for term in V184_FRAME_WEAK.get(frame,[]):
-            n=norm(term)
-            if not n: continue
-            if n in tn: score+=3; weak.append(n)
-            elif n in bn: score+=1; weak.append(n)
-        if strong: score+=min(4,len(set(strong)))
-        elif len(set(weak))<2: score=0
-        if score>0: scored.append((score,V184_FRAME_PRIORITY.get(frame,0),frame))
-    if scored:
-        scored.sort(key=lambda z:(z[0],z[1]),reverse=True); return scored[0][2]
-    return 'Siyasi Süreç / Aktör Pozisyonları'
+def _v185_count_hits(text, terms):
+    t=norm(text or '')
+    if not t: return 0,[]
+    score=0; ev=[]
+    for term in sorted(terms,key=lambda z:len(norm(z)),reverse=True):
+        n=norm(term)
+        if not n: continue
+        cnt=t.count(n)
+        if cnt:
+            score += min(cnt,3); ev.append(term)
+    return score,ev[:6]
 
-def _v184_source_identity(row,detail=None): return _v180_source_identity(row,detail or {})
+def _v185_dominant_frame(title,body):
+    title=str(title or ''); body=str(body or '')[:18000]
+    sents=re.split(r'(?<=[.!?])\s+',body)
+    lead=' '.join(sents[:3])[:2200]
+    scored=[]
+    for frame,terms in V185_FRAME_TERMS.items():
+        ts,tev=_v185_count_hits(title,terms); ls,lev=_v185_count_hits(lead,terms); bs,bev=_v185_count_hits(body,terms)
+        score=ts*9 + ls*4 + bs
+        evidence=list(dict.fromkeys(tev+lev+bev))[:6]
+        if score>0: scored.append((score,V185_FRAME_PRIORITY.get(frame,0),frame,evidence))
+    if not scored: return 'Siyasi Süreç / Aktör Pozisyonları',[]
+    scored.sort(key=lambda z:(z[0],z[1]),reverse=True)
+    top=scored[0]; tn=norm(title)
+    if top[2]=='Siyasi Süreç / Aktör Pozisyonları' and any(x in tn for x in ['bulusma','buluşma','panel','konferans','anlatildi','anlatıldı','kamuoyu','toplumsal']):
+        return 'Toplumsal Barış / Kamuoyu / Tepki',top[3]
+    return top[2],top[3]
 
-def _v184_tables():
+def _v185_source_identity(row,detail=None):
+    return _v180_source_identity(row,detail or {})
+
+def _v185_tables():
     if not _init_history_db(): return False
     try:
         with _history_connect() as conn:
-            conn.execute('''CREATE TABLE IF NOT EXISTS academic_items_v184(content_key TEXT PRIMARY KEY,first_collected_at TEXT NOT NULL,last_collected_at TEXT NOT NULL,published_at TEXT NOT NULL,source_family TEXT,source TEXT,domain TEXT,title TEXT,summary TEXT,url TEXT,academic_frame TEXT,engine TEXT,protocol_version TEXT,protocol_hash TEXT)''')
-            conn.execute('''CREATE TABLE IF NOT EXISTS academic_scans_v184(id INTEGER PRIMARY KEY AUTOINCREMENT,scanned_at TEXT NOT NULL,period_hours INTEGER,protocol_version TEXT,protocol_hash TEXT,total_items INTEGER,local_items INTEGER,foreign_items INTEGER,kurdish_items INTEGER,movement_items INTEGER,rejected_old INTEGER,rejected_nodate INTEGER,rejected_irrelevant INTEGER,rejected_source INTEGER)''')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v184_pub ON academic_items_v184(published_at)'); conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v184_family ON academic_items_v184(source_family)'); conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v184_frame ON academic_items_v184(academic_frame)'); conn.commit()
+            conn.execute('CREATE TABLE IF NOT EXISTS academic_items_v185(content_key TEXT PRIMARY KEY,first_collected_at TEXT NOT NULL,last_collected_at TEXT NOT NULL,published_at TEXT NOT NULL,source_family TEXT,source TEXT,domain TEXT,title TEXT,summary TEXT,url TEXT,academic_frame TEXT,engine TEXT,protocol_version TEXT,protocol_hash TEXT)')
+            conn.execute('CREATE TABLE IF NOT EXISTS academic_scans_v185(id INTEGER PRIMARY KEY AUTOINCREMENT,scanned_at TEXT NOT NULL,period_hours INTEGER,protocol_version TEXT,protocol_hash TEXT,total_items INTEGER,local_items INTEGER,foreign_items INTEGER,kurdish_items INTEGER,movement_items INTEGER,rejected_old INTEGER,rejected_nodate INTEGER,rejected_irrelevant INTEGER,rejected_source INTEGER)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v185_pub ON academic_items_v185(published_at)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v185_family ON academic_items_v185(source_family)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v185_frame ON academic_items_v185(academic_frame)')
+            conn.commit()
         return True
     except Exception: return False
 
-def _v184_protocol_hash(hours):
-    p={'protocol':V184_PROTOCOL,'hours':int(hours),'families':V184_FAMILIES,'frames':V184_FRAMES,'query':_v179_default_query}
-    return hashlib.sha1(json.dumps(p,ensure_ascii=False,sort_keys=True).encode('utf-8')).hexdigest()[:16]
+def _v185_protocol_hash(hours):
+    p={'protocol':V185_PROTOCOL,'hours':int(hours),'families':V185_FAMILIES,'frames':V185_FRAMES,'query':_v179_default_query}
+    return hashlib.sha1(json.dumps(p,ensure_ascii=False,sort_keys=True).encode('utf-8')).hexdigest()
 
-def _v184_save(rows,rejected,hours):
-    if not _v184_tables(): return 0,0
-    now=datetime.now(timezone.utc).isoformat(); ph=_v184_protocol_hash(hours); new_count=0
+def _v185_save(rows,rejected,hours):
+    if not _v185_tables(): return 0,0
+    now=datetime.now(timezone.utc).isoformat(); ph=_v185_protocol_hash(hours); new_count=0
     with _history_connect() as conn:
         for r in rows:
-            if not conn.execute('SELECT 1 FROM academic_items_v184 WHERE content_key=?',(r['content_key'],)).fetchone(): new_count+=1
-            conn.execute('''INSERT INTO academic_items_v184(content_key,first_collected_at,last_collected_at,published_at,source_family,source,domain,title,summary,url,academic_frame,engine,protocol_version,protocol_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(content_key) DO UPDATE SET last_collected_at=excluded.last_collected_at,source_family=excluded.source_family,source=excluded.source,domain=excluded.domain,title=excluded.title,summary=excluded.summary,url=excluded.url,academic_frame=excluded.academic_frame,engine=excluded.engine,protocol_version=excluded.protocol_version,protocol_hash=excluded.protocol_hash''',(r['content_key'],now,now,r['Tarih_dt'].isoformat(),r['Kaynak Ailesi'],r['Kaynak'],r['Domain'],r['Başlık'],r['İçerik_Özeti'],r['URL'],r['Akademik Çerçeve'],r['Motor'],V184_PROTOCOL,ph))
-        fam=pd.Series([r['Kaynak Ailesi'] for r in rows],dtype='object').value_counts().to_dict()
-        conn.execute('''INSERT INTO academic_scans_v184(scanned_at,period_hours,protocol_version,protocol_hash,total_items,local_items,foreign_items,kurdish_items,movement_items,rejected_old,rejected_nodate,rejected_irrelevant,rejected_source) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',(now,int(hours),V184_PROTOCOL,ph,len(rows),int(fam.get('Yerli Basın',0)),int(fam.get('Yabancı Basın',0)),int(fam.get('Kürt Bölgesel Medyası',0)),int(fam.get('PKK/KCK Açık Kaynak',0)),int(rejected.get('eski',0)),int(rejected.get('tarihsiz',0)),int(rejected.get('ilgisiz',0)),int(rejected.get('kaynak',0))))
-        conn.commit(); total=int(conn.execute('SELECT COUNT(*) FROM academic_items_v184').fetchone()[0])
+            if not conn.execute('SELECT 1 FROM academic_items_v185 WHERE content_key=?',(r['content_key'],)).fetchone(): new_count+=1
+            conn.execute('INSERT INTO academic_items_v185(content_key,first_collected_at,last_collected_at,published_at,source_family,source,domain,title,summary,url,academic_frame,engine,protocol_version,protocol_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(content_key) DO UPDATE SET last_collected_at=excluded.last_collected_at,source_family=excluded.source_family,source=excluded.source,domain=excluded.domain,title=excluded.title,summary=excluded.summary,url=excluded.url,academic_frame=excluded.academic_frame,engine=excluded.engine,protocol_version=excluded.protocol_version,protocol_hash=excluded.protocol_hash',(r['content_key'],now,now,r['Tarih_dt'].isoformat(),r['Kaynak Ailesi'],r['Kaynak'],r['Domain'],r['Başlık'],r['İçerik_Özeti'],r['URL'],r['Akademik Çerçeve'],r['Motor'],V185_PROTOCOL,ph))
+        fam=pd.Series([r['Kaynak Ailesi'] for r in rows]).value_counts() if rows else pd.Series(dtype=int)
+        conn.execute('INSERT INTO academic_scans_v185(scanned_at,period_hours,protocol_version,protocol_hash,total_items,local_items,foreign_items,kurdish_items,movement_items,rejected_old,rejected_nodate,rejected_irrelevant,rejected_source) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(now,int(hours),V185_PROTOCOL,ph,len(rows),int(fam.get('Yerli Basın',0)),int(fam.get('Yabancı Basın',0)),int(fam.get('Kürt Bölgesel Medyası',0)),int(fam.get('PKK/KCK Açık Kaynak',0)),int(rejected.get('eski',0)),int(rejected.get('tarihsiz',0)),int(rejected.get('ilgisiz',0)),int(rejected.get('kaynak',0))))
+        conn.commit(); total=int(conn.execute('SELECT COUNT(*) FROM academic_items_v185').fetchone()[0])
     return new_count,total
 
-def _v184_archive(start_date=None,end_date=None):
-    if not _v184_tables(): return pd.DataFrame()
-    sql='SELECT published_at,source_family,source,domain,title,summary,url,academic_frame,engine,protocol_version,protocol_hash FROM academic_items_v184'; clauses=[]; params=[]
-    if start_date is not None: clauses.append('date(published_at)>=date(?)'); params.append(str(start_date))
-    if end_date is not None: clauses.append('date(published_at)<=date(?)'); params.append(str(end_date))
+def _v185_archive(start_date=None,end_date=None):
+    if not _v185_tables(): return pd.DataFrame()
+    sql='SELECT published_at,source_family,source,domain,title,summary,url,academic_frame,engine,protocol_version,protocol_hash FROM academic_items_v185'; clauses=[]; params=[]
+    if start_date is not None: clauses.append('published_at >= ?'); params.append(datetime.combine(start_date,datetime.min.time(),tzinfo=timezone.utc).isoformat())
+    if end_date is not None: clauses.append('published_at < ?'); params.append(datetime.combine(end_date+timedelta(days=1),datetime.min.time(),tzinfo=timezone.utc).isoformat())
     if clauses: sql+=' WHERE '+' AND '.join(clauses)
     sql+=' ORDER BY published_at DESC'
-    try:
-        with _history_connect() as conn: return pd.read_sql_query(sql,conn,params=params)
-    except Exception: return pd.DataFrame()
+    with _history_connect() as conn: df=pd.read_sql_query(sql,conn,params=params)
+    return df
 
-def _v184_gephi(df):
+def _v185_gephi(df):
     if df is None or df.empty: return pd.DataFrame(),pd.DataFrame()
-    x=df.copy(); x['source_key']=x['domain'].fillna('').astype(str).str.lower(); x['source_key']=x['source_key'].where(x['source_key'].str.len()>0,x['source'].fillna('').astype(str).str.lower())
+    x=df.copy(); x['source_key']=x.apply(lambda r:(str(r.get('domain') or '').strip() or norm(r.get('source') or '')),axis=1)
     g=x.groupby(['source_key','source','domain','source_family','academic_frame']).size().reset_index(name='RawCount'); totals=g.groupby('source_key')['RawCount'].sum().rename('SourceTotal').reset_index(); g=g.merge(totals,on='source_key',how='left'); g['NormalizedWeight']=g['RawCount']/g['SourceTotal'].replace(0,1); g['Source']='SRC::'+g['source_key']; g['Target']='FRM::'+g['academic_frame'].astype(str); g['SourceLabel']=g['source']; g['Frame']=g['academic_frame']; g['Weight']=g['NormalizedWeight']
-    edges=g[['Source','Target','SourceLabel','Frame','source_family','domain','RawCount','SourceTotal','NormalizedWeight','Weight']].rename(columns={'source_family':'SourceFamily','domain':'Domain'})
     nodes=[]
-    for _,r in g[['source_key','source','domain','source_family']].drop_duplicates().iterrows(): nodes.append({'Id':'SRC::'+str(r['source_key']),'Label':str(r['source']),'NodeType':'Source','SourceFamily':str(r['source_family']),'Domain':str(r['domain'])})
+    for _,r in g[['source_key','source','domain','source_family']].drop_duplicates().iterrows(): nodes.append({'Id':'SRC::'+str(r['source_key']),'Label':r['source'],'NodeType':'Source','SourceFamily':r['source_family'],'Domain':r['domain']})
     for fr in sorted(x['academic_frame'].astype(str).unique()): nodes.append({'Id':'FRM::'+fr,'Label':fr,'NodeType':'Frame','SourceFamily':'Frame','Domain':''})
-    return pd.DataFrame(nodes),edges
+    return pd.DataFrame(nodes),g
 
-def _v184_gexf(nodes,edges):
-    if nodes is None or edges is None or nodes.empty or edges.empty: return b''
-    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'}); meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')}); ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT — Akademik V184'; ET.SubElement(meta,'description').text='Kaynak-Çerçeve ağı; Weight=RawCount/SourceTotal.'
+def _v185_gexf(nodes,edges):
+    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'}); meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')}); ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT — Akademik V185'; ET.SubElement(meta,'description').text='Kaynak-Çerçeve ağı; Weight=RawCount/SourceTotal.'
     graph=ET.SubElement(root,'graph',{'mode':'static','defaultedgetype':'undirected'}); na=ET.SubElement(graph,'attributes',{'class':'node'}); ET.SubElement(na,'attribute',{'id':'0','title':'NodeType','type':'string'}); ET.SubElement(na,'attribute',{'id':'1','title':'SourceFamily','type':'string'}); ET.SubElement(na,'attribute',{'id':'2','title':'Domain','type':'string'}); ea=ET.SubElement(graph,'attributes',{'class':'edge'}); ET.SubElement(ea,'attribute',{'id':'10','title':'RawCount','type':'integer'}); ET.SubElement(ea,'attribute',{'id':'11','title':'SourceTotal','type':'integer'}); ET.SubElement(ea,'attribute',{'id':'12','title':'NormalizedWeight','type':'double'})
     ng=ET.SubElement(graph,'nodes')
     for _,n in nodes.iterrows():
@@ -43315,42 +43369,40 @@ def _v184_gexf(nodes,edges):
 if _v177_app_mode == '🎓 Akademik Veri Toplama':
     _raw=st.session_state.rows or []
     if isinstance(_raw,pd.DataFrame): _raw=_raw.to_dict('records')
-    _now=datetime.now(timezone.utc); _cutoff=_now-timedelta(hours=int(hours)); _drop={'kaynak':0,'eski':0,'tarihsiz':0,'ilgisiz':0}; _source=[]
+    _now=datetime.now(timezone.utc); _cutoff=_now-timedelta(hours=int(hours)); _drop={'kaynak':0,'eski':0,'tarihsiz':0,'ilgisiz':0}
+    _report_family_counts={'Yerli Basın':0,'Yabancı Basın':0,'Kürt Bölgesel Medyası':0,'PKK/KCK Açık Kaynak':0}; _source=[]
     for r0 in _raw:
         if not isinstance(r0,dict): continue
-        r=dict(r0); fam=_v184_academic_family(r)
-        if fam not in V184_FAMILIES: _drop['kaynak']+=1; continue
+        r=dict(r0); fam=_v185_academic_family(r)
+        if fam in _report_family_counts: _report_family_counts[fam]+=1
+        if fam not in V185_FAMILIES: _drop['kaynak']+=1; continue
+        if str(r.get('_mode','') or '').strip().lower()=='commentary': _drop['kaynak']+=1; continue
         _source.append((r,fam))
     missing=[r for r,_ in _source if _v180_initial_dt(r)[0] is None]; missmap={}
     if run and missing:
         try:
             rr=_v180_resolve_missing_dates(missing,8)
             for i,row in enumerate(missing):
-                if i in rr: missmap[_v184_article_key(row)]=rr[i]
+                if i in rr: missmap[_v185_article_key(row)]=rr[i]
         except Exception: pass
     time_ok=[]
     for r,fam in _source:
         detail0={}; dt,_=_v180_initial_dt(r)
-        if dt is None: detail0,dt=missmap.get(_v184_article_key(r),({},None))
+        if dt is None: detail0,dt=missmap.get(_v185_article_key(r),({},None))
         if dt is None: _drop['tarihsiz']+=1; continue
         if dt<_cutoff or dt>_now+timedelta(minutes=15): _drop['eski']+=1; continue
         time_ok.append((r,fam,dt,detail0 or {}))
-    cand=[]
-    for r,fam,dt,detail0 in time_ok:
-        title=re.sub(r'\s+',' ',str(r.get('Başlık') or '')).strip(); summary=re.sub(r'\s+',' ',str(r.get('İçerik_Özeti') or r.get('İçerik / Özet') or r.get('Özet') or '')).strip(); state=_v184_relevance_state(title,summary)
-        if state=='reject': _drop['ilgisiz']+=1; continue
-        cand.append({'row':r,'family':fam,'dt':dt,'title':title,'summary':summary,'state':state,'date_detail':detail0})
     details={}
-    if run and cand:
-        with st.spinner(f'Akademik içerik kontrolü ve çerçeveleme yapılıyor ({len(cand)} aday)…'):
-            try: details=_v184_resolve_content_rows([x['row'] for x in cand],10)
+    if run and time_ok:
+        with st.spinner(f'Akademik otomatik filtre ve içerik-temelli çerçeveleme yapılıyor ({len(time_ok)} aday)…'):
+            try: details=_v185_resolve_content_rows([x[0] for x in time_ok],10)
             except Exception: details={}
     academic=[]
-    for i,c in enumerate(cand):
-        r=c['row']; fam=c['family']; dt=c['dt']; title=c['title']; summary=c['summary']; state=c['state']; detail=details.get(i) or c.get('date_detail') or {}; body=str(detail.get('text') or summary or '').strip()
-        if state=='context' and not _v184_fulltext_core_hit(f'{title} {body}'): _drop['ilgisiz']+=1; continue
-        frame=_v184_dominant_frame(title,body); source,dom,url=_v184_source_identity(r,detail); sk=dom or norm(source); ck=hashlib.sha1(f'{sk}|{title_key(title)}|{dt.strftime("%Y-%m-%d")}'.encode('utf-8','ignore')).hexdigest()
-        academic.append({'content_key':ck,'Tarih_dt':dt,'Tarih':dt.astimezone().strftime('%d.%m.%Y %H:%M'),'Kaynak Ailesi':fam,'Kaynak':source,'Domain':dom,'Başlık':title,'İçerik_Özeti':summary,'URL':url,'Akademik Çerçeve':frame,'Motor':'Raporlama Ana Tarama Motoru → Akademik Filtre','Tam Metin Kullanıldı':'Evet' if detail.get('resolved') else 'Hayır'})
+    for i,(r,fam,dt,date_detail) in enumerate(time_ok):
+        title=re.sub(r'\s+',' ',str(r.get('Başlık') or '')).strip(); summary=re.sub(r'\s+',' ',str(r.get('İçerik_Özeti') or r.get('İçerik / Özet') or r.get('Özet') or '')).strip(); detail=details.get(i) or date_detail or {}; body=str(detail.get('text') or summary or '').strip(); combined=f'{title} {body}'
+        if not _v185_relevant(combined): _drop['ilgisiz']+=1; continue
+        frame,evidence=_v185_dominant_frame(title,body); source,dom,url=_v185_source_identity(r,detail); sk=dom or norm(source); ck=hashlib.sha1(f'{sk}|{title_key(title)}|{dt.strftime("%Y-%m-%d")}'.encode('utf-8','ignore')).hexdigest()
+        academic.append({'content_key':ck,'Tarih_dt':dt,'Tarih':dt.astimezone().strftime('%d.%m.%Y %H:%M'),'Kaynak Ailesi':fam,'Kaynak':source,'Domain':dom,'Başlık':title,'İçerik_Özeti':summary,'URL':url,'Akademik Çerçeve':frame,'Çerçeve Kanıtı':', '.join(evidence),'Motor':'Raporlama Ana Tarama Motoru → Otomatik Akademik Filtre','Tam Metin Kullanıldı':'Evet' if detail.get('resolved') else 'Hayır'})
     seen=set(); uniq=[]
     for r in sorted(academic,key=lambda z:z['Tarih_dt'],reverse=True):
         if r['content_key'] in seen: continue
@@ -43358,37 +43410,37 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
     dedupe=len(academic)-len(uniq); academic=uniq
     if run:
         try:
-            new,total=_v184_save(academic,_drop,hours); st.session_state['_v184_last_rows']=academic; st.session_state['_v184_last_period']=period; st.session_state['_v184_diag']={'report_total':len(_raw),'source_candidates':len(_source),'time_ok':len(time_ok),'filter_candidates':len(cand),'final':len(academic),'dedupe':dedupe,**_drop}; st.success(f'Akademik korpus hazır: {len(academic)} haber · {new} yeni kayıt · toplam akademik arşiv {total}.')
+            new,total=_v185_save(academic,_drop,hours); st.session_state['_v185_last_rows']=academic; st.session_state['_v185_last_period']=period; st.session_state['_v185_diag']={'report_total':len(_raw),'report_families':_report_family_counts,'source_candidates':len(_source),'time_ok':len(time_ok),'final':len(academic),'dedupe':dedupe,**_drop}; st.success(f'Akademik korpus hazır: {len(academic)} haber · {new} yeni kayıt · toplam akademik arşiv {total}.')
         except Exception as e: st.error(f'Akademik arşiv kaydı sırasında hata: {e}')
-    else: academic=st.session_state.get('_v184_last_rows') or []
-    st.markdown('---'); st.subheader(f'{st.session_state.get("_v184_last_period",period)} — Akademik Korpus')
+    else: academic=st.session_state.get('_v185_last_rows') or []
+    st.markdown('---'); st.subheader(f'{st.session_state.get("_v185_last_period",period)} — Akademik Korpus')
     if academic:
         ax=pd.DataFrame(academic); fam=ax['Kaynak Ailesi'].value_counts(); c1,c2,c3,c4=st.columns(4); c1.metric('Yerli',int(fam.get('Yerli Basın',0))); c2.metric('Kürt Bölgesel',int(fam.get('Kürt Bölgesel Medyası',0))); c3.metric('PKK/KCK',int(fam.get('PKK/KCK Açık Kaynak',0))); c4.metric('Yabancı',int(fam.get('Yabancı Basın',0)))
-        st.caption('Raporlama motoru ve sorgular aynıdır. Akademik mod yalnız 4 kaynak ailesi + kesin zaman + konu filtresi uygular. Çerçeve gerçek haber içeriği okunabildiğinde tam metinden, aksi hâlde başlık ve raporlama özetinden atanır.')
+        st.caption('Arama motoru ve sorgular raporlama bölümüyle aynıdır. Akademik katman yalnız sosyal/think tank/ayrı yazar-yorum kanallarını dışarıda bırakır; kesin zaman, otomatik ilgililik ve içerik-temelli tek baskın çerçeve uygular.')
         st.dataframe(ax[['Tarih','Kaynak Ailesi','Kaynak','Akademik Çerçeve','Başlık','URL']],hide_index=True,use_container_width=True,height=min(680,130+32*min(17,len(ax))),column_config={'URL':st.column_config.LinkColumn('Bağlantı',display_text='Aç')})
-        diag=st.session_state.get('_v184_diag') or {}
+        diag=st.session_state.get('_v185_diag') or {}
         if diag:
-            with st.expander('🔎 Akademik filtre özeti',False):
-                st.write(f"Raporlama sonucu: **{diag.get('report_total',0)}** · 4 akademik aile: **{diag.get('source_candidates',0)}** · zaman filtresi sonrası: **{diag.get('time_ok',0)}** · konu filtresi adayı: **{diag.get('filter_candidates',0)}** · nihai korpus: **{diag.get('final',0)}**")
-                st.write(f"Çıkarılan: kaynak ailesi dışı **{diag.get('kaynak',0)}**, zaman dışı **{diag.get('eski',0)}**, tarihi doğrulanamayan **{diag.get('tarihsiz',0)}**, ilgisiz **{diag.get('ilgisiz',0)}**, son tekrar **{diag.get('dedupe',0)}**.")
+            with st.expander('🔎 Raporlama → Akademik filtre özeti',False):
+                rf=diag.get('report_families') or {}; st.write('**Aynı raporlama havuzundaki akademik aileler (filtre öncesi):** '+f"Yerli {rf.get('Yerli Basın',0)} · Yabancı {rf.get('Yabancı Basın',0)} · Kürt Bölgesel {rf.get('Kürt Bölgesel Medyası',0)} · PKK/KCK {rf.get('PKK/KCK Açık Kaynak',0)}"); st.write(f"Kesin zaman filtresi sonrası: **{diag.get('time_ok',0)}** · nihai akademik korpus: **{diag.get('final',0)}**"); st.write(f"Çıkarılan: aile dışı/ayrı kanal **{diag.get('kaynak',0)}**, zaman dışı **{diag.get('eski',0)}**, tarihi doğrulanamayan **{diag.get('tarihsiz',0)}**, gerçekten ilgisiz **{diag.get('ilgisiz',0)}**, son tekrar **{diag.get('dedupe',0)}**.")
     else: st.info('Henüz akademik tarama çalıştırılmadı veya seçilen dönemde uygun haber bulunmadı.')
     st.markdown('---'); st.subheader('Kaynak ↔ Çerçeve Gephi Çıktısı'); today=date.today(); d1,d2=st.columns(2)
-    with d1: startd=st.date_input('Başlangıç',value=today-timedelta(days=6),key='v184_start')
-    with d2: endd=st.date_input('Bitiş',value=today,key='v184_end')
+    with d1: startd=st.date_input('Başlangıç',value=today-timedelta(days=6),key='v185_start')
+    with d2: endd=st.date_input('Bitiş',value=today,key='v185_end')
     if startd<=endd:
-        arc=_v184_archive(startd,endd)
+        arc=_v185_archive(startd,endd)
         if not arc.empty:
-            nodes,edges=_v184_gephi(arc)
+            nodes,edges=_v185_gephi(arc)
             if edges is not None and not edges.empty:
-                gexf=_v184_gexf(nodes,edges); stamp=f'{startd}_{endd}'; st.caption(f'Seçili dönem: **{len(arc)} haber** · **{arc["source"].nunique()} kaynak** · **{arc["academic_frame"].nunique()} çerçeve**'); q1,q2,q3=st.columns(3); q1.download_button('⬇️ Nodes CSV',nodes.to_csv(index=False).encode('utf-8-sig'),f'Akademik_Nodes_{stamp}.csv','text/csv',use_container_width=True); q2.download_button('⬇️ Edges CSV',edges.to_csv(index=False).encode('utf-8-sig'),f'Akademik_Edges_{stamp}.csv','text/csv',use_container_width=True); q3.download_button('⬇️ GEXF',gexf,f'Akademik_Kaynak_Cerceve_{stamp}.gexf','application/xml',use_container_width=True)
+                gexf=_v185_gexf(nodes,edges); stamp=f'{startd}_{endd}'; st.caption(f'Seçili dönem: **{len(arc)} haber** · **{arc["source"].nunique()} kaynak** · **{arc["academic_frame"].nunique()} çerçeve**'); q1,q2,q3=st.columns(3); q1.download_button('⬇️ Nodes CSV',nodes.to_csv(index=False).encode('utf-8-sig'),f'Akademik_Nodes_{stamp}.csv','text/csv',use_container_width=True); q2.download_button('⬇️ Edges CSV',edges.to_csv(index=False).encode('utf-8-sig'),f'Akademik_Edges_{stamp}.csv','text/csv',use_container_width=True); q3.download_button('⬇️ GEXF',gexf,f'Akademik_Kaynak_Cerceve_{stamp}.gexf','application/xml',use_container_width=True)
             else: st.info('Seçili dönemde Gephi ağına girecek kayıt bulunmuyor.')
         else: st.info('Bu tarih aralığında akademik kayıt yok.')
     else: st.warning('Başlangıç tarihi bitiş tarihinden sonra olamaz.')
     st.stop()
 
 # ============================================================
-# /V184 AKADEMİK MOD
+# /V185 AKADEMİK MOD
 # ============================================================
+
 # ============================================================
 
 # /V179 AKADEMİK MOD
