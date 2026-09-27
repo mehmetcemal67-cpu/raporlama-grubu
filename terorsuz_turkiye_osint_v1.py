@@ -11253,28 +11253,28 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
     st.info(
         '**Akademik korpus:** Yerli Basın + Kürt Bölgesel Medyası + PKK/KCK Açık Kaynak + Yabancı Basın.  '
         '**Dışarıda:** Sosyal Medya, Think Tank ve Yazar/Yorum.  '
-        '**Arama sorguları/motorları:** raporlama ile aynıdır; akademik moda özel ikinci bir arama motoru yoktur.'
+        '**Arama sorguları/motorları:** raporlama ile aynıdır; akademik mod ikinci bir arama yapmaz; raporlamadaki son ortak tarama havuzunu kullanır.'
     )
 
+    # V200 — Akademik mod ARTIK yeni bir web taraması başlatmaz.
+    # Son raporlama taraması tek ortak havuzdur; burada yalnız akademik post-processing yapılır.
+    _v200_meta=st.session_state.get('_v200_shared_scan_meta') or {}
+    period=str(_v200_meta.get('period') or '📅 Son 24 saat')
+    hours=int(_v200_meta.get('hours') or 24)
     with st.sidebar:
-        st.header('🎓 Akademik Tarama')
-        period=st.selectbox(
-            '🕒 Haber dönemi',
-            ['📅 Son 24 saat','📆 Son 48 saat','📆 Son 1 hafta','🗓️ Son 1 ay'],
-            index=0,
-            key='v179_academic_period'
+        st.header('🎓 Akademik Katman')
+        if _v200_meta and st.session_state.get('_v200_shared_scan_rows') is not None:
+            st.success(f"Ortak tarama hazır: {len(st.session_state.get('_v200_shared_scan_rows') or [])} kayıt")
+            st.caption(f"Ortak dönem: {period} · tarama zamanı: {_v200_meta.get('scan_time','-')}")
+        else:
+            st.warning('Ortak tarama havuzu yok. Önce **Raporlama Modu**nda bir tarama başlatın.')
+        academic_process_run=st.button(
+            '📚 ORTAK HAVUZDAN AKADEMİK ADAYLARI HAZIRLA / YENİLE',
+            type='primary',use_container_width=True,key='v200_academic_process',
+            disabled=not bool(st.session_state.get('_v200_shared_scan_rows'))
         )
-        hours={
-            '📅 Son 24 saat':24,
-            '📆 Son 48 saat':48,
-            '📆 Son 1 hafta':168,
-            '🗓️ Son 1 ay':720
-        }[period]
-        st.caption('Seçilen süre akademik korpusta ayrıca kesin yayın tarihi filtresinden geçirilir.')
-        run=st.button('🔎 AKADEMİK TARAMAYI BAŞLAT / YENİLE',type='primary',use_container_width=True,key='v179_academic_run')
-
-    # Aşağıdaki değişkenler ana raporlama tarama bloğunun beklediği AYNI ayarlardır.
-    # Tarama mantığına dokunulmaz; yalnız akademik ekranda kontroller gösterilmez.
+        st.caption('Bu düğme yeni haber araması yapmaz; yalnız son ortak tarama havuzunu akademik katmanda işler.')
+    run=False
     query=_v179_default_query
     watch='Öcalan, DEM Parti, MHP, TBMM, PKK, SDF, YPG, Kandil, Irak, Suriye'
     neg=True
@@ -11329,13 +11329,19 @@ else:
             '🗓️ Son 3 ay':2160
         }[movement_period]
 
-        run=st.button('🔍 TARAMAYI BAŞLAT / YENİLE',type='primary',use_container_width=True)
+        run=st.button('🔍 ORTAK TARAMAYI BAŞLAT / YENİLE',type='primary',use_container_width=True)
+        academic_process_run=False
 
 if 'rows' not in st.session_state: st.session_state.rows=None
 # V199 — Raporlama ve Akademik modların canlı tarama havuzlarını ayır.
 # Mod değiştirmek artık diğer ekranın son tarama sonucunu ezmez.
 if '_v199_reporting_rows' not in st.session_state: st.session_state['_v199_reporting_rows']=None
 if '_v199_academic_scan_rows' not in st.session_state: st.session_state['_v199_academic_scan_rows']=None
+# V200 — TEK tarama / TEK havuz. Akademik ekran bu havuzu salt-okur biçimde kullanır.
+if '_v200_shared_scan_rows' not in st.session_state: st.session_state['_v200_shared_scan_rows']=None
+if '_v200_shared_scan_meta' not in st.session_state: st.session_state['_v200_shared_scan_meta']={}
+if '_v200_shared_scan_id' not in st.session_state: st.session_state['_v200_shared_scan_id']=None
+if '_v200_academic_processed_scan_id' not in st.session_state: st.session_state['_v200_academic_processed_scan_id']=None
 if 'scan_time' not in st.session_state: st.session_state.scan_time=None
 if 'stats' not in st.session_state: st.session_state.stats={}
 if 'last_scan_alerts' not in st.session_state: st.session_state.last_scan_alerts=[]
@@ -18902,15 +18908,22 @@ if run:
 
     all_rows=sorted(all_rows,key=_v101_row_dt,reverse=True)
     st.session_state.rows=all_rows
-    # V199 — aynı ana tarama motoru korunur; yalnız sonuç state'i moda göre izole edilir.
-    try:
-        if _v177_app_mode == '🎓 Akademik Veri Toplama':
-            st.session_state['_v199_academic_scan_rows']=list(all_rows)
-        else:
-            st.session_state['_v199_reporting_rows']=list(all_rows)
-    except Exception:
-        pass
-    st.session_state.scan_time=datetime.now().astimezone()
+    # V200 — bu sonuç TEK ORTAK tarama havuzudur. Akademik mod ikinci kez internete çıkmaz.
+    _v200_scan_now=datetime.now().astimezone()
+    _v200_scan_id=_v200_scan_now.strftime('%Y%m%dT%H%M%S%f%z')
+    st.session_state['_v200_shared_scan_rows']=list(all_rows)
+    st.session_state['_v199_reporting_rows']=list(all_rows)
+    st.session_state['_v199_academic_scan_rows']=None  # legacy alan artık kullanılmaz
+    st.session_state['_v200_shared_scan_id']=_v200_scan_id
+    st.session_state['_v200_shared_scan_meta']={
+        'scan_id':_v200_scan_id,'period':period,'hours':int(hours),
+        'scan_time':_v200_scan_now.strftime('%d.%m.%Y %H:%M:%S'),
+        'pool_count':len(all_rows)
+    }
+    st.session_state['_v200_academic_processed_scan_id']=None
+    for _k in ('_v191_last_rows','_v191_last_period','_v191_diag'):
+        st.session_state.pop(_k,None)
+    st.session_state.scan_time=_v200_scan_now
     # V11 — yalnız başarılı motor sonuçlarını session cache'e yaz.
     if v11_cache_updates:
         _cache=st.session_state.get('_v11_source_cache',{}) or {}
@@ -45455,6 +45468,9 @@ def _v198_save_label(content_key,relevance_label,frame_label=''):
             conn.commit()
         finally:
             conn.close()
+        # V200: yeni insan etiketi geldi; ortak havuzu yeniden işlemek gerekir.
+        try: st.session_state['_v200_academic_processed_scan_id']=None
+        except Exception: pass
         return True
     except Exception:
         return False
@@ -45672,10 +45688,10 @@ def _v198_frame_count_table(gold):
 def _v198_render_training_ui():
     _v198_init_tables()
     with st.expander('🧠 Akademik Sınıflandırıcı V2 — Altın Veri Seti / Eğitim',False):
-        st.caption('Bu bölüm günlük manuel seçim için değildir. Amaç bir kez yaklaşık **300–500 haberi** insan tarafından kodlayıp, sonrasında ilgililik + F01–F12 kararını sabit test kümesinde ölçülen modelle otomatikleştirmektir. Kural motorunun önerisi yalnız yardımcıdır; insan etiketi Gold Standard kabul edilir.')
+        st.caption('Bu bölüm günlük manuel seçim için değildir. Amaç bir kez yaklaşık **300–500 haberi** insan tarafından kodlayıp, sonrasında ilgililik + F01–F12 kararını sabit test kümesinde ölçülen modelle otomatikleştirmektir. V200’de eski kural motoru akademik korpusun kapısında **karar vermez**. Aşağıdaki eski öneriler yalnız yardımcı referanstır; **insan etiketi Gold Standard** kabul edilir.')
         gold=_v198_gold_df(False)
         if gold.empty:
-            st.info('Henüz etiketleme havuzuna aday eklenmedi. Önce bir akademik tarama çalıştırın.')
+            st.info('Henüz etiketleme havuzuna aday eklenmedi. Önce Raporlama Modunda ortak taramayı çalıştırın; ardından Akademik Modda ortak havuzdan adayları hazırlayın.')
             return
         labeled=gold[gold['relevance_label'].notna()].copy(); unl=gold[gold['relevance_label'].isna()].copy()
         reln=int((pd.to_numeric(labeled.get('relevance_label'),errors='coerce')==1).sum()) if not labeled.empty else 0
@@ -45711,8 +45727,8 @@ def _v198_render_training_ui():
                     'title':st.column_config.TextColumn('Başlık',width='large'),
                     'source_family':st.column_config.TextColumn('Kaynak Ailesi',width='medium'),
                     'source':st.column_config.TextColumn('Kaynak',width='medium'),
-                    'Öneri İlgili':st.column_config.TextColumn('Kural Önerisi',width='small'),
-                    'Öneri Çerçeve':st.column_config.TextColumn('Kural Çerçevesi',width='large'),
+                    'Öneri İlgili':st.column_config.TextColumn('Eski Kural Önerisi',width='small'),
+                    'Öneri Çerçeve':st.column_config.TextColumn('Eski Kural Çerçevesi',width='large'),
                     'Metin Örneği':st.column_config.TextColumn('Metin Örneği',width='large'),
                     'url':st.column_config.LinkColumn('Bağlantı',display_text='Aç')
                 },disabled=['title','source_family','source','Öneri İlgili','Öneri Çerçeve','Metin Örneği','url'])
@@ -45976,6 +45992,95 @@ def _v199_resolve_content(rows,max_workers=16,progress_cb=None):
 # /V199 HIZ / STATE
 # ============================================================
 
+# ============================================================
+# V200 — TEK TARAMA / TEK HAVUZ + GOLD-FIRST AKADEMİK MİMARİ
+# ============================================================
+V188_PROTOCOL='V200-SINGLE-SHARED-SCAN-GOLD-FIRST-ML'
+
+
+def _v200_gold_labels_map():
+    if not _v198_init_tables(): return {}
+    conn=_history_connect()
+    try:
+        rows=conn.execute(f"SELECT content_key,relevance_label,frame_label FROM {V198_GOLD_TABLE} WHERE relevance_label IS NOT NULL").fetchall()
+        out={}
+        for ck,rel,fr in rows:
+            try: rel=int(rel)
+            except Exception: continue
+            out[str(ck)]={'relevance':rel,'frame':str(fr or '')}
+        return out
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+
+def _v198_classifier_status_text():
+    b=_v198_load_active_bundle()
+    if b:
+        m=b.get('metrics') or {}; r=m.get('relevance') or {}; f=m.get('frame') or {}
+        return f"Aktif sınıflandırıcı: **{b.get('version','V198-ML')}** · ilgililik recall {100*r.get('recall',0):.1f}% · precision {100*r.get('precision',0):.1f}% · frame macro-F1 {100*f.get('macro_f1',0):.1f}% · **Gold insan etiketi modelin üstündedir.**"
+    return ('Aktif otomatik sınıflandırıcı: **henüz yok — eğitim modu**. '
+            'Eski kural motoru artık haber elemez. Tarih/kaynak/haber-sayfası kontrollerini geçen adaylar Gold havuzuna alınır; '
+            '**yalnız insan tarafından “İlgili=Evet” + F01–F12 etiketi verilen kayıtlar** nihai akademik korpusa girer.')
+
+
+def _v188_tables():
+    try:
+        conn=_history_connect()
+        try:
+            conn.execute("""CREATE TABLE IF NOT EXISTS academic_items_v200(
+                content_key TEXT PRIMARY KEY, published_at TEXT, source_family TEXT, source TEXT, domain TEXT,
+                title TEXT, summary TEXT, url TEXT, academic_frame TEXT, frame_evidence TEXT, frame_score INTEGER,
+                relevance_basis TEXT, relevance_score INTEGER, date_basis TEXT, engine TEXT, protocol_version TEXT,
+                protocol_hash TEXT, collected_at TEXT)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS academic_scans_v200(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, scanned_at TEXT, hours INTEGER, protocol_version TEXT, protocol_hash TEXT,
+                report_pool INTEGER, eligible_pool INTEGER, final_count INTEGER, excluded_channel INTEGER, excluded_family INTEGER,
+                excluded_date INTEGER, excluded_undated INTEGER, excluded_irrelevant INTEGER,
+                excluded_non_article INTEGER DEFAULT 0, awaiting_label INTEGER DEFAULT 0, model_irrelevant INTEGER DEFAULT 0,
+                shared_scan_id TEXT)""")
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v200_pub ON academic_items_v200(published_at)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v200_family ON academic_items_v200(source_family)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_academic_v200_frame ON academic_items_v200(academic_frame)')
+            conn.commit()
+        finally: conn.close()
+        _v198_init_tables()
+        return True
+    except Exception:
+        return False
+
+
+def _v188_save(rows,diag,hours):
+    if not _v188_tables(): return 0,0
+    now_iso=datetime.now(timezone.utc).isoformat(); ph=_v188_protocol_hash(hours); new_count=0; conn=_history_connect()
+    try:
+        for r in rows:
+            if not conn.execute('SELECT 1 FROM academic_items_v200 WHERE content_key=?',(r['content_key'],)).fetchone(): new_count+=1
+            conn.execute("""INSERT INTO academic_items_v200(content_key,published_at,source_family,source,domain,title,summary,url,academic_frame,frame_evidence,frame_score,relevance_basis,relevance_score,date_basis,engine,protocol_version,protocol_hash,collected_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(content_key) DO UPDATE SET published_at=excluded.published_at,source_family=excluded.source_family,source=excluded.source,domain=excluded.domain,title=excluded.title,summary=excluded.summary,url=excluded.url,academic_frame=excluded.academic_frame,frame_evidence=excluded.frame_evidence,frame_score=excluded.frame_score,relevance_basis=excluded.relevance_basis,relevance_score=excluded.relevance_score,date_basis=excluded.date_basis,engine=excluded.engine,protocol_version=excluded.protocol_version,protocol_hash=excluded.protocol_hash,collected_at=excluded.collected_at""",
+            (r['content_key'],r['Tarih_dt'].isoformat(),r['Kaynak Ailesi'],r['Kaynak'],r['Domain'],r['Başlık'],r['İçerik_Özeti'],r['URL'],r['Akademik Çerçeve'],r['Çerçeve Kanıtı'],int(r['Çerçeve Skoru']),r['İlgililik Kanıtı'],int(r['İlgililik Skoru']),r['Tarih Kaynağı'],r['Motor'],V188_PROTOCOL,ph,now_iso))
+        conn.execute("""INSERT INTO academic_scans_v200(scanned_at,hours,protocol_version,protocol_hash,report_pool,eligible_pool,final_count,excluded_channel,excluded_family,excluded_date,excluded_undated,excluded_irrelevant,excluded_non_article,awaiting_label,model_irrelevant,shared_scan_id)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (now_iso,int(hours),V188_PROTOCOL,ph,int(diag.get('report_pool',0)),int(diag.get('eligible_pool',0)),len(rows),int(diag.get('kanal',0)),int(diag.get('aile_disi',0)),int(diag.get('eski',0)),int(diag.get('tarihsiz',0)),int(diag.get('insan_ilgisiz',0)+diag.get('model_ilgisiz',0)),int(diag.get('haber_degil',0)),int(diag.get('etiket_bekliyor',0)),int(diag.get('model_ilgisiz',0)),str(diag.get('shared_scan_id') or '')))
+        conn.commit(); total=int(conn.execute('SELECT COUNT(*) FROM academic_items_v200').fetchone()[0])
+    finally: conn.close()
+    return new_count,total
+
+
+def _v188_archive(start_date=None,end_date=None):
+    if not _v188_tables(): return pd.DataFrame()
+    sql='SELECT published_at,source_family,source,domain,title,summary,url,academic_frame,frame_score,relevance_basis,relevance_score,date_basis,engine,protocol_version,protocol_hash FROM academic_items_v200'; params=[]; where=[]
+    if start_date is not None: where.append('published_at>=?'); params.append(datetime.combine(start_date,datetime.min.time(),tzinfo=timezone.utc).isoformat())
+    if end_date is not None: where.append('published_at<?'); params.append((datetime.combine(end_date,datetime.min.time(),tzinfo=timezone.utc)+timedelta(days=1)).isoformat())
+    if where: sql+=' WHERE '+' AND '.join(where)
+    sql+=' ORDER BY published_at DESC'
+    try:
+        conn=_history_connect()
+        try: return pd.read_sql_query(sql,conn,params=params)
+        finally: conn.close()
+    except Exception: return pd.DataFrame()
+
 # V192 — Eski akademik sürümlerden kalan session_state kayıtlarının yeni
 # sınıflandırıcıyı maskelemesini engelle. Protokol değiştiğinde eski ekran
 # sonuçları/diagnostics temizlenir; kullanıcı yeni taramayı çalıştırır.
@@ -45990,151 +46095,203 @@ if st.session_state.get('_academic_active_protocol') != _V192_STATE_VERSION:
     st.session_state['_academic_active_protocol']=_V192_STATE_VERSION
 
 if _v177_app_mode == '🎓 Akademik Veri Toplama':
-    # V199 — Akademik post-processing SADECE akademik tarama düğmesine basıldığında.
-    # Mod değişimi / editor / download rerun'ında önceden hazırlanmış korpus doğrudan gösterilir.
-    if run:
-        _raw=st.session_state.get('_v199_academic_scan_rows')
-        if _raw is None:
-            _raw=st.session_state.rows or []
-        if isinstance(_raw,pd.DataFrame): _raw=_raw.to_dict('records')
+    _shared=st.session_state.get('_v200_shared_scan_rows')
+    _shared_meta=st.session_state.get('_v200_shared_scan_meta') or {}
+    _shared_id=st.session_state.get('_v200_shared_scan_id')
+    _processed_id=st.session_state.get('_v200_academic_processed_scan_id')
+
+    st.info('**V200 tek havuz:** Akademik ekran yeni haber araması yapmaz. Raporlama Modundaki son ortak tarama havuzu kullanılır.')
+    if _shared is None:
+        st.warning('Henüz ortak tarama havuzu yok. Raporlama Moduna geçip **ORTAK TARAMAYI BAŞLAT / YENİLE** düğmesini kullanın.')
+    else:
+        c0,c1,c2=st.columns(3)
+        c0.metric('Ortak Tarama Havuzu',len(_shared))
+        c1.metric('Ortak Dönem',str(_shared_meta.get('period') or period).replace('📅 ','').replace('📆 ','').replace('🗓️ ','').replace('⚡ ',''))
+        c2.metric('Son Tarama',str(_shared_meta.get('scan_time') or '-'))
+        if _processed_id != _shared_id:
+            st.warning('Bu ortak tarama henüz akademik aday havuzuna işlenmedi. **ORTAK HAVUZDAN AKADEMİK ADAYLARI HAZIRLA / YENİLE** düğmesine bir kez basın.')
+
+    if academic_process_run and _shared is not None:
+        _raw=_shared.to_dict('records') if isinstance(_shared,pd.DataFrame) else list(_shared or [])
+        hours=int(_shared_meta.get('hours') or hours)
+        period=str(_shared_meta.get('period') or period)
         _now=datetime.now(timezone.utc)
-        _diag={'report_pool':len(_raw),'kanal':0,'aile_disi':0,'eski':0,'tarihsiz':0,'ilgisiz':0,'eligible_pool':0,'otomatik_kurtarma':0,'koruyucu_kabul':0,'dusuk_cerceve_guveni':0}
+        _diag={'report_pool':len(_raw),'kanal':0,'aile_disi':0,'eski':0,'tarihsiz':0,
+               'haber_degil':0,'insan_ilgisiz':0,'model_ilgisiz':0,'etiket_bekliyor':0,
+               'eligible_pool':0,'dusuk_cerceve_guveni':0,'shared_scan_id':_shared_id}
         _family_before={'Yerli Basın':0,'Yabancı Basın':0,'Kürt Bölgesel Medyası':0,'PKK/KCK Açık Kaynak':0}
         _candidates=[]; _excluded=[]
         for r0 in _raw:
             if not isinstance(r0,dict): continue
             r=dict(r0); fam=_v188_reporting_family(r)
             if fam in _family_before: _family_before[fam]+=1
-            if fam not in V188_FAMILIES: _diag['aile_disi']+=1; continue
-            if _v188_is_excluded_channel(r): _diag['kanal']+=1; continue
+            if fam not in V188_FAMILIES:
+                _diag['aile_disi']+=1; continue
+            if _v188_is_excluded_channel(r):
+                _diag['kanal']+=1; continue
             _candidates.append((r,fam))
         _diag['eligible_pool']=len(_candidates)
 
-        # Aşama 1: Mevcut raporlama tarih alanıyla açıkça pencere dışında kalanları
-        # tam metin indirmeden önce ayıkla. Kesin tarih kapısı aşağıda yine çalışır.
-        _pre=[]
-        _cutoff=_now-timedelta(hours=hours)
+        _pre=[]; _cutoff=_now-timedelta(hours=hours)
         for r,fam in _candidates:
             dt0=_to_utc_datetime(r.get('Tarih_dt')) or _to_utc_datetime(r.get('Tarih'))
             if dt0 is not None:
                 try:
                     if dt0.astimezone(timezone.utc) < _cutoff:
                         _diag['eski']+=1
-                        if len(_excluded)<40: _excluded.append(('raporlama yayın alanı: Tarih_dt pencere dışında',_v188_clean_age_noise(str(r.get('Başlık') or ''))))
+                        if len(_excluded)<50: _excluded.append(('zaman dışı',_v188_clean_age_noise(str(r.get('Başlık') or ''))))
                         continue
-                except Exception:
-                    pass
+                except Exception: pass
             _pre.append((r,fam))
         _candidates=_pre
 
-        _details={}
-        _post_box=st.status('📚 Akademik katman: tarih + tam metin + Gold/ML sınıflandırma hazırlanıyor…',expanded=True)
-        _prog=st.progress(0.0)
-        _prog_txt=st.empty()
+        _post_box=st.status('📚 Ortak havuz akademik adaylara dönüştürülüyor…',expanded=True)
+        _prog=st.progress(0.0); _prog_txt=st.empty(); _details={}
         try:
-            def _v199_progress(done,total,resolved):
-                frac=(done/total) if total else 1.0
-                _prog.progress(min(1.0,max(0.0,frac)))
+            def _v200_progress(done,total,resolved):
+                _prog.progress(min(1.0,max(0.0,(done/total) if total else 1.0)))
                 _prog_txt.caption(f'Tam metin çözümleme: {done}/{total} · doğrudan çözülen: {resolved}')
-            _details=_v199_resolve_content([x[0] for x in _candidates],16,_v199_progress)
+            _details=_v199_resolve_content([x[0] for x in _candidates],16,_v200_progress)
         except Exception as _e:
-            _details={}
-            _post_box.write(f'Tam metin katmanı kısmi yedek modda devam ediyor: {_e}')
+            _details={}; _post_box.write(f'Tam metin katmanı kısmi yedek modda devam ediyor: {_e}')
         try: _prog.progress(1.0)
         except Exception: pass
 
-        academic=[]
+        labels=_v200_gold_labels_map()
+        active_bundle=_v198_load_active_bundle()
+        academic=[]; all_candidate_rows=[]
         for i,(r,fam) in enumerate(_candidates):
             raw_title=re.sub(r'\s+',' ',str(r.get('Başlık') or '')).strip()
             raw_summary=re.sub(r'\s+',' ',str(r.get('İçerik_Özeti') or r.get('İçerik / Özet') or r.get('Özet') or '')).strip()
-            detail=_details.get(i) or {}
-            body=str(detail.get('text') or raw_summary or '').strip()
+            detail=_details.get(i) or {}; body=str(detail.get('text') or raw_summary or '').strip()
             ok_date,dt,date_basis,date_reason=_v188_date_check(r,detail,hours,_now)
             title=_v188_clean_age_noise(raw_title); summary=_v188_clean_age_noise(raw_summary)
             if not ok_date:
-                if 'doğrulanamadı' in date_reason: _diag['tarihsiz']+=1
+                if 'doğrulanamadı' in str(date_reason): _diag['tarihsiz']+=1
                 else: _diag['eski']+=1
-                if len(_excluded)<40: _excluded.append((date_reason,title))
+                if len(_excluded)<50: _excluded.append((date_reason,title))
                 continue
             source,dom,url=_v188_source_identity(r,detail)
-            _fam2=_v195_academic_family(r,dom,fam); fam=_fam2 or fam
+            fam2=_v195_academic_family(r,dom,fam); fam=fam2 or fam
+            non_article,non_reason=_v195_non_article(title,url,body,dom)
+            if non_article:
+                _diag['haber_degil']+=1
+                if len(_excluded)<50: _excluded.append((non_reason,title))
+                continue
             ck=_v195_content_key(fam,dom,source,title)
             try: _v198_gold_upsert(ck,title,body,source,dom,fam,dt,url)
             except Exception: pass
-            relevant,rel_basis,rel_score=_v188_relevance(title,body,dom,fam)
-            if relevant and str(rel_basis).startswith('V193 otomatik ikinci kapı'): _diag['otomatik_kurtarma']+=1
-            if relevant and str(rel_basis).startswith('V194 koruyucu kabul'): _diag['koruyucu_kabul']+=1
-            if not relevant:
-                _diag['ilgisiz']+=1
-                if len(_excluded)<40: _excluded.append((rel_basis,title))
+            all_candidate_rows.append({'content_key':ck,'Tarih':dt.astimezone().strftime('%d.%m.%Y %H:%M'),'Kaynak Ailesi':fam,'Kaynak':source,'Başlık':title,'URL':url})
+
+            human=labels.get(str(ck))
+            frame=''; evidence=[]; frame_score=0; rel_basis=''; rel_score=0; include=False; motor=''
+            if human is not None:
+                if int(human.get('relevance',0))==0:
+                    _diag['insan_ilgisiz']+=1
+                    if len(_excluded)<50: _excluded.append(('Gold insan etiketi: ilgisiz',title))
+                    continue
+                frame=str(human.get('frame') or '')
+                if frame not in V198_FRAME_LABELS:
+                    _diag['etiket_bekliyor']+=1; continue
+                include=True; frame_score=100; rel_score=100
+                rel_basis='Gold insan etiketi: İlgili=Evet'
+                evidence=['Gold insan etiketi','çerçeve insan tarafından doğrulandı']
+                motor='V200 Gold Standard insan etiketi'
+            elif active_bundle is not None:
+                pred=_v198_predict(title,body)
+                if not pred or not pred.get('relevant'):
+                    _diag['model_ilgisiz']+=1
+                    if len(_excluded)<50:
+                        p=float((pred or {}).get('relevance_probability',0)); _excluded.append((f'ML modeli: ilgisiz P={p:.3f}',title))
+                    continue
+                frame=str(pred.get('frame') or '')
+                if frame not in V198_FRAME_LABELS:
+                    _diag['etiket_bekliyor']+=1; continue
+                include=True
+                rp=float(pred.get('relevance_probability',0)); fp=float(pred.get('frame_probability',0))
+                rel_score=int(round(rp*100)); frame_score=int(round(fp*100))
+                rel_basis=f"V198 denetimli model P(ilgili)={rp:.3f}"
+                evidence=[f"denetimli model P({frame.split(' — ')[0]})={fp:.3f}",f"model: {pred.get('version','')}" ]
+                motor='V200 ortak havuz → denetimli ML modeli'
+            else:
+                _diag['etiket_bekliyor']+=1
                 continue
-            frame,evidence,frame_score=_v188_dominant_frame(title,body)
-            if int(frame_score or 0)<70: _diag['dusuk_cerceve_guveni']+=1
-            academic.append({
-                'content_key':ck,'Tarih_dt':dt,'Tarih':dt.astimezone().strftime('%d.%m.%Y %H:%M'),
-                'Tarih Kaynağı':date_basis,'Kaynak Ailesi':fam,'Kaynak':source,'Domain':dom,'Başlık':title,
-                'İçerik_Özeti':summary,'URL':url,'Akademik Çerçeve':frame,'Çerçeve Kanıtı':', '.join(evidence),
-                'Çerçeve Skoru':frame_score,'İlgililik Kanıtı':rel_basis,'İlgililik Skoru':rel_score,
-                'Motor':('Raporlama Ana Tarama Motoru → V198 Denetimli Model' if _v198_load_active_bundle() else 'Raporlama Ana Tarama Motoru → V197 Geçici Kural Motoru'),
-                'Tam Metin Kullanıldı':'Evet' if detail.get('resolved') else 'Hayır'
-            })
+
+            if include:
+                if int(frame_score or 0)<70 and human is None: _diag['dusuk_cerceve_guveni']+=1
+                academic.append({
+                    'content_key':ck,'Tarih_dt':dt,'Tarih':dt.astimezone().strftime('%d.%m.%Y %H:%M'),
+                    'Tarih Kaynağı':date_basis,'Kaynak Ailesi':fam,'Kaynak':source,'Domain':dom,'Başlık':title,
+                    'İçerik_Özeti':summary,'URL':url,'Akademik Çerçeve':frame,'Çerçeve Kanıtı':', '.join(evidence),
+                    'Çerçeve Skoru':frame_score,'İlgililik Kanıtı':rel_basis,'İlgililik Skoru':rel_score,
+                    'Motor':motor,'Tam Metin Kullanıldı':'Evet' if detail.get('resolved') else 'Hayır'
+                })
+
         seen=set(); uniq=[]
-        for r in sorted(academic,key=lambda z:z['Tarih_dt'],reverse=True):
-            if r['content_key'] in seen: continue
-            seen.add(r['content_key']); uniq.append(r)
+        for rr in sorted(academic,key=lambda z:z['Tarih_dt'],reverse=True):
+            if rr['content_key'] in seen: continue
+            seen.add(rr['content_key']); uniq.append(rr)
         dedupe=len(academic)-len(uniq); academic=uniq
         try:
             new,total=_v188_save(academic,_diag,hours)
             st.session_state['_v191_last_rows']=academic
             st.session_state['_v191_last_period']=period
-            st.session_state['_v191_diag']={**_diag,'families_before':_family_before,'final':len(academic),'dedupe':dedupe,'excluded_samples':_excluded}
-            _resolved_n=sum(1 for x in _details.values() if isinstance(x,dict) and x.get('resolved'))
-            _post_box.write(f'{_resolved_n}/{len(_candidates)} aday doğrudan haber metniyle çözüldü; diğerlerinde raporlama özeti güvenli yedek olarak kullanıldı.')
-            _post_box.update(label=f'✅ Akademik katman tamamlandı — {len(academic)} kayıt',state='complete')
-            st.success(f'Akademik korpus hazır: {len(academic)} haber · {new} yeni kayıt · toplam akademik arşiv {total}.')
+            st.session_state['_v191_diag']={**_diag,'families_before':_family_before,'final':len(academic),'dedupe':dedupe,'excluded_samples':_excluded,'candidate_rows':all_candidate_rows[:300]}
+            st.session_state['_v200_academic_processed_scan_id']=_shared_id
+            resolved_n=sum(1 for x in _details.values() if isinstance(x,dict) and x.get('resolved'))
+            _post_box.write(f'{resolved_n}/{len(_candidates)} aday doğrudan haber metniyle çözüldü; diğerlerinde raporlama özeti yedek olarak kullanıldı.')
+            if active_bundle is None:
+                _post_box.update(label=f'✅ Gold aday havuzu hazır — {_diag["etiket_bekliyor"]} etiket bekliyor',state='complete')
+                st.success(f'Gold eğitim havuzu güncellendi. Nihai akademik korpusta şu an **{len(academic)} insan-doğrulamalı ilgili haber** var; **{_diag["etiket_bekliyor"]} aday etiket bekliyor**. Eski kural motoru hiçbir adayı konu nedeniyle elemedi.')
+            else:
+                _post_box.update(label=f'✅ Akademik katman tamamlandı — {len(academic)} kayıt',state='complete')
+                st.success(f'Aktif ML modeliyle akademik korpus hazır: {len(academic)} haber · {new} yeni arşiv kaydı · toplam akademik arşiv {total}.')
         except Exception as e:
-            _post_box.update(label='Akademik arşiv kaydı sırasında hata',state='error')
-            st.error(f'Akademik arşiv kaydı sırasında hata: {e}')
+            _post_box.update(label='Akademik arşiv kaydı sırasında hata',state='error'); st.error(f'Akademik arşiv kaydı sırasında hata: {e}')
     else:
         academic=st.session_state.get('_v191_last_rows') or []
-    st.markdown('---'); st.subheader(f'{st.session_state.get("_v191_last_period",period)} — Akademik Korpus')
-    if academic:
-        ax=pd.DataFrame(academic); fam=ax['Kaynak Ailesi'].value_counts(); c1,c2,c3,c4=st.columns(4); c1.metric('Yerli',int(fam.get('Yerli Basın',0))); c2.metric('Kürt Bölgesel',int(fam.get('Kürt Bölgesel Medyası',0))); c3.metric('PKK/KCK',int(fam.get('PKK/KCK Açık Kaynak',0))); c4.metric('Yabancı',int(fam.get('Yabancı Basın',0)))
-        st.caption('V199: Raporlama ve akademik state ayrıdır. Arama/sorgu/motor raporlama ile aynıdır; akademik tam metin çözümü yalnız tarama düğmesine basıldığında çalışır. İlgililik ve F01–F12 sınıflandırması Gold Veri Seti kalite eşiğini geçen V198 model varsa onunla, yoksa geçici V197 kural motoruyla yapılır.')
-        st.markdown(_v198_classifier_status_text())
-        st.dataframe(ax[['Tarih','Kaynak Ailesi','Kaynak','Akademik Çerçeve','Başlık','URL']],hide_index=True,use_container_width=True,height=min(680,130+32*min(17,len(ax))),column_config={'URL':st.column_config.LinkColumn('Bağlantı',display_text='Aç')})
 
-        # V193 — Tüm F01–F12 çerçevelerini, hiç haber yoksa dahi 0 ile göster.
-        _frame_vc=ax['Akademik Çerçeve'].astype(str).value_counts().to_dict()
-        _frame_rows=[]
-        _total_frames=max(1,len(ax))
+    diag=st.session_state.get('_v191_diag') or {}
+    st.markdown('---')
+    if _v198_load_active_bundle() is None:
+        st.subheader(f'{st.session_state.get("_v191_last_period",period)} — Gold-Doğrulanmış Akademik Korpus')
+        st.caption('Eğitim aşamasında bu tablo yalnız senin **İlgili=Evet + doğru F01–F12** etiketi verdiğin haberleri gösterir. Etiketlenmemiş adaylar aşağıdaki Gold Veri Seti bölümünde bekler.')
+    else:
+        st.subheader(f'{st.session_state.get("_v191_last_period",period)} — Akademik Korpus')
+    st.markdown(_v198_classifier_status_text())
+
+    if academic:
+        ax=pd.DataFrame(academic); fam=ax['Kaynak Ailesi'].value_counts(); c1,c2,c3,c4=st.columns(4)
+        c1.metric('Yerli',int(fam.get('Yerli Basın',0))); c2.metric('Kürt Bölgesel',int(fam.get('Kürt Bölgesel Medyası',0))); c3.metric('PKK/KCK',int(fam.get('PKK/KCK Açık Kaynak',0))); c4.metric('Yabancı',int(fam.get('Yabancı Basın',0)))
+        st.dataframe(ax[['Tarih','Kaynak Ailesi','Kaynak','Akademik Çerçeve','Başlık','URL']],hide_index=True,use_container_width=True,height=min(680,130+32*min(17,len(ax))),column_config={'URL':st.column_config.LinkColumn('Bağlantı',display_text='Aç')})
+        _frame_vc=ax['Akademik Çerçeve'].astype(str).value_counts().to_dict(); _frame_rows=[]; _total_frames=max(1,len(ax))
         for _fr in V188_FRAMES:
             _code,_label=(_fr.split(' — ',1)+[''])[:2] if ' — ' in _fr else (_fr,'')
-            _n=int(_frame_vc.get(_fr,0))
-            _frame_rows.append({'Kod':_code,'Akademik Çerçeve':_label or _fr,'Haber Sayısı':_n,'Pay %':round(100*_n/_total_frames,1)})
-        st.subheader('📊 Akademik Çerçeve Dağılımı')
-        st.dataframe(pd.DataFrame(_frame_rows),hide_index=True,use_container_width=True,height=460)
-        _dist=pd.DataFrame(_frame_rows)
-        if not _dist.empty:
-            _top=_dist.sort_values('Haber Sayısı',ascending=False).iloc[0]
-            _f06=int(_frame_vc.get('F06 — Sürecin Takvimi / Aşaması / İzleme',0))
-            _f06p=round(100*_f06/max(1,len(ax)),1)
-            _zeros=int((_dist['Haber Sayısı']==0).sum())
-            st.caption(f'Çerçeve sağlık kontrolü: en yüksek pay **{_top["Kod"]} / {_top["Pay %"]}%** · F06 payı **{_f06p}%** · sıfır haberli çerçeve **{_zeros}**.')
-            if _f06p>30:
-                st.warning('F06 payı %30’un üzerinde. Bu, gerçek gündem yoğunluğu olabilir; ancak çerçeve motorunun yeniden kalibrasyon gerektirdiğine dair otomatik uyarıdır.')
+            _n=int(_frame_vc.get(_fr,0)); _frame_rows.append({'Kod':_code,'Akademik Çerçeve':_label or _fr,'Haber Sayısı':_n,'Pay %':round(100*_n/_total_frames,1)})
+        st.subheader('📊 Akademik Çerçeve Dağılımı'); st.dataframe(pd.DataFrame(_frame_rows),hide_index=True,use_container_width=True,height=460)
+    else:
+        if _shared is not None and _processed_id==_shared_id:
+            st.info('Henüz nihai akademik korpusa giren kayıt yok. Eğitim modunda önce aşağıdaki Gold bölümünden haberleri **İlgili/Hayır** ve ilgiliyse **F01–F12** olarak etiketleyin.')
+        else:
+            st.info('Ortak havuzu akademik adaylara hazırladıktan sonra Gold etiketleme başlayabilir.')
 
-        diag=st.session_state.get('_v191_diag') or {}
-        if diag:
-            with st.expander('🔎 Akademik kalite kontrol özeti',False):
-                rf=diag.get('families_before') or {}; st.write('**Raporlama havuzundaki akademik kaynak aileleri:** '+f"Yerli {rf.get('Yerli Basın',0)} · Yabancı {rf.get('Yabancı Basın',0)} · Kürt Bölgesel {rf.get('Kürt Bölgesel Medyası',0)} · PKK/KCK {rf.get('PKK/KCK Açık Kaynak',0)}"); st.write(f"Dört akademik aile + kanal filtresi sonrası: **{diag.get('eligible_pool',0)}** · nihai akademik korpus: **{diag.get('final',0)}**"); st.write(f"Çıkarılan: kanal **{diag.get('kanal',0)}**, aile dışı **{diag.get('aile_disi',0)}**, zaman dışı **{diag.get('eski',0)}**, tarihi doğrulanamayan **{diag.get('tarihsiz',0)}**, konu dışı **{diag.get('ilgisiz',0)}**, tekrar **{diag.get('dedupe',0)}**."); st.write(f"Düşük çerçeve güveni (korpusta tutuldu): **{diag.get('dusuk_cerceve_guveni',0)}**. {_v198_classifier_status_text()}")
-                samp=diag.get('excluded_samples') or []
-                if samp: st.dataframe(pd.DataFrame(samp,columns=['Neden','Başlık']),hide_index=True,use_container_width=True,height=min(420,90+28*len(samp)))
-        with st.expander('🧪 Çerçeve doğrulama örnekleri',False): st.dataframe(ax[['Başlık','Akademik Çerçeve','Çerçeve Kanıtı','Çerçeve Skoru','İlgililik Kanıtı','İlgililik Skoru','Tarih Kaynağı']].head(80),hide_index=True,use_container_width=True,height=520)
-    else: st.info('Henüz akademik tarama çalıştırılmadı veya sıkı tarih/konu doğrulamasından geçen haber bulunmadı.')
-    st.markdown('---')
-    _v198_render_training_ui()
-    st.markdown('---'); st.subheader('Kaynak ↔ Çerçeve Gephi Çıktısı'); today=date.today(); d1,d2=st.columns(2)
+    if diag:
+        with st.expander('🔎 Akademik kalite kontrol özeti',False):
+            rf=diag.get('families_before') or {}
+            st.write('**Aynı ortak tarama havuzundaki akademik kaynak aileleri:** '+f"Yerli {rf.get('Yerli Basın',0)} · Yabancı {rf.get('Yabancı Basın',0)} · Kürt Bölgesel {rf.get('Kürt Bölgesel Medyası',0)} · PKK/KCK {rf.get('PKK/KCK Açık Kaynak',0)}")
+            st.write(f"Ortak havuz: **{diag.get('report_pool',0)}** · dört akademik aile + kanal filtresi: **{diag.get('eligible_pool',0)}** · nihai korpus: **{diag.get('final',0)}**")
+            st.write(f"Yapısal/tarih çıkarımı: kanal **{diag.get('kanal',0)}**, aile dışı **{diag.get('aile_disi',0)}**, zaman dışı **{diag.get('eski',0)}**, tarihi doğrulanamayan **{diag.get('tarihsiz',0)}**, haber sayfası olmayan **{diag.get('haber_degil',0)}**, tekrar **{diag.get('dedupe',0)}**.")
+            st.write(f"Gold/ML kararı: insan etiketiyle ilgisiz **{diag.get('insan_ilgisiz',0)}** · model ilgisiz **{diag.get('model_ilgisiz',0)}** · **etiket bekleyen {diag.get('etiket_bekliyor',0)}**.")
+            if _v198_load_active_bundle() is None:
+                st.success('Eğitim modunda otomatik konu dışı filtresi YOKTUR. Etiket bekleyen kayıtlar Gold havuzunda tutulur; eski V197 kural motoru bunları silemez.')
+            samp=diag.get('excluded_samples') or []
+            if samp: st.dataframe(pd.DataFrame(samp,columns=['Neden','Başlık']),hide_index=True,use_container_width=True,height=min(420,90+28*len(samp)))
+
+    st.markdown('---'); _v198_render_training_ui()
+    st.markdown('---'); st.subheader('Kaynak ↔ Çerçeve Gephi Çıktısı')
+    if _v198_load_active_bundle() is None:
+        st.caption('Eğitim döneminde Gephi arşivine yalnız Gold insan etiketiyle doğrulanmış ilgili haberler yazılır. Model kalite kapısını geçince yeni taramalarda otomatik korpus devreye girer.')
+    today=date.today(); d1,d2=st.columns(2)
     with d1: startd=st.date_input('Başlangıç',value=today-timedelta(days=6),key='v188_start')
     with d2: endd=st.date_input('Bitiş',value=today,key='v188_end')
     if startd<=endd:
@@ -46142,7 +46299,12 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
         if not arc.empty:
             nodes,edges=_v188_gephi(arc)
             if edges is not None and not edges.empty:
-                gexf=_v188_gexf(nodes,edges); stamp=f'{startd}_{endd}'; st.caption(f'Seçili dönem: **{len(arc)} haber** · **{arc["source"].nunique()} kaynak** · **{arc["academic_frame"].nunique()} çerçeve**'); q1,q2,q3=st.columns(3); q1.download_button('⬇️ Nodes CSV',nodes.to_csv(index=False).encode('utf-8-sig'),f'Akademik_Nodes_{stamp}.csv','text/csv',use_container_width=True); q2.download_button('⬇️ Edges CSV',edges.to_csv(index=False).encode('utf-8-sig'),f'Akademik_Edges_{stamp}.csv','text/csv',use_container_width=True); q3.download_button('⬇️ GEXF',gexf,f'Akademik_Kaynak_Cerceve_{stamp}.gexf','application/xml',use_container_width=True)
+                gexf=_v188_gexf(nodes,edges); stamp=f'{startd}_{endd}'
+                st.caption(f'Seçili dönem: **{len(arc)} haber** · **{arc["source"].nunique()} kaynak** · **{arc["academic_frame"].nunique()} çerçeve**')
+                q1,q2,q3=st.columns(3)
+                q1.download_button('⬇️ Nodes CSV',nodes.to_csv(index=False).encode('utf-8-sig'),f'Akademik_Nodes_{stamp}.csv','text/csv',use_container_width=True)
+                q2.download_button('⬇️ Edges CSV',edges.to_csv(index=False).encode('utf-8-sig'),f'Akademik_Edges_{stamp}.csv','text/csv',use_container_width=True)
+                q3.download_button('⬇️ GEXF',gexf,f'Akademik_Kaynak_Cerceve_{stamp}.gexf','application/xml',use_container_width=True)
             else: st.info('Seçili dönemde Gephi ağına girecek kayıt bulunmuyor.')
         else: st.info('Bu tarih aralığında akademik kayıt yok.')
     else: st.warning('Başlangıç tarihi bitiş tarihinden sonra olamaz.')
@@ -46162,12 +46324,11 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
 # /V179 AKADEMİK MOD
 # ============================================================
 
-# V199 — Raporlama ekranına dönüldüğünde akademik taramanın raw havuzu raporlama
-# ekranını ezmez; son raporlama taraması varsa onu geri göster.
+# V200 — Raporlama ekranı da aynı ortak tarama havuzunu gösterir.
 if _v177_app_mode != '🎓 Akademik Veri Toplama':
-    _v199_rr=st.session_state.get('_v199_reporting_rows')
-    if _v199_rr is not None:
-        st.session_state.rows=_v199_rr
+    _v200_rr=st.session_state.get('_v200_shared_scan_rows') or st.session_state.get('_v199_reporting_rows')
+    if _v200_rr is not None:
+        st.session_state.rows=_v200_rr
 rows=st.session_state.rows
 
 if rows is None:
