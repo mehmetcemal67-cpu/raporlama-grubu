@@ -11342,6 +11342,7 @@ if '_v200_shared_scan_rows' not in st.session_state: st.session_state['_v200_sha
 if '_v200_shared_scan_meta' not in st.session_state: st.session_state['_v200_shared_scan_meta']={}
 if '_v200_shared_scan_id' not in st.session_state: st.session_state['_v200_shared_scan_id']=None
 if '_v200_academic_processed_scan_id' not in st.session_state: st.session_state['_v200_academic_processed_scan_id']=None
+if '_v201_gold_labels_dirty' not in st.session_state: st.session_state['_v201_gold_labels_dirty']=False
 if 'scan_time' not in st.session_state: st.session_state.scan_time=None
 if 'stats' not in st.session_state: st.session_state.stats={}
 if 'last_scan_alerts' not in st.session_state: st.session_state.last_scan_alerts=[]
@@ -45325,6 +45326,105 @@ V198_MIN_TEST=25
 V198_MIN_FRAME_CLASSES=8
 
 
+def _v201_norm_group_text(text):
+    """Yakın kopya haberleri aynı veri bölmesine taşımak için başlığı sadeleştirir."""
+    x=_v188_clean_age_noise(str(text or ''))
+    # Sonda kaynak adı / site adı olarak eklenen tipik parçayı azalt.
+    x=re.sub(r'\s+[\-–—|]\s+[^\-–—|]{2,80}$',' ',x).strip()
+    x=norm(x)
+    x=re.sub(r'[^a-z0-9çğıöşüâîû\s]',' ',x)
+    x=re.sub(r'\s+',' ',x).strip()
+    stop={
+        'son','dakika','haber','haberleri','guncel','latest','breaking','news','video','canli',
+        'turkiye','turkiyede','turkiyeden','terorsuz','surec','sureci','surecte','aciklama','mesaj',
+        'dedi','degerlendirdi','konustu','belirtti','ifade','etti','icin','ile','ve','bir','bu','da','de'
+    }
+    toks=[t for t in x.split() if len(t)>=3 and t not in stop]
+    return ' '.join(toks[:20]) or x[:240]
+
+
+def _v201_story_group(title,body=''):
+    """Aynı/çok benzer ajans haberlerini mümkün olduğunca aynı group id altında toplar."""
+    base=_v201_norm_group_text(title)
+    # Çok kısa/generik başlıklarda metnin başlangıcından da ayırt edici imza al.
+    if len(base.split())<4:
+        b=norm(str(body or ''))
+        b=re.sub(r'[^a-z0-9çğıöşüâîû\s]',' ',b)
+        b=re.sub(r'\s+',' ',b).strip()
+        bt=[t for t in b.split() if len(t)>=4][:24]
+        if bt: base=(base+' '+' '.join(bt)).strip()
+    return hashlib.sha1(base.encode('utf-8','ignore')).hexdigest()[:20]
+
+
+def _v201_refresh_group_splits(df):
+    """Gold veri setinde yakın başlıklı kopyaların train/valid/test sızıntısını azaltır.
+    İlk/eskiden oluşturulmuş örneğin split'i küme için korunur.
+    """
+    if df is None or df.empty:
+        return df
+    x=df.copy()
+    if 'story_group' not in x.columns:
+        x['story_group']=''
+    x['story_group']=x.apply(lambda r: str(r.get('story_group') or '') or _v201_story_group(r.get('title',''),r.get('body_text','')),axis=1)
+    # Önce kesin story_group birlikteliği; sonra başlık benzerliği ile küçük kümeleri birleştir.
+    n=len(x)
+    parent=list(range(n))
+    def find(a):
+        while parent[a]!=a:
+            parent[a]=parent[parent[a]]; a=parent[a]
+        return a
+    def union(a,b):
+        ra,rb=find(a),find(b)
+        if ra!=rb: parent[rb]=ra
+    by={}
+    for i,g in enumerate(x['story_group'].astype(str).tolist()):
+        if g in by: union(i,by[g])
+        else: by[g]=i
+    # 300–500 Gold örneğinde O(n^2) güvenlidir; yalnız başlığı yeterince dolu kayıtları kıyasla.
+    try:
+        from difflib import SequenceMatcher
+        nt=[_v201_norm_group_text(v) for v in x['title'].fillna('').astype(str).tolist()]
+        sets=[set(v.split()) for v in nt]
+        for i in range(n):
+            if len(sets[i])<4: continue
+            for j in range(i+1,n):
+                if len(sets[j])<4: continue
+                inter=len(sets[i]&sets[j]); union_n=len(sets[i]|sets[j]) or 1
+                jac=inter/union_n
+                # Aynı ajans haberinin farklı başlık sürümlerini yakalamak için iki bağımsız eşik.
+                if jac>=0.72 or (jac>=0.52 and SequenceMatcher(None,nt[i],nt[j]).ratio()>=0.84):
+                    union(i,j)
+    except Exception:
+        pass
+    groups={}
+    for i in range(n): groups.setdefault(find(i),[]).append(i)
+    split_out=list(x.get('split_name',pd.Series(['']*n)).astype(str))
+    for members in groups.values():
+        # En eski kayıt grup lideridir; onun mevcut split'i varsa korunur.
+        leader=members[0]
+        if 'created_at' in x.columns:
+            try:
+                leader=min(members,key=lambda k:str(x.iloc[k].get('created_at') or '9999'))
+            except Exception: pass
+        leader_split=str(x.iloc[leader].get('split_name') or '')
+        if leader_split not in ('train','valid','test'):
+            leader_split=_v198_split_for_key(str(x.iloc[leader].get('story_group') or x.iloc[leader].get('content_key') or ''))
+        for k in members: split_out[k]=leader_split
+    x['split_name']=split_out
+    # DB'ye yalnız gerekli alanları geri yaz; insan etiketlerine dokunma.
+    try:
+        conn=_history_connect()
+        try:
+            for _,r in x.iterrows():
+                conn.execute(f'UPDATE {V198_GOLD_TABLE} SET story_group=?, split_name=? WHERE content_key=?',
+                             (str(r.get('story_group') or ''),str(r.get('split_name') or 'train'),str(r.get('content_key') or '')))
+            conn.commit()
+        finally: conn.close()
+    except Exception:
+        pass
+    return x
+
+
 def _v198_split_for_key(content_key):
     """Sabit ~%70 train / %15 validation / %15 test. Aynı kayıt split değiştirmez."""
     try:
@@ -45357,10 +45457,20 @@ def _v198_init_tables():
                 relevance_label INTEGER,
                 frame_label TEXT,
                 split_name TEXT,
+                story_group TEXT,
+                last_scan_id TEXT,
+                body_resolved INTEGER DEFAULT 0,
                 created_at TEXT,
                 last_seen TEXT,
                 labeled_at TEXT
             )""")
+            # V198/V200'den gelen Gold tablosunu etiket kaybetmeden V201 alanlarına yükselt.
+            cols={str(r[1]) for r in conn.execute(f'PRAGMA table_info({V198_GOLD_TABLE})').fetchall()}
+            for col,decl in (
+                ('story_group','TEXT'),('last_scan_id','TEXT'),('body_resolved','INTEGER DEFAULT 0')
+            ):
+                if col not in cols:
+                    conn.execute(f'ALTER TABLE {V198_GOLD_TABLE} ADD COLUMN {col} {decl}')
             conn.execute(f"""CREATE TABLE IF NOT EXISTS {V198_MODEL_TABLE}(
                 version TEXT PRIMARY KEY,
                 trained_at TEXT,
@@ -45371,6 +45481,15 @@ def _v198_init_tables():
             conn.execute(f'CREATE INDEX IF NOT EXISTS idx_gold_v2_label ON {V198_GOLD_TABLE}(relevance_label)')
             conn.execute(f'CREATE INDEX IF NOT EXISTS idx_gold_v2_frame ON {V198_GOLD_TABLE}(frame_label)')
             conn.execute(f'CREATE INDEX IF NOT EXISTS idx_gold_v2_split ON {V198_GOLD_TABLE}(split_name)')
+            conn.execute(f'CREATE INDEX IF NOT EXISTS idx_gold_v2_story_group ON {V198_GOLD_TABLE}(story_group)')
+            conn.execute(f'CREATE INDEX IF NOT EXISTS idx_gold_v2_scan ON {V198_GOLD_TABLE}(last_scan_id)')
+            # Eski satırların story_group/split bilgisini insan etiketlerini bozmadan üret.
+            rows=conn.execute(f'SELECT content_key,title,body_text,story_group FROM {V198_GOLD_TABLE}').fetchall()
+            for ck,title,body,grp in rows:
+                if not str(grp or '').strip():
+                    ng=_v201_story_group(title,body)
+                    sp=_v198_split_for_key(ng)
+                    conn.execute(f'UPDATE {V198_GOLD_TABLE} SET story_group=?,split_name=? WHERE content_key=?',(ng,sp,str(ck)))
             conn.commit()
         finally:
             conn.close()
@@ -45390,9 +45509,10 @@ def _v198_model_text(title,body):
     return (f'BAŞLIK: {title}\nMETİN: {body[:30000]}').strip()
 
 
-def _v198_gold_upsert(content_key,title,body,source,domain_name,family,published_at,url):
-    """Güncel raporlama adayını etiketleme havuzuna ekler; mevcut insan etiketini ASLA ezmez."""
+def _v198_gold_upsert(content_key,title,body,source,domain_name,family,published_at,url,scan_id='',body_resolved=False):
+    """Adayı Gold havuzuna ekler; insan etiketini asla ezmez. V201'de son tarama ve grup bilgisi tutulur."""
     if not _v198_init_tables(): return
+    # Eski kural önerileri yalnız iç denetim için saklanır; etiketleme ekranında gösterilmez.
     try:
         rr,rb,rs=_V198_RULE_RELEVANCE(title,body,domain_name,family)
     except Exception:
@@ -45404,7 +45524,8 @@ def _v198_gold_upsert(content_key,title,body,source,domain_name,family,published
         except Exception:
             sf,sfs='',0
     now=datetime.now(timezone.utc).isoformat()
-    split=_v198_split_for_key(content_key)
+    group=_v201_story_group(title,body)
+    split=_v198_split_for_key(group)
     try:
         pub=published_at.isoformat() if hasattr(published_at,'isoformat') else str(published_at or '')
     except Exception:
@@ -45414,8 +45535,8 @@ def _v198_gold_upsert(content_key,title,body,source,domain_name,family,published
         conn.execute(f"""INSERT INTO {V198_GOLD_TABLE}(
             content_key,title,body_text,source,domain,source_family,published_at,url,
             suggested_relevance,suggested_relevance_basis,suggested_frame,suggested_frame_score,
-            split_name,created_at,last_seen
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            split_name,story_group,last_scan_id,body_resolved,created_at,last_seen
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(content_key) DO UPDATE SET
             title=excluded.title,
             body_text=excluded.body_text,
@@ -45428,10 +45549,14 @@ def _v198_gold_upsert(content_key,title,body,source,domain_name,family,published
             suggested_relevance_basis=excluded.suggested_relevance_basis,
             suggested_frame=excluded.suggested_frame,
             suggested_frame_score=excluded.suggested_frame_score,
+            story_group=excluded.story_group,
+            split_name=excluded.split_name,
+            last_scan_id=excluded.last_scan_id,
+            body_resolved=excluded.body_resolved,
             last_seen=excluded.last_seen""",(
             str(content_key),str(title or ''),str(body or '')[:32000],str(source or ''),str(domain_name or ''),
             str(family or ''),pub,str(url or ''),1 if rr else 0,str(rb or ''),str(sf or ''),float(sfs or 0),
-            split,now,now
+            split,group,str(scan_id or ''),1 if body_resolved else 0,now,now
         ))
         conn.commit()
     finally:
@@ -45468,8 +45593,9 @@ def _v198_save_label(content_key,relevance_label,frame_label=''):
             conn.commit()
         finally:
             conn.close()
-        # V200: yeni insan etiketi geldi; ortak havuzu yeniden işlemek gerekir.
-        try: st.session_state['_v200_academic_processed_scan_id']=None
+        # V201: etiket kaydı mod geçişini/tam metin çözümünü geçersiz kılmaz.
+        # Nihai akademik korpusun etiketten sonra yenilenmesi gerektiğini ayrı bir bayrakla tut.
+        try: st.session_state['_v201_gold_labels_dirty']=True
         except Exception: pass
         return True
     except Exception:
@@ -45510,6 +45636,7 @@ def _v198_train_model():
     if g.empty: return None,{'error':'Etiketli kayıt yok.'}
     g=g[g['relevance_label'].isin([0,1])].copy()
     g['relevance_label']=g['relevance_label'].astype(int)
+    g=_v201_refresh_group_splits(g)
     g['model_text']=g.apply(lambda r:_v198_model_text(r.get('title',''),r.get('body_text','')),axis=1)
     train=g[g['split_name'].eq('train')].copy(); valid=g[g['split_name'].eq('valid')].copy(); test=g[g['split_name'].eq('test')].copy()
     if len(g)<V198_MIN_LABELED or len(valid)<V198_MIN_VALID or len(test)<V198_MIN_TEST:
@@ -45688,75 +45815,100 @@ def _v198_frame_count_table(gold):
 def _v198_render_training_ui():
     _v198_init_tables()
     with st.expander('🧠 Akademik Sınıflandırıcı V2 — Altın Veri Seti / Eğitim',False):
-        st.caption('Bu bölüm günlük manuel seçim için değildir. Amaç bir kez yaklaşık **300–500 haberi** insan tarafından kodlayıp, sonrasında ilgililik + F01–F12 kararını sabit test kümesinde ölçülen modelle otomatikleştirmektir. V200’de eski kural motoru akademik korpusun kapısında **karar vermez**. Aşağıdaki eski öneriler yalnız yardımcı referanstır; **insan etiketi Gold Standard** kabul edilir.')
+        st.caption('Amaç bir kez yaklaşık **300–500 haberi** insan tarafından kodlayıp, sonrasında ilgililik + F01–F12 kararını ölçülmüş modelle otomatikleştirmektir. **Eski kural önerileri etiketleme ekranında gösterilmez ve sıralamayı etkilemez. İnsan etiketi Gold Standarddır.**')
         gold=_v198_gold_df(False)
         if gold.empty:
             st.info('Henüz etiketleme havuzuna aday eklenmedi. Önce Raporlama Modunda ortak taramayı çalıştırın; ardından Akademik Modda ortak havuzdan adayları hazırlayın.')
             return
+
+        current_scan=str(st.session_state.get('_v200_shared_scan_id') or '')
+        if 'last_scan_id' not in gold.columns: gold['last_scan_id']=''
+        current=gold[gold['last_scan_id'].astype(str).eq(current_scan)].copy() if current_scan else pd.DataFrame(columns=gold.columns)
         labeled=gold[gold['relevance_label'].notna()].copy(); unl=gold[gold['relevance_label'].isna()].copy()
         reln=int((pd.to_numeric(labeled.get('relevance_label'),errors='coerce')==1).sum()) if not labeled.empty else 0
         irn=int((pd.to_numeric(labeled.get('relevance_label'),errors='coerce')==0).sum()) if not labeled.empty else 0
-        a,b,c,d=st.columns(4); a.metric('Toplam Aday',len(gold)); b.metric('Etiketli',len(labeled)); c.metric('İlgili',reln); d.metric('İlgisiz',irn)
 
-        tab1,tab2,tab3=st.tabs(['✍️ Etiketleme','🧪 Model Eğitimi / Sabit Test','📦 Gold Veri Seti'])
+        a,b,c,d=st.columns(4)
+        a.metric('Bu Taramanın Adayı',len(current))
+        b.metric('Birikimli Gold Havuzu',len(gold))
+        c.metric('Etiketli',len(labeled))
+        d.metric('Etiket Bekleyen',len(unl))
+        st.caption(f'İnsan etiketleri: **İlgili {reln}** · **İlgisiz {irn}**. “Bu taramanın adayı” son ortak tarama kimliğine göre hesaplanır; birikimli Gold havuzu önceki taramalardan kalan adayları da içerir.')
+
+        tab1,tab2,tab3=st.tabs(['✍️ Etiketleme','🧪 Model Eğitimi / Grup Bazlı Sabit Test','📦 Gold Veri Seti'])
         with tab1:
-            if unl.empty:
-                st.success('Etiketlenmemiş aday kalmadı.')
+            scope_opts=['Bu taramanın adayları','Tüm Gold havuzu'] if current_scan else ['Tüm Gold havuzu']
+            scope=st.radio('Etiketleme kapsamı',scope_opts,horizontal=True,key='v201_label_scope')
+            pool=current if scope=='Bu taramanın adayları' else gold
+            pool_unl=pool[pool['relevance_label'].isna()].copy()
+            if pool_unl.empty:
+                st.success('Bu kapsamda etiketlenmemiş aday kalmadı.')
             else:
-                f1,f2,f3=st.columns(3)
-                fam_opts=['Tümü']+sorted([x for x in unl['source_family'].dropna().astype(str).unique() if x])
-                with f1: famf=st.selectbox('Kaynak ailesi',fam_opts,key='v198_lab_family')
-                sugg_opts=['Tümü']+list(V198_FRAME_LABELS)
-                with f2: frf=st.selectbox('Önerilen çerçeve',sugg_opts,key='v198_lab_frame')
-                with f3: lim=st.selectbox('Bu turda kayıt',[20,30,50,75,100],index=2,key='v198_lab_limit')
-                q=unl.copy()
+                f1,f2=st.columns([2,1])
+                fam_opts=['Tümü']+sorted([x for x in pool_unl['source_family'].dropna().astype(str).unique() if x])
+                with f1: famf=st.selectbox('Kaynak ailesi',fam_opts,key='v201_lab_family')
+                with f2: lim=st.selectbox('Bu turda kayıt',[10,20,30,50,75,100],index=2,key='v201_lab_limit')
+                q=pool_unl.copy()
                 if famf!='Tümü': q=q[q['source_family'].astype(str).eq(famf)]
-                if frf!='Tümü': q=q[q['suggested_frame'].astype(str).eq(frf)]
-                counts=_v198_frame_count_table(gold).set_index('Çerçeve')['Etiketli Örnek'].to_dict()
-                q['_priority']=q['suggested_frame'].map(lambda x:counts.get(str(x),0) if str(x) else 999)
-                q=q.sort_values(['_priority','last_seen'],ascending=[True,False]).head(int(lim)).copy()
+                q=q.sort_values(['last_seen','published_at'],ascending=[False,False]).head(int(lim)).copy()
                 q['İlgili?']=''; q['Doğru Çerçeve']=''
-                q['Öneri İlgili']=q['suggested_relevance'].map({1:'Evet',0:'Hayır'}).fillna('')
-                q['Öneri Çerçeve']=q['suggested_frame'].fillna('')
-                q['Metin Örneği']=q['body_text'].fillna('').astype(str).str.replace(r'\s+',' ',regex=True).str.slice(0,650)
-                show=q[['content_key','İlgili?','Doğru Çerçeve','title','source_family','source','Öneri İlgili','Öneri Çerçeve','Metin Örneği','url']].copy()
-                edited=st.data_editor(show,hide_index=True,use_container_width=True,height=min(760,120+34*len(show)),key='v198_gold_editor',column_config={
+                q['Metin Durumu']=q.get('body_resolved',0).map(lambda v:'Tam metin' if int(v or 0)==1 else 'Özet / yedek')
+
+                # Tam metin okuyucu: karar vermeden önce seçilen kaydın saklanan metninin tamamını gösterir.
+                key_to_title={str(r.get('content_key')):str(r.get('title') or 'Başlıksız') for _,r in q.iterrows()}
+                inspect_key=st.selectbox('🔎 Tam metnini incele',list(key_to_title.keys()),format_func=lambda k:key_to_title.get(k,k),key='v201_inspect_gold')
+                if inspect_key:
+                    rr=q[q['content_key'].astype(str).eq(str(inspect_key))].iloc[0]
+                    st.markdown(f"**{str(rr.get('title') or 'Başlıksız')}**")
+                    st.caption(f"{str(rr.get('source_family') or '-')} · {str(rr.get('source') or '-')} · {str(rr.get('published_at') or '-')} · {'✅ doğrudan haber metni' if int(rr.get('body_resolved') or 0)==1 else '🟡 raporlama özeti/yedek metin'}")
+                    body=str(rr.get('body_text') or '').strip()
+                    st.text_area('Haber metni / mevcut içerik',body if body else 'Metin alınamadı; bağlantıdan haberi açın.',height=430,disabled=True,key=f'v201_fulltext_{inspect_key}')
+                    u=str(rr.get('url') or '').strip()
+                    if u.startswith(('http://','https://')):
+                        try: st.link_button('↗ Haberi kaynak sayfasında aç',u,use_container_width=True)
+                        except Exception: st.markdown(f'[↗ Haberi kaynak sayfasında aç]({u})')
+
+                show=q[['content_key','İlgili?','Doğru Çerçeve','title','source_family','source','Metin Durumu','url']].copy()
+                edited=st.data_editor(show,hide_index=True,use_container_width=True,height=min(760,120+34*len(show)),key='v201_gold_editor',column_config={
                     'content_key':None,
                     'İlgili?':st.column_config.SelectboxColumn('İlgili?',options=['','Evet','Hayır'],required=False,width='small'),
                     'Doğru Çerçeve':st.column_config.SelectboxColumn('Doğru Çerçeve',options=['']+list(V198_FRAME_LABELS),required=False,width='large'),
                     'title':st.column_config.TextColumn('Başlık',width='large'),
                     'source_family':st.column_config.TextColumn('Kaynak Ailesi',width='medium'),
                     'source':st.column_config.TextColumn('Kaynak',width='medium'),
-                    'Öneri İlgili':st.column_config.TextColumn('Eski Kural Önerisi',width='small'),
-                    'Öneri Çerçeve':st.column_config.TextColumn('Eski Kural Çerçevesi',width='large'),
-                    'Metin Örneği':st.column_config.TextColumn('Metin Örneği',width='large'),
+                    'Metin Durumu':st.column_config.TextColumn('Metin',width='small'),
                     'url':st.column_config.LinkColumn('Bağlantı',display_text='Aç')
-                },disabled=['title','source_family','source','Öneri İlgili','Öneri Çerçeve','Metin Örneği','url'])
-                if st.button('💾 Bu Turdaki Etiketleri Kaydet',type='primary',key='v198_save_labels',use_container_width=True):
+                },disabled=['title','source_family','source','Metin Durumu','url'])
+                if st.button('💾 Bu Turdaki Etiketleri Kaydet',type='primary',key='v201_save_labels',use_container_width=True):
                     saved=0; invalid=[]
-                    for _,rr in edited.iterrows():
-                        val=str(rr.get('İlgili?') or '').strip()
+                    for _,er in edited.iterrows():
+                        val=str(er.get('İlgili?') or '').strip()
                         if not val: continue
                         rel=1 if val=='Evet' else 0
-                        fr=str(rr.get('Doğru Çerçeve') or '').strip()
+                        fr=str(er.get('Doğru Çerçeve') or '').strip()
                         if rel==1 and fr not in V198_FRAME_LABELS:
-                            invalid.append(str(rr.get('title') or '')[:100]); continue
-                        if _v198_save_label(rr.get('content_key'),rel,fr): saved+=1
+                            invalid.append(str(er.get('title') or '')[:100]); continue
+                        if _v198_save_label(er.get('content_key'),rel,fr): saved+=1
                     if invalid: st.warning(f'{len(invalid)} ilgili kayıt için çerçeve seçilmedi; bu satırlar kaydedilmedi.')
                     if saved: st.success(f'{saved} insan etiketi Gold Veri Setine kaydedildi.'); st.rerun()
 
         with tab2:
-            gold2=_v198_gold_df(False); fc=_v198_frame_count_table(gold2)
+            gold2=_v198_gold_df(False)
+            gold2=_v201_refresh_group_splits(gold2) if not gold2.empty else gold2
+            fc=_v198_frame_count_table(gold2)
             st.dataframe(fc,hide_index=True,use_container_width=True,height=460)
+            if not gold2.empty:
+                sc=gold2[gold2['relevance_label'].notna()]['split_name'].value_counts().to_dict()
+                st.caption(f"Grup bazlı veri bölmesi: train {int(sc.get('train',0))} · validation {int(sc.get('valid',0))} · test {int(sc.get('test',0))}. Aynı/çok benzer başlıklı haberler mümkün olduğunca aynı bölmede tutulur.")
             if not _v198_sklearn_available():
                 st.warning('Model eğitimi için **scikit-learn** gerekli. Streamlit `requirements.txt` dosyanıza `scikit-learn>=1.4,<2` satırını ekleyin. Uygulamanın geri kalan bölümü bu paket olmadan çalışmaya devam eder.')
-                st.download_button('⬇️ requirements ek satırı',b'scikit-learn>=1.4,<2\n','requirements_v198.txt','text/plain',key='v198_req_dl')
-            if st.button('🧠 Modeli Eğit + Sabit Test Kümesinde Doğrula',key='v198_train',type='primary',use_container_width=True,disabled=not _v198_sklearn_available()):
-                with st.spinner('İlgililik ve F01–F12 modelleri eğitiliyor; sabit test kümesinde ölçülüyor…'):
+                st.download_button('⬇️ requirements ek satırı',b'scikit-learn>=1.4,<2\n','requirements_v198.txt','text/plain',key='v201_req_dl')
+            if st.button('🧠 Modeli Eğit + Grup Bazlı Sabit Testte Doğrula',key='v201_train',type='primary',use_container_width=True,disabled=not _v198_sklearn_available()):
+                with st.spinner('İlgililik ve F01–F12 modelleri eğitiliyor; yakın kopyalar aynı splitte tutularak test ediliyor…'):
                     bundle,metrics=_v198_train_model()
                 if metrics.get('error'): st.error(metrics['error'])
-                elif metrics.get('ready_for_production'): st.success('Kalite kapısı GEÇİLDİ. Bu model otomatik olarak aktif edildi. Sonraki akademik taramalarda kural motoru yerine denetimli model kullanılacak.')
-                else: st.warning('Model eğitildi ancak kalite kapısını henüz geçmedi; canlı akademik sınıflandırıcı değişmedi. Daha fazla/dengeli Gold etiket ekleyin.')
+                elif metrics.get('ready_for_production'): st.success('Kalite kapısı GEÇİLDİ. Bu model otomatik olarak aktif edildi.')
+                else: st.warning('Model eğitildi ancak kalite kapısını henüz geçmedi. Daha fazla/dengeli Gold etiket ekleyin.')
                 st.rerun()
             latest=_v198_latest_model_row(False)
             if latest:
@@ -45771,11 +45923,12 @@ def _v198_render_training_ui():
         with tab3:
             gd=_v198_gold_df(False)
             if not gd.empty:
+                gd=_v201_refresh_group_splits(gd)
                 export=gd.copy(); export['İlgili']=export['relevance_label'].map({1:'Evet',0:'Hayır'}).fillna(''); export['Doğru Çerçeve']=export['frame_label'].fillna('')
-                cols=['content_key','İlgili','Doğru Çerçeve','title','source_family','source','domain','published_at','url','suggested_relevance_basis','suggested_frame','split_name']
-                st.download_button('⬇️ Gold Veri Seti CSV',export[[c for c in cols if c in export.columns]].to_csv(index=False).encode('utf-8-sig'),'Akademik_Gold_Veri_Seti_V2.csv','text/csv',use_container_width=True,key='v198_gold_download')
+                cols=['content_key','story_group','split_name','İlgili','Doğru Çerçeve','title','body_text','body_resolved','source_family','source','domain','published_at','url','last_scan_id','created_at','last_seen','labeled_at']
+                st.download_button('⬇️ Gold Veri Seti CSV',export[[c for c in cols if c in export.columns]].to_csv(index=False).encode('utf-8-sig'),'Akademik_Gold_Veri_Seti_V201.csv','text/csv',use_container_width=True,key='v201_gold_download')
                 st.dataframe(export[['İlgili','Doğru Çerçeve','title','source_family','source','split_name']].head(300),hide_index=True,use_container_width=True,height=500)
-                st.caption('`split_name=valid` karar eşiği/kalibrasyon, `split_name=test` ise nihai sabit doğrulama-regresyon kümesidir. Test satırları model seçimi veya eşik ayarı için kullanılmaz.')
+                st.caption('`valid` karar eşiği/kalibrasyon, `test` nihai doğrulama-regresyon kümesidir. Yakın kopya haberler grup bazlı tutulur; eski kural önerileri Gold çıktısına dahil edilmez.')
 
 
 # V198 akademik arşivi — eski kural-tabanlı V197 arşiviyle karışmaz.
@@ -45961,9 +46114,10 @@ def _v199_resolve_content(rows,max_workers=16,progress_cb=None):
             out[i]=cache[k]
         else:
             jobs.append((i,k,row))
-    total=len(jobs); done=0; resolved=sum(1 for v in out.values() if isinstance(v,dict) and v.get('resolved'))
+    total_rows=len(rows or []); cache_hits=len(out); total=len(jobs); done=0
+    resolved=sum(1 for v in out.values() if isinstance(v,dict) and v.get('resolved'))
     if progress_cb:
-        try: progress_cb(done,total,resolved)
+        try: progress_cb(cache_hits,total_rows,resolved,cache_hits,total)
         except Exception: pass
     if jobs:
         workers=min(int(max_workers or 16),max(1,len(jobs)))
@@ -45977,7 +46131,7 @@ def _v199_resolve_content(rows,max_workers=16,progress_cb=None):
                 done+=1
                 if rec.get('resolved'): resolved+=1
                 if progress_cb:
-                    try: progress_cb(done,total,resolved)
+                    try: progress_cb(cache_hits+done,total_rows,resolved,cache_hits,total)
                     except Exception: pass
     # Cache'in sınırsız büyümesini önle.
     if len(cache)>1200:
@@ -45995,7 +46149,7 @@ def _v199_resolve_content(rows,max_workers=16,progress_cb=None):
 # ============================================================
 # V200 — TEK TARAMA / TEK HAVUZ + GOLD-FIRST AKADEMİK MİMARİ
 # ============================================================
-V188_PROTOCOL='V200-SINGLE-SHARED-SCAN-GOLD-FIRST-ML'
+V188_PROTOCOL='V201-SINGLE-SHARED-SCAN-GOLD-LABEL-UI-GROUP-SPLIT'
 
 
 def _v200_gold_labels_map():
@@ -46100,7 +46254,7 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
     _shared_id=st.session_state.get('_v200_shared_scan_id')
     _processed_id=st.session_state.get('_v200_academic_processed_scan_id')
 
-    st.info('**V200 tek havuz:** Akademik ekran yeni haber araması yapmaz. Raporlama Modundaki son ortak tarama havuzu kullanılır.')
+    st.info('**V201 tek havuz:** Akademik ekran yeni haber araması yapmaz. Raporlama Modundaki son ortak tarama havuzu kullanılır.')
     if _shared is None:
         st.warning('Henüz ortak tarama havuzu yok. Raporlama Moduna geçip **ORTAK TARAMAYI BAŞLAT / YENİLE** düğmesini kullanın.')
     else:
@@ -46108,8 +46262,13 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
         c0.metric('Ortak Tarama Havuzu',len(_shared))
         c1.metric('Ortak Dönem',str(_shared_meta.get('period') or period).replace('📅 ','').replace('📆 ','').replace('🗓️ ','').replace('⚡ ',''))
         c2.metric('Son Tarama',str(_shared_meta.get('scan_time') or '-'))
+        _v201_process_notice=st.empty()
         if _processed_id != _shared_id:
-            st.warning('Bu ortak tarama henüz akademik aday havuzuna işlenmedi. **ORTAK HAVUZDAN AKADEMİK ADAYLARI HAZIRLA / YENİLE** düğmesine bir kez basın.')
+            _v201_process_notice.warning('Bu ortak tarama henüz akademik aday havuzuna işlenmedi. **ORTAK HAVUZDAN AKADEMİK ADAYLARI HAZIRLA / YENİLE** düğmesine bir kez basın.')
+        elif st.session_state.get('_v201_gold_labels_dirty'):
+            _v201_process_notice.info('Gold etiketlerin kaydedildi. Etiketleme kesintisiz devam edebilir; nihai akademik korpusu yeni etiketlerle yenilemek istediğinde **AKADEMİK ADAYLARI HAZIRLA / YENİLE** düğmesine bas.')
+        else:
+            _v201_process_notice.success('Bu ortak tarama akademik aday havuzuna işlendi.')
 
     if academic_process_run and _shared is not None:
         _raw=_shared.to_dict('records') if isinstance(_shared,pd.DataFrame) else list(_shared or [])
@@ -46148,9 +46307,9 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
         _post_box=st.status('📚 Ortak havuz akademik adaylara dönüştürülüyor…',expanded=True)
         _prog=st.progress(0.0); _prog_txt=st.empty(); _details={}
         try:
-            def _v200_progress(done,total,resolved):
-                _prog.progress(min(1.0,max(0.0,(done/total) if total else 1.0)))
-                _prog_txt.caption(f'Tam metin çözümleme: {done}/{total} · doğrudan çözülen: {resolved}')
+            def _v200_progress(processed,total_rows,resolved,cache_hits,fetch_jobs):
+                _prog.progress(min(1.0,max(0.0,(processed/total_rows) if total_rows else 1.0)))
+                _prog_txt.caption(f'İşlenen aday: {processed}/{total_rows} · tam metin mevcut: {resolved}/{total_rows} · önbellekten: {cache_hits} · yeni ağ isteği: {fetch_jobs}')
             _details=_v199_resolve_content([x[0] for x in _candidates],16,_v200_progress)
         except Exception as _e:
             _details={}; _post_box.write(f'Tam metin katmanı kısmi yedek modda devam ediyor: {_e}')
@@ -46179,7 +46338,7 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
                 if len(_excluded)<50: _excluded.append((non_reason,title))
                 continue
             ck=_v195_content_key(fam,dom,source,title)
-            try: _v198_gold_upsert(ck,title,body,source,dom,fam,dt,url)
+            try: _v198_gold_upsert(ck,title,body,source,dom,fam,dt,url,scan_id=_shared_id,body_resolved=bool(detail.get('resolved')))
             except Exception: pass
             all_candidate_rows.append({'content_key':ck,'Tarih':dt.astimezone().strftime('%d.%m.%Y %H:%M'),'Kaynak Ailesi':fam,'Kaynak':source,'Başlık':title,'URL':url})
 
@@ -46196,7 +46355,7 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
                 include=True; frame_score=100; rel_score=100
                 rel_basis='Gold insan etiketi: İlgili=Evet'
                 evidence=['Gold insan etiketi','çerçeve insan tarafından doğrulandı']
-                motor='V200 Gold Standard insan etiketi'
+                motor='V201 Gold Standard insan etiketi'
             elif active_bundle is not None:
                 pred=_v198_predict(title,body)
                 if not pred or not pred.get('relevant'):
@@ -46212,7 +46371,7 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
                 rel_score=int(round(rp*100)); frame_score=int(round(fp*100))
                 rel_basis=f"V198 denetimli model P(ilgili)={rp:.3f}"
                 evidence=[f"denetimli model P({frame.split(' — ')[0]})={fp:.3f}",f"model: {pred.get('version','')}" ]
-                motor='V200 ortak havuz → denetimli ML modeli'
+                motor='V201 ortak havuz → denetimli ML modeli'
             else:
                 _diag['etiket_bekliyor']+=1
                 continue
@@ -46238,8 +46397,16 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
             st.session_state['_v191_last_period']=period
             st.session_state['_v191_diag']={**_diag,'families_before':_family_before,'final':len(academic),'dedupe':dedupe,'excluded_samples':_excluded,'candidate_rows':all_candidate_rows[:300]}
             st.session_state['_v200_academic_processed_scan_id']=_shared_id
+            st.session_state['_v201_gold_labels_dirty']=False
+            _processed_id=_shared_id
+            try:
+                if '_v201_process_notice' in locals():
+                    _v201_process_notice.success('Bu ortak tarama akademik aday havuzuna işlendi.')
+            except Exception: pass
             resolved_n=sum(1 for x in _details.values() if isinstance(x,dict) and x.get('resolved'))
-            _post_box.write(f'{resolved_n}/{len(_candidates)} aday doğrudan haber metniyle çözüldü; diğerlerinde raporlama özeti yedek olarak kullanıldı.')
+            fallback_n=max(0,len(_candidates)-resolved_n)
+            _prog_txt.caption(f'Tam metin mevcut: {resolved_n}/{len(_candidates)} · özet/yedek kullanılan: {fallback_n}')
+            _post_box.write(f'Tam metin mevcut: {resolved_n}/{len(_candidates)} · özet/yedek kullanılan: {fallback_n}.')
             if active_bundle is None:
                 _post_box.update(label=f'✅ Gold aday havuzu hazır — {_diag["etiket_bekliyor"]} etiket bekliyor',state='complete')
                 st.success(f'Gold eğitim havuzu güncellendi. Nihai akademik korpusta şu an **{len(academic)} insan-doğrulamalı ilgili haber** var; **{_diag["etiket_bekliyor"]} aday etiket bekliyor**. Eski kural motoru hiçbir adayı konu nedeniyle elemedi.')
