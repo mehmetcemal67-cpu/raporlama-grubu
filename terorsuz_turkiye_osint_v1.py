@@ -11332,6 +11332,10 @@ else:
         run=st.button('🔍 TARAMAYI BAŞLAT / YENİLE',type='primary',use_container_width=True)
 
 if 'rows' not in st.session_state: st.session_state.rows=None
+# V199 — Raporlama ve Akademik modların canlı tarama havuzlarını ayır.
+# Mod değiştirmek artık diğer ekranın son tarama sonucunu ezmez.
+if '_v199_reporting_rows' not in st.session_state: st.session_state['_v199_reporting_rows']=None
+if '_v199_academic_scan_rows' not in st.session_state: st.session_state['_v199_academic_scan_rows']=None
 if 'scan_time' not in st.session_state: st.session_state.scan_time=None
 if 'stats' not in st.session_state: st.session_state.stats={}
 if 'last_scan_alerts' not in st.session_state: st.session_state.last_scan_alerts=[]
@@ -18898,6 +18902,14 @@ if run:
 
     all_rows=sorted(all_rows,key=_v101_row_dt,reverse=True)
     st.session_state.rows=all_rows
+    # V199 — aynı ana tarama motoru korunur; yalnız sonuç state'i moda göre izole edilir.
+    try:
+        if _v177_app_mode == '🎓 Akademik Veri Toplama':
+            st.session_state['_v199_academic_scan_rows']=list(all_rows)
+        else:
+            st.session_state['_v199_reporting_rows']=list(all_rows)
+    except Exception:
+        pass
     st.session_state.scan_time=datetime.now().astimezone()
     # V11 — yalnız başarılı motor sonuçlarını session cache'e yaz.
     if v11_cache_updates:
@@ -45288,7 +45300,7 @@ def _v188_dominant_frame(title, body):
 
 _V198_RULE_RELEVANCE=_v188_relevance
 _V198_RULE_FRAME=_v188_dominant_frame
-V188_PROTOCOL='V198-A2-SAME-REPORTING-POOL-STRICT-DATE-GOLDSET-SUPERVISED-RELEVANCE-FRAME'
+V188_PROTOCOL='V199-A3-SAME-REPORTING-POOL-MODE-ISOLATION-FAST-CONTENT-GOLDSET-ML'
 V198_FRAME_LABELS=tuple(V188_FRAMES)
 V198_GOLD_TABLE='academic_gold_v2'
 V198_MODEL_TABLE='academic_models_v2'
@@ -45807,6 +45819,163 @@ def _v188_archive(start_date=None,end_date=None):
 # /V198
 # ============================================================
 
+# ============================================================
+# V199 — MOD İZOLASYONU + BLOKLAMAYAN AKADEMİK TAM METİN ÇÖZÜCÜ
+#
+# Raporlama arama motoruna/sorgularına dokunmaz. Akademik post-processing
+# yalnız AKADEMİK TARAMAYI BAŞLAT / YENİLE düğmesine basıldığında çalışır.
+# Mod değişimi, Gold editor etkileşimi veya başka bir Streamlit rerun'ı
+# yüzlerce haberi tekrar çözümlemeyi tetiklemez.
+# ============================================================
+
+_V199_CONTENT_CACHE_KEY='_v199_academic_content_cache'
+
+
+def _v199_direct_article_url(row):
+    """Yalnız zaten elimizde bulunan doğrudan yayıncı URL'sini kullanır.
+    Google/Bing/aggregator decoder zincirini akademik kritik yoldan çıkarır.
+    """
+    bad_hosts=('news.google.com','google.com','www.google.com','bing.com','www.bing.com','article.wn.com','wn.com')
+    for key in ('Gerçek Bağlantı','Yayıncı_URL','source_url','URL'):
+        u=str((row or {}).get(key) or '').strip()
+        if not u.startswith(('http://','https://')):
+            continue
+        try:
+            h=(urlparse(u).netloc or '').lower().split(':')[0]
+            if h.startswith('www.'):
+                h=h[4:]
+            if any(h==b or h.endswith('.'+b) for b in bad_hosts):
+                continue
+        except Exception:
+            continue
+        return u
+    return ''
+
+
+def _v199_fetch_article_fast(row, connect_timeout=3.5, read_timeout=6.0):
+    """Kısa timeout'lu doğrudan haber sayfası okuyucu.
+    Başarısız olursa sessizce RSS/raporlama özetine döner; arama/decoder yapmaz.
+    """
+    row=dict(row or {})
+    title=str(row.get('Başlık') or '').strip()
+    summary=str(row.get('İçerik_Özeti') or row.get('İçerik / Özet') or row.get('Özet') or '').strip()
+    url=_v199_direct_article_url(row)
+    rec={
+        'text':summary,
+        'published':'',
+        'source':str(row.get('Yayıncı') or row.get('Kaynak') or '').strip(),
+        'canonical':url or str(row.get('URL') or '').strip(),
+        'resolved':False,
+    }
+    if not url:
+        return rec
+    try:
+        rr=requests.get(
+            url,
+            headers={
+                **HEADERS,
+                'Accept-Language':'tr-TR,tr;q=0.9,en;q=0.7',
+                'Accept':'text/html,application/xhtml+xml;q=0.9,*/*;q=0.6',
+            },
+            timeout=(float(connect_timeout),float(read_timeout)),
+            allow_redirects=True,
+        )
+        if rr.status_code>=400 or not rr.text:
+            return rec
+        soup=BeautifulSoup(rr.text,'html.parser')
+        for tag in soup(['script','style','noscript','svg','form','nav','footer','header','aside']):
+            try: tag.decompose()
+            except Exception: pass
+
+        canonical=''
+        can=soup.find('link',rel=lambda x:x and 'canonical' in str(x).lower())
+        if can and can.get('href'):
+            canonical=requests.compat.urljoin(rr.url,can.get('href'))
+        if not canonical:
+            og=soup.find('meta',attrs={'property':'og:url'})
+            if og and og.get('content'):
+                canonical=requests.compat.urljoin(rr.url,og.get('content'))
+        rec['canonical']=canonical or rr.url or url
+
+        for attrs in (
+            {'property':'article:published_time'}, {'itemprop':'datePublished'},
+            {'name':'date'}, {'name':'pubdate'}, {'name':'publishdate'},
+        ):
+            t=soup.find('meta',attrs=attrs)
+            if t and t.get('content'):
+                rec['published']=str(t.get('content')).strip(); break
+
+        for attrs in ({'property':'og:site_name'},{'name':'application-name'}):
+            t=soup.find('meta',attrs=attrs)
+            if t and t.get('content'):
+                rec['source']=str(t.get('content')).strip(); break
+
+        # Önce gerçek article/main gövdesi, yoksa sayfadaki paragraflar.
+        root=soup.find('article') or soup.find('main') or soup
+        paras=[]
+        for p in root.find_all('p'):
+            txt=re.sub(r'\s+',' ',p.get_text(' ',strip=True)).strip()
+            if len(txt)<35:
+                continue
+            # Cookie/menu/abonelik benzeri kısa gürültüleri azalt.
+            nt=norm(txt)
+            if any(x in nt for x in ('çerez tercih','cookie policy','gizlilik politik','abonelik','bildirimleri aç')):
+                continue
+            paras.append(txt)
+            if sum(len(x) for x in paras)>=30000:
+                break
+        body='\n'.join(paras).strip()
+        if len(body)>=120:
+            rec['text']=body[:32000]
+            rec['resolved']=True
+        return rec
+    except Exception:
+        return rec
+
+
+def _v199_resolve_content(rows,max_workers=16,progress_cb=None):
+    """Cache + paralel, kısa-timeout akademik tam metin çözümü.
+    UI güncellemesi yalnız ana thread'de progress_cb üzerinden yapılır.
+    """
+    cache=st.session_state.setdefault(_V199_CONTENT_CACHE_KEY,{}) or {}
+    out={}; jobs=[]
+    for i,row in enumerate(rows or []):
+        k=_v188_article_key(row)
+        if k in cache:
+            out[i]=cache[k]
+        else:
+            jobs.append((i,k,row))
+    total=len(jobs); done=0; resolved=sum(1 for v in out.values() if isinstance(v,dict) and v.get('resolved'))
+    if progress_cb:
+        try: progress_cb(done,total,resolved)
+        except Exception: pass
+    if jobs:
+        workers=min(int(max_workers or 16),max(1,len(jobs)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+            fmap={ex.submit(_v199_fetch_article_fast,row):(i,k) for i,k,row in jobs}
+            for fut in concurrent.futures.as_completed(fmap):
+                i,k=fmap[fut]
+                try: rec=fut.result()
+                except Exception: rec={'text':'','published':'','source':'','canonical':'','resolved':False}
+                cache[k]=rec; out[i]=rec
+                done+=1
+                if rec.get('resolved'): resolved+=1
+                if progress_cb:
+                    try: progress_cb(done,total,resolved)
+                    except Exception: pass
+    # Cache'in sınırsız büyümesini önle.
+    if len(cache)>1200:
+        try:
+            cache=dict(list(cache.items())[-900:])
+        except Exception:
+            pass
+    st.session_state[_V199_CONTENT_CACHE_KEY]=cache
+    return out
+
+# ============================================================
+# /V199 HIZ / STATE
+# ============================================================
+
 # V192 — Eski akademik sürümlerden kalan session_state kayıtlarının yeni
 # sınıflandırıcıyı maskelemesini engelle. Protokol değiştiğinde eski ekran
 # sonuçları/diagnostics temizlenir; kullanıcı yeni taramayı çalıştırır.
@@ -45821,61 +45990,117 @@ if st.session_state.get('_academic_active_protocol') != _V192_STATE_VERSION:
     st.session_state['_academic_active_protocol']=_V192_STATE_VERSION
 
 if _v177_app_mode == '🎓 Akademik Veri Toplama':
-    _raw=st.session_state.rows or []
-    if isinstance(_raw,pd.DataFrame): _raw=_raw.to_dict('records')
-    _now=datetime.now(timezone.utc); _diag={'report_pool':len(_raw),'kanal':0,'aile_disi':0,'eski':0,'tarihsiz':0,'ilgisiz':0,'eligible_pool':0,'otomatik_kurtarma':0,'koruyucu_kabul':0,'dusuk_cerceve_guveni':0}; _family_before={'Yerli Basın':0,'Yabancı Basın':0,'Kürt Bölgesel Medyası':0,'PKK/KCK Açık Kaynak':0}; _candidates=[]; _excluded=[]
-    for r0 in _raw:
-        if not isinstance(r0,dict): continue
-        r=dict(r0); fam=_v188_reporting_family(r)
-        if fam in _family_before: _family_before[fam]+=1
-        if fam not in V188_FAMILIES: _diag['aile_disi']+=1; continue
-        if _v188_is_excluded_channel(r): _diag['kanal']+=1; continue
-        _candidates.append((r,fam))
-    _diag['eligible_pool']=len(_candidates)
-    _details={}
-    if run and _candidates:
-        with st.spinner(f'Akademik kesin tarih, otomatik ilgililik ve keskin çerçeve karar ağacı çalışıyor ({len(_candidates)} raporlama adayı)…'):
-            try: _details=_v188_resolve_content([x[0] for x in _candidates],10)
-            except Exception: _details={}
-    academic=[]
-    for i,(r,fam) in enumerate(_candidates):
-        raw_title=re.sub(r'\s+',' ',str(r.get('Başlık') or '')).strip(); raw_summary=re.sub(r'\s+',' ',str(r.get('İçerik_Özeti') or r.get('İçerik / Özet') or r.get('Özet') or '')).strip(); detail=_details.get(i) or {}; body=str(detail.get('text') or raw_summary or '').strip()
-        ok_date,dt,date_basis,date_reason=_v188_date_check(r,detail,hours,_now)
-        title=_v188_clean_age_noise(raw_title); summary=_v188_clean_age_noise(raw_summary)
-        if not ok_date:
-            if 'doğrulanamadı' in date_reason: _diag['tarihsiz']+=1
-            else: _diag['eski']+=1
-            if len(_excluded)<40: _excluded.append((date_reason,title))
-            continue
-        source,dom,url=_v188_source_identity(r,detail); _fam2=_v195_academic_family(r,dom,fam); fam=_fam2 or fam; ck=_v195_content_key(fam,dom,source,title)
-        try: _v198_gold_upsert(ck,title,body,source,dom,fam,dt,url)
-        except Exception: pass
-        relevant,rel_basis,rel_score=_v188_relevance(title,body,dom,fam)
-        if relevant and str(rel_basis).startswith('V193 otomatik ikinci kapı'):
-            _diag['otomatik_kurtarma']+=1
-        if relevant and str(rel_basis).startswith('V194 koruyucu kabul'):
-            _diag['koruyucu_kabul']+=1
-        if not relevant:
-            _diag['ilgisiz']+=1
-            if len(_excluded)<40: _excluded.append((rel_basis,title))
-            continue
-        frame,evidence,frame_score=_v188_dominant_frame(title,body);
-        if int(frame_score or 0)<70: _diag['dusuk_cerceve_guveni']+=1
-        academic.append({'content_key':ck,'Tarih_dt':dt,'Tarih':dt.astimezone().strftime('%d.%m.%Y %H:%M'),'Tarih Kaynağı':date_basis,'Kaynak Ailesi':fam,'Kaynak':source,'Domain':dom,'Başlık':title,'İçerik_Özeti':summary,'URL':url,'Akademik Çerçeve':frame,'Çerçeve Kanıtı':', '.join(evidence),'Çerçeve Skoru':frame_score,'İlgililik Kanıtı':rel_basis,'İlgililik Skoru':rel_score,'Motor':('Raporlama Ana Tarama Motoru → V198 Denetimli Model' if _v198_load_active_bundle() else 'Raporlama Ana Tarama Motoru → V197 Geçici Kural Motoru'),'Tam Metin Kullanıldı':'Evet' if detail.get('resolved') else 'Hayır'})
-    seen=set(); uniq=[]
-    for r in sorted(academic,key=lambda z:z['Tarih_dt'],reverse=True):
-        if r['content_key'] in seen: continue
-        seen.add(r['content_key']); uniq.append(r)
-    dedupe=len(academic)-len(uniq); academic=uniq
+    # V199 — Akademik post-processing SADECE akademik tarama düğmesine basıldığında.
+    # Mod değişimi / editor / download rerun'ında önceden hazırlanmış korpus doğrudan gösterilir.
     if run:
+        _raw=st.session_state.get('_v199_academic_scan_rows')
+        if _raw is None:
+            _raw=st.session_state.rows or []
+        if isinstance(_raw,pd.DataFrame): _raw=_raw.to_dict('records')
+        _now=datetime.now(timezone.utc)
+        _diag={'report_pool':len(_raw),'kanal':0,'aile_disi':0,'eski':0,'tarihsiz':0,'ilgisiz':0,'eligible_pool':0,'otomatik_kurtarma':0,'koruyucu_kabul':0,'dusuk_cerceve_guveni':0}
+        _family_before={'Yerli Basın':0,'Yabancı Basın':0,'Kürt Bölgesel Medyası':0,'PKK/KCK Açık Kaynak':0}
+        _candidates=[]; _excluded=[]
+        for r0 in _raw:
+            if not isinstance(r0,dict): continue
+            r=dict(r0); fam=_v188_reporting_family(r)
+            if fam in _family_before: _family_before[fam]+=1
+            if fam not in V188_FAMILIES: _diag['aile_disi']+=1; continue
+            if _v188_is_excluded_channel(r): _diag['kanal']+=1; continue
+            _candidates.append((r,fam))
+        _diag['eligible_pool']=len(_candidates)
+
+        # Aşama 1: Mevcut raporlama tarih alanıyla açıkça pencere dışında kalanları
+        # tam metin indirmeden önce ayıkla. Kesin tarih kapısı aşağıda yine çalışır.
+        _pre=[]
+        _cutoff=_now-timedelta(hours=hours)
+        for r,fam in _candidates:
+            dt0=_to_utc_datetime(r.get('Tarih_dt')) or _to_utc_datetime(r.get('Tarih'))
+            if dt0 is not None:
+                try:
+                    if dt0.astimezone(timezone.utc) < _cutoff:
+                        _diag['eski']+=1
+                        if len(_excluded)<40: _excluded.append(('raporlama yayın alanı: Tarih_dt pencere dışında',_v188_clean_age_noise(str(r.get('Başlık') or ''))))
+                        continue
+                except Exception:
+                    pass
+            _pre.append((r,fam))
+        _candidates=_pre
+
+        _details={}
+        _post_box=st.status('📚 Akademik katman: tarih + tam metin + Gold/ML sınıflandırma hazırlanıyor…',expanded=True)
+        _prog=st.progress(0.0)
+        _prog_txt=st.empty()
         try:
-            new,total=_v188_save(academic,_diag,hours); st.session_state['_v191_last_rows']=academic; st.session_state['_v191_last_period']=period; st.session_state['_v191_diag']={**_diag,'families_before':_family_before,'final':len(academic),'dedupe':dedupe,'excluded_samples':_excluded}; st.success(f'Akademik korpus hazır: {len(academic)} haber · {new} yeni kayıt · toplam akademik arşiv {total}.')
-        except Exception as e: st.error(f'Akademik arşiv kaydı sırasında hata: {e}')
-    else: academic=st.session_state.get('_v191_last_rows') or []
+            def _v199_progress(done,total,resolved):
+                frac=(done/total) if total else 1.0
+                _prog.progress(min(1.0,max(0.0,frac)))
+                _prog_txt.caption(f'Tam metin çözümleme: {done}/{total} · doğrudan çözülen: {resolved}')
+            _details=_v199_resolve_content([x[0] for x in _candidates],16,_v199_progress)
+        except Exception as _e:
+            _details={}
+            _post_box.write(f'Tam metin katmanı kısmi yedek modda devam ediyor: {_e}')
+        try: _prog.progress(1.0)
+        except Exception: pass
+
+        academic=[]
+        for i,(r,fam) in enumerate(_candidates):
+            raw_title=re.sub(r'\s+',' ',str(r.get('Başlık') or '')).strip()
+            raw_summary=re.sub(r'\s+',' ',str(r.get('İçerik_Özeti') or r.get('İçerik / Özet') or r.get('Özet') or '')).strip()
+            detail=_details.get(i) or {}
+            body=str(detail.get('text') or raw_summary or '').strip()
+            ok_date,dt,date_basis,date_reason=_v188_date_check(r,detail,hours,_now)
+            title=_v188_clean_age_noise(raw_title); summary=_v188_clean_age_noise(raw_summary)
+            if not ok_date:
+                if 'doğrulanamadı' in date_reason: _diag['tarihsiz']+=1
+                else: _diag['eski']+=1
+                if len(_excluded)<40: _excluded.append((date_reason,title))
+                continue
+            source,dom,url=_v188_source_identity(r,detail)
+            _fam2=_v195_academic_family(r,dom,fam); fam=_fam2 or fam
+            ck=_v195_content_key(fam,dom,source,title)
+            try: _v198_gold_upsert(ck,title,body,source,dom,fam,dt,url)
+            except Exception: pass
+            relevant,rel_basis,rel_score=_v188_relevance(title,body,dom,fam)
+            if relevant and str(rel_basis).startswith('V193 otomatik ikinci kapı'): _diag['otomatik_kurtarma']+=1
+            if relevant and str(rel_basis).startswith('V194 koruyucu kabul'): _diag['koruyucu_kabul']+=1
+            if not relevant:
+                _diag['ilgisiz']+=1
+                if len(_excluded)<40: _excluded.append((rel_basis,title))
+                continue
+            frame,evidence,frame_score=_v188_dominant_frame(title,body)
+            if int(frame_score or 0)<70: _diag['dusuk_cerceve_guveni']+=1
+            academic.append({
+                'content_key':ck,'Tarih_dt':dt,'Tarih':dt.astimezone().strftime('%d.%m.%Y %H:%M'),
+                'Tarih Kaynağı':date_basis,'Kaynak Ailesi':fam,'Kaynak':source,'Domain':dom,'Başlık':title,
+                'İçerik_Özeti':summary,'URL':url,'Akademik Çerçeve':frame,'Çerçeve Kanıtı':', '.join(evidence),
+                'Çerçeve Skoru':frame_score,'İlgililik Kanıtı':rel_basis,'İlgililik Skoru':rel_score,
+                'Motor':('Raporlama Ana Tarama Motoru → V198 Denetimli Model' if _v198_load_active_bundle() else 'Raporlama Ana Tarama Motoru → V197 Geçici Kural Motoru'),
+                'Tam Metin Kullanıldı':'Evet' if detail.get('resolved') else 'Hayır'
+            })
+        seen=set(); uniq=[]
+        for r in sorted(academic,key=lambda z:z['Tarih_dt'],reverse=True):
+            if r['content_key'] in seen: continue
+            seen.add(r['content_key']); uniq.append(r)
+        dedupe=len(academic)-len(uniq); academic=uniq
+        try:
+            new,total=_v188_save(academic,_diag,hours)
+            st.session_state['_v191_last_rows']=academic
+            st.session_state['_v191_last_period']=period
+            st.session_state['_v191_diag']={**_diag,'families_before':_family_before,'final':len(academic),'dedupe':dedupe,'excluded_samples':_excluded}
+            _resolved_n=sum(1 for x in _details.values() if isinstance(x,dict) and x.get('resolved'))
+            _post_box.write(f'{_resolved_n}/{len(_candidates)} aday doğrudan haber metniyle çözüldü; diğerlerinde raporlama özeti güvenli yedek olarak kullanıldı.')
+            _post_box.update(label=f'✅ Akademik katman tamamlandı — {len(academic)} kayıt',state='complete')
+            st.success(f'Akademik korpus hazır: {len(academic)} haber · {new} yeni kayıt · toplam akademik arşiv {total}.')
+        except Exception as e:
+            _post_box.update(label='Akademik arşiv kaydı sırasında hata',state='error')
+            st.error(f'Akademik arşiv kaydı sırasında hata: {e}')
+    else:
+        academic=st.session_state.get('_v191_last_rows') or []
     st.markdown('---'); st.subheader(f'{st.session_state.get("_v191_last_period",period)} — Akademik Korpus')
     if academic:
         ax=pd.DataFrame(academic); fam=ax['Kaynak Ailesi'].value_counts(); c1,c2,c3,c4=st.columns(4); c1.metric('Yerli',int(fam.get('Yerli Basın',0))); c2.metric('Kürt Bölgesel',int(fam.get('Kürt Bölgesel Medyası',0))); c3.metric('PKK/KCK',int(fam.get('PKK/KCK Açık Kaynak',0))); c4.metric('Yabancı',int(fam.get('Yabancı Basın',0)))
-        st.caption('Arama/sorgu/motor raporlama ile aynıdır. Tarih ve haber-sayfası kapıları deterministiktir; ilgililik ve F01–F12 sınıflandırması Gold Veri Seti kalite eşiğini geçen V198 model varsa onunla, yoksa geçici V197 kural motoruyla yapılır.')
+        st.caption('V199: Raporlama ve akademik state ayrıdır. Arama/sorgu/motor raporlama ile aynıdır; akademik tam metin çözümü yalnız tarama düğmesine basıldığında çalışır. İlgililik ve F01–F12 sınıflandırması Gold Veri Seti kalite eşiğini geçen V198 model varsa onunla, yoksa geçici V197 kural motoruyla yapılır.')
         st.markdown(_v198_classifier_status_text())
         st.dataframe(ax[['Tarih','Kaynak Ailesi','Kaynak','Akademik Çerçeve','Başlık','URL']],hide_index=True,use_container_width=True,height=min(680,130+32*min(17,len(ax))),column_config={'URL':st.column_config.LinkColumn('Bağlantı',display_text='Aç')})
 
@@ -45937,6 +46162,12 @@ if _v177_app_mode == '🎓 Akademik Veri Toplama':
 # /V179 AKADEMİK MOD
 # ============================================================
 
+# V199 — Raporlama ekranına dönüldüğünde akademik taramanın raw havuzu raporlama
+# ekranını ezmez; son raporlama taraması varsa onu geri göster.
+if _v177_app_mode != '🎓 Akademik Veri Toplama':
+    _v199_rr=st.session_state.get('_v199_reporting_rows')
+    if _v199_rr is not None:
+        st.session_state.rows=_v199_rr
 rows=st.session_state.rows
 
 if rows is None:
