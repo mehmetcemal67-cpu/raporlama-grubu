@@ -629,7 +629,7 @@ def _official_radar_rows(df):
 st.set_page_config(page_title='Terörsüz Türkiye OSINT Radarı', page_icon='🛡️', layout='wide')
 _v166_apply_background()
 # V177 görünür sürüm teyidi: yanlış dosya çalıştırılıyorsa kullanıcı hemen fark eder.
-st.sidebar.success('✅ AKTİF SÜRÜM: V178 — Arşiv Tarama + ChatGPT Akademik Kodlama')
+st.sidebar.success('✅ AKTİF SÜRÜM: V179 — Arşiv Tarama + ChatGPT Akademik Kodlama')
 
 # ============================================================
 # V55 — ŞİFRE KORUMASI
@@ -43110,6 +43110,185 @@ V175_FAMILY_TO_MODE={
 }
 
 
+# ============================================================
+# V179 — TARİHSEL ARŞİV GERİ ÇAĞIRIM GÜÇLENDİRMESİ
+# ============================================================
+V179_MOVEMENT_HISTORICAL_DOMAINS=list(dict.fromkeys([
+    'anfturkce.net','anfturkce.com','anf-news.com','anfenglish.com','anfenglishmobile.com',
+    'anfdeutsch.com','anfespanol.com','anfarabic.com','anfrussian.com','anfpersian.com',
+    'anfkurdi.com','anfsorani.com','anfkirmancki.com','ozgurpolitika.com','www.ozgurpolitika.com',
+    'medyahabertv.digital','medyanews.net','jinnews.net','jinnews.org','jinnews21.com',
+    'hawarnews.com','sterktv.org','ronahi.tv','rojnews.news','gerillatv.net','ciratv.com',
+    'numedya24.tv','numedya24.com','mezopotamyaajansi.com','mezopotamyaajansi.org',
+    'mezopotamyaajansi35.com','yeniyasamgazetesi9.com','nuceciwan101.com','azadiyawelat1.com','ajansawelat1.com',
+]))
+V179_KURDISH_HISTORICAL_DOMAINS=list(dict.fromkeys([
+    'rudaw.net','kurdistan24.net','shafaq.com','basnews.com','thenewregion.com','kurdpress.com','kurdpress.net',
+    'theamargi.com','theamargi.org','waarmedia.com','welattv.com','welattv.net','botantimes.com','en.botantimes.com',
+    'diyarname.com','nerinaazad2.com','rupelanu.org','rupelanu.com','krdnews.org','berwarnews.com','kurd-online.com',
+    'kurdishglobe.krd','kurdistantribune.com','peyamakurd.com',
+]))
+for _lst_name in ('TT_MOVEMENT_V9','TT_MOVEMENT_OSINT','TT_KURDISH_MEDIA'):
+    try:
+        _lst=globals().get(_lst_name)
+        if isinstance(_lst,list):
+            _lst[:] = list(dict.fromkeys(list(_lst)+V179_MOVEMENT_HISTORICAL_DOMAINS))
+    except Exception:
+        pass
+try:
+    TT_MOVEMENT_DIRECT_V9[:] = list(dict.fromkeys(list(TT_MOVEMENT_DIRECT_V9)+['anfturkce.net','anfturkce.com','anf-news.com','anfenglish.com','sterktv.org']))
+except Exception:
+    pass
+try:
+    V154_SOURCE_PROFILES.setdefault('anfturkce.net',{
+        'name':'ANF / Fırat Haber Ajansı','region':'Avrupa / Kürt Hareketi','family':'PKK/KCK Açık Kaynak',
+        'ideology':'Kürt hareketi odaklı açık kaynak','confidence':'Yüksek'
+    })
+    V154_SOURCE_ALIASES.setdefault('anfturkce.net','anfturkce.net')
+    V154_SOURCE_ALIASES.setdefault('anf türkçe','anfturkce.net')
+except Exception:
+    pass
+
+def _v179_site_domain_from_query(q):
+    m=re.search(r'\bsite:([A-Za-z0-9._-]+)',str(q or ''),re.I)
+    return (m.group(1).lower().replace('www.','') if m else '')
+
+def _v179_archive_engines(mode,q):
+    base=list(_v22_engines(mode,q))
+    site_q=bool(_v179_site_domain_from_query(q))
+    if mode=='movement':
+        extra=(['Google News TR','Google News US','GDELT'] if site_q else ['GDELT'])
+    elif mode=='kurdish':
+        extra=(['Google News US','Google News TR','GDELT'] if site_q else ['GDELT'])
+    elif mode=='turkish':
+        extra=['Google News TR','DDGS Local','Bing News TR'] + (['Bing Web'] if site_q else [])
+    elif mode=='foreign':
+        extra=['Google News US','Google News GB','DDGS','GDELT'] + (['Bing Web'] if site_q else [])
+    else:
+        extra=[]
+    return list(dict.fromkeys(base+extra))
+
+def _v179_domain_from_raw(item,q=''):
+    try:
+        url=str(item.get('url') or item.get('link') or item.get('href') or '').strip()
+        src=str(item.get('source') or item.get('publisher') or '').strip()
+        su=str(item.get('source_url') or item.get('publisher_url') or '').strip()
+        d=_tt_norm_domain(infer_source(src,su,url) or su or url)
+    except Exception:
+        d=''
+    if d in {'news.google.com','google.com','bing.com'} or not d:
+        sd=_v179_site_domain_from_query(q)
+        if sd: d=sd
+    return str(d or '').lower().replace('www.','')
+
+def _v179_family_allowed(mode,d):
+    d=str(d or '').lower().replace('www.','')
+    if not d: return False
+    if mode=='movement':
+        return _tt_domain_match(d,V179_MOVEMENT_HISTORICAL_DOMAINS) or _tt_is_movement_osint_domain(d)
+    if mode=='kurdish':
+        return _tt_domain_match(d,V179_KURDISH_HISTORICAL_DOMAINS) or _tt_is_kurdish_regional_domain(d)
+    if mode=='turkish':
+        if (_tt_is_foreign_press_domain(d) or _tt_is_thinktank_domain(d) or _tt_is_social_domain(d) or _tt_is_kurdish_media_domain(d)):
+            return False
+        return d.endswith('.tr') or d in {'medyascope.tv','evrensel.net','bianet.org','karar.com','birgun.net'}
+    if mode=='foreign':
+        return _tt_is_foreign_press_domain(d)
+    return False
+
+def _v179_archive_raw_record(item,mode,q,cs,ce):
+    if not isinstance(item,dict): return None
+    url=str(item.get('url') or item.get('link') or item.get('href') or '').strip()
+    title=html.unescape(str(item.get('title') or '').strip())
+    if not url or not title: return None
+    d=_v179_domain_from_raw(item,q)
+    if not _v179_family_allowed(mode,d): return None
+    raw_date=item.get('date') or item.get('publishedAt') or item.get('published') or item.get('seendate') or ''
+    dt=pd.to_datetime(raw_date,utc=True,dayfirst=True,errors='coerce') if str(raw_date).strip() else pd.NaT
+    cs_ts=pd.Timestamp(cs,tz='UTC'); ce_ts=pd.Timestamp(ce,tz='UTC')+pd.Timedelta(days=1)
+    if pd.notna(dt) and (dt<cs_ts or dt>=ce_ts): return None
+    family={'turkish':'Yerli Basın','foreign':'Yabancı Basın','kurdish':'Kürt Bölgesel Medyası','movement':'PKK/KCK Açık Kaynak'}[mode]
+    group={'turkish':'🇹🇷 Yerli Basın','foreign':'🌍 Yabancı Basın','kurdish':'🟣 Kürt Bölgesel Medyası','movement':'🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak'}[mode]
+    src=str(item.get('source') or '').strip()
+    snippet=str(item.get('snippet') or item.get('body') or item.get('description') or '').strip()
+    rec={
+        'Başlık':title,'URL':url,'Gerçek Bağlantı':url,'Tarih':(dt.isoformat() if pd.notna(dt) else str(raw_date or '')),
+        'İçerik_Özeti':snippet[:3000],'Kaynak':src or d,'Yayıncı':src or d,'Yayıncı_URL':('https://'+d if d else ''),
+        'Domain':d,'Kaynak Ailesi':family,'Kaynak_Grubu':group,'Tarama Kanalı':mode,
+        'Arşiv Tarih Durumu':('Doğrulandı' if pd.notna(dt) else 'Doğrulanamadı — arama aralığından bulundu'),
+        'Arşiv Tarama Dilimi':f'{pd.Timestamp(cs).strftime("%d.%m.%Y")} – {pd.Timestamp(ce).strftime("%d.%m.%Y")}',
+        '_origin_query':q,'_v179_rescue':True,
+    }
+    try: rec=_v154_enrich_record(rec)
+    except Exception: rec=_v137_fix_record(rec)
+    rec['Kaynak Ailesi']=family; rec['Kaynak_Grubu']=group; rec['Tarama Kanalı']=mode
+    return rec
+
+def _v179_rescue_queries(mode,user_query=''):
+    if mode=='movement':
+        core='(Öcalan OR Ocalan OR İmralı OR Imrali OR PKK OR KCK OR Bahçeli OR MHP OR DEM OR "umut hakkı" OR tecrit OR barış OR "Kürt sorunu")'
+        qs=[f'{core} site:{d}' for d in V179_MOVEMENT_HISTORICAL_DOMAINS]
+        qs += [
+            '("ANF" OR "Fırat Haber Ajansı" OR "Firat News") (Öcalan OR Ocalan OR Bahçeli OR PKK OR KCK)',
+            '("Yeni Özgür Politika" OR "Özgür Politika") (Öcalan OR Bahçeli OR PKK OR tecrit OR "umut hakkı")',
+            '("Medya Haber" OR JINNEWS OR "Mezopotamya Ajansı" OR ANHA) (Öcalan OR PKK OR Bahçeli OR "barış süreci")',
+        ]
+    elif mode=='kurdish':
+        core='(Turkey OR Türkiye OR Öcalan OR Ocalan OR PKK OR Bahçeli OR MHP OR DEM OR "peace process" OR "Kurdish issue")'
+        qs=[f'{core} site:{d}' for d in V179_KURDISH_HISTORICAL_DOMAINS]
+    elif mode=='turkish':
+        qs=[
+            '(Bahçeli OR MHP) (Öcalan OR İmralı OR PKK OR "umut hakkı" OR tecrit OR lağvedilme)',
+            '(Öcalan OR İmralı) (Meclis OR TBMM OR çağrı OR "umut hakkı" OR tecrit OR PKK)',
+            '(DEM Parti OR Erdoğan OR CHP) (Bahçeli OR Öcalan OR PKK OR "Kürt sorunu")',
+            '("çözüm süreci" OR "barış süreci" OR "Kürt sorunu") (Öcalan OR PKK OR MHP)',
+        ]
+    else:
+        qs=[
+            '(Bahceli OR MHP) (Ocalan OR PKK OR "right to hope" OR parliament)',
+            '(Ocalan OR PKK) (Turkey OR Türkiye) (peace OR dialogue OR dissolution OR disarmament)',
+            '(DEM Party OR Erdogan) (Ocalan OR PKK OR Bahceli)',
+        ]
+    for t in _query_terms(user_query)[:18]:
+        if len(str(t).strip())>=3:
+            if mode in {'turkish','movement','kurdish'}:
+                qs.append(f'"{t}" (Öcalan OR Ocalan OR PKK OR KCK OR Bahçeli OR süreç OR barış)')
+            else:
+                qs.append(f'"{t}" (Turkey OR Türkiye OR Ocalan OR PKK OR peace)')
+    return list(dict.fromkeys(qs))
+
+def _v179_rescue_archive_family(mode,cs,ce,user_query):
+    rows=[]; raw_count=0; jobs=[]
+    for q in _v179_rescue_queries(mode,user_query):
+        engines=_v179_archive_engines(mode,q)
+        if _v179_site_domain_from_query(q):
+            pref=['DDGS','Bing Web','Google News TR' if mode in {'turkish','movement'} else 'Google News US','GDELT']
+            engines=[e for e in pref if e in engines]
+        jobs.extend((q,e) for e in engines)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(10,max(1,len(jobs)))) as ex:
+        fmap={ex.submit(_v175_engine_fetch,e,q,mode,cs,ce):(q,e) for q,e in jobs}
+        for fut in concurrent.futures.as_completed(fmap):
+            q,e=fmap[fut]
+            try:
+                part=fut.result() or []; raw_count+=len(part)
+                for item in part:
+                    rec=_v179_archive_raw_record(item,mode,q,cs,ce)
+                    if rec is not None: rows.append(rec)
+            except Exception:
+                pass
+    return dedupe(rows),raw_count,len(jobs)
+
+def _v179_reclassify_archive_record(rec):
+    r=dict(rec or {})
+    d=_v154_domain_from_row(r) if '_v154_domain_from_row' in globals() else _tt_norm_domain(r.get('Domain') or r.get('URL'))
+    d=str(d or '').lower().replace('www.','')
+    if _tt_domain_match(d,V179_MOVEMENT_HISTORICAL_DOMAINS):
+        r['Kaynak Ailesi']='PKK/KCK Açık Kaynak'; r['Kaynak_Grubu']='🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak'; r['Tarama Kanalı']='movement'
+    elif _tt_domain_match(d,V179_KURDISH_HISTORICAL_DOMAINS):
+        r['Kaynak Ailesi']='Kürt Bölgesel Medyası'; r['Kaynak_Grubu']='🟣 Kürt Bölgesel Medyası'; r['Tarama Kanalı']='kurdish'
+    return r
+
+
 def _v175_clean_query_for_date(q,start_day,end_day):
     """Arama sorgusuna motorların anlayabildiği açık tarih sınırı ekler."""
     q=str(q or '').strip()
@@ -43171,10 +43350,14 @@ def _v175_gdelt_range(query,start_day,end_day):
     try:
         start=pd.Timestamp(start_day).strftime('%Y%m%d')+'000000'
         end=(pd.Timestamp(end_day)+pd.Timedelta(days=1)).strftime('%Y%m%d')+'000000'
+        _gq=_v6_clean_query(query)
+        # GDELT DOC sorgularında web arama motorlarındaki site: filtresi yerine
+        # domain: filtresi kullanılır; tarihsel kaynak kurtarmada site sorgularını kaybetme.
+        _gq=re.sub(r'\bsite:([A-Za-z0-9._-]+)',r'domain:\1',_gq,flags=re.I)
         rr=requests.get(
             'https://api.gdeltproject.org/api/v2/doc/doc',
             params={
-                'query':_v6_clean_query(query),
+                'query':_gq,
                 'mode':'artlist','maxrecords':250,'format':'json','sort':'HybridRel',
                 'startdatetime':start,'enddatetime':end,
             },
@@ -43238,29 +43421,19 @@ def _v175_engine_fetch(engine,q,mode,start_day,end_day):
 def _v175_query_sets(user_query,selected_families):
     selected=set(selected_families or [])
     out={}
-    if 'Yerli Basın' in selected:
-        out['turkish']=list(_v22_turkish_queries())
-    if 'Yabancı Basın' in selected:
-        out['foreign']=list(_v22_foreign_queries())
-    if 'Kürt Bölgesel Medyası' in selected:
-        out['kurdish']=list(_v22_kurdish_queries())
-    if 'PKK/KCK Açık Kaynak' in selected:
-        out['movement']=list(_v22_movement_queries())
-
-    # Kullanıcının özgül terimleri günlük motorun geniş sorgularına ek bir keşif katmanı olur.
-    terms=_query_terms(user_query)[:6]
+    if 'Yerli Basın' in selected: out['turkish']=list(_v22_turkish_queries())
+    if 'Yabancı Basın' in selected: out['foreign']=list(_v22_foreign_queries())
+    if 'Kürt Bölgesel Medyası' in selected: out['kurdish']=list(_v22_kurdish_queries())
+    if 'PKK/KCK Açık Kaynak' in selected: out['movement']=list(_v22_movement_queries())
+    terms=_query_terms(user_query)[:18]
     for mode in list(out):
+        # Tam site-bazlı tarihsel kurtarma sorguları aşağıdaki rescue katmanında
+        # bir kez çalışır; burada yalnız ek kullanıcı terimleri genişletilir.
         extra=[]
         for term in terms:
-            nt=norm(term)
-            if nt in {'terorsuz turkiye','terörsüz türkiye','pkk','kck'}:
-                continue
-            if mode=='turkish':
-                extra.append(f'"{term}" ("Terörsüz Türkiye" OR PKK OR Öcalan OR süreç)')
-            elif mode=='foreign':
-                extra.append(f'"{term}" (Turkey OR Türkiye) (PKK OR Ocalan OR "peace process")')
-            else:
-                extra.append(f'"{term}" (PKK OR KCK OR Ocalan OR Öcalan OR "peace process" OR "barış süreci")')
+            if mode=='turkish': extra.append(f'"{term}" (Öcalan OR İmralı OR PKK OR Bahçeli OR MHP OR süreç OR barış)')
+            elif mode=='foreign': extra.append(f'"{term}" (Turkey OR Türkiye OR PKK OR Ocalan OR Bahceli OR "peace process")')
+            else: extra.append(f'"{term}" (PKK OR KCK OR Ocalan OR Öcalan OR Bahçeli OR "peace process" OR "barış süreci")')
         out[mode]=list(dict.fromkeys((out[mode] or [])+extra))
     return out
 
@@ -43318,7 +43491,7 @@ def _v175_scan_archive(start_day,end_day,user_query,selected_families,chunk_days
         jobs=[]
         for mode,queries in qsets.items():
             for q in queries:
-                for engine in _v22_engines(mode,q):
+                for engine in _v179_archive_engines(mode,q):
                     # Reddit/Bluesky geçmiş arşiv akademik dört ailede zaten kullanılmaz.
                     if engine in {'Reddit Public','Bluesky Public'}:
                         continue
@@ -43365,7 +43538,21 @@ def _v175_scan_archive(start_day,end_day,user_query,selected_families,chunk_days
             diag['by_mode'][mode]=diag['by_mode'].get(mode,0)+len(nr)
             all_rows=dedupe(all_rows+nr)
 
+        diag.setdefault('rescue_raw',0); diag.setdefault('rescue_jobs',0); diag.setdefault('rescue_by_mode',{})
+        for _mode in qsets:
+            try:
+                _rr,_raw_n,_job_n=_v179_rescue_archive_family(_mode,cs,ce,user_query)
+                diag['rescue_raw']+=int(_raw_n or 0); diag['rescue_jobs']+=int(_job_n or 0); diag['raw']+=int(_raw_n or 0)
+                if _rr:
+                    diag['rescue_by_mode'][_mode]=diag['rescue_by_mode'].get(_mode,0)+len(_rr)
+                    diag['by_mode'][_mode]=diag['by_mode'].get(_mode,0)+len(_rr)
+                    all_rows=dedupe(all_rows+_rr)
+            except Exception:
+                diag['errors']+=1
+
         progress.progress(ci/len(chunks),text=f'📚 Arşiv taraması: {ci}/{len(chunks)} tarih dilimi tamamlandı')
+
+    all_rows=[_v179_reclassify_archive_record(r) for r in dedupe(all_rows)]
 
     # Tarihi doğrulananları önce, sonra kronolojik olarak yeni -> eski göster.
     def _sort_key(r):
@@ -43404,7 +43591,7 @@ def _v175_results_df(records):
 
 
 def _v175_render_archive_scan():
-    st.markdown('#### 📚 V175 — Arşiv / Geçmiş Dönem Taraması')
+    st.markdown('#### 📚 V179 — Arşiv / Geçmiş Dönem Taraması')
     st.caption(
         'Bu bölüm günlük V173 taramasından tamamen ayrıdır. Seçtiğiniz geçmiş tarih aralığını V173 ile aynı '
         'kaynak aileleri ve geniş sorgu mantığıyla çoklu tarih dilimlerinde tarar. Hiçbir sonuç otomatik akademik '
@@ -43444,7 +43631,7 @@ def _v175_render_archive_scan():
     est_queries=sum(len(v) for v in qsets.values())
     st.info(
         f'Plan: **{len(chunks)} tarih dilimi** • **{est_queries} temel/site sorgusu** • '
-        f'Google News + Bing + DDGS + uygun yabancı sorgularda GDELT. '
+        f'Google News + Bing + DDGS + GDELT + tarihsel kaynak/site kurtarma katmanı. '
         'Daha küçük tarih dilimi daha fazla arama yapar ve genellikle daha yüksek geri çağırım sağlar.'
     )
 
@@ -43484,6 +43671,12 @@ def _v175_render_archive_scan():
     m3.metric('Tarihi Doğrulanan',int(_v176_verified))
     m4.metric('Tarihi Belirsiz',int(_v176_undated))
     m5.metric('Tarih Dilimi',int(diag.get('chunks',0) or 0))
+    if diag.get('rescue_jobs'):
+        st.caption(
+            f"V179 tarihsel kurtarma: {int(diag.get('rescue_jobs',0))} ek kaynak işi • "
+            f"{int(diag.get('rescue_raw',0))} ham yakalama • "
+            + ' / '.join(f"{k}: {v}" for k,v in (diag.get('rescue_by_mode') or {}).items())
+        )
 
     rdf=_v175_results_df(records)
     if not rdf.empty:
