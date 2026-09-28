@@ -43073,6 +43073,468 @@ def _v174_render_academic_tab():
 # /V174
 # ============================================================
 
+# ============================================================
+# V175 — ARŞİV / GEÇMİŞ DÖNEM TARAMASI
+#
+# KARARLI TABAN: V174 (dolayısıyla V173 günlük tarama motoru).
+# Günlük V173/V174 tarama, raporlama, harita, sepet ve Gephi akışına DOKUNMAZ.
+# Bu katman yalnız geçmiş tarih aralığını ayrı bir motorla tarar:
+#   Başlangıç tarihi + bitiş tarihi -> çok kaynaklı tarih dilimleri ->
+#   manuel seçim -> V174 Akademik Kodlama Sepeti.
+#
+# Kapsam ilkesi:
+# - Günlük V173'teki aynı V22 sorgu aileleri ve kaynak tanımları yeniden kullanılır.
+# - Akademik amaç için varsayılan dört aile: Yerli Basın, Yabancı Basın,
+#   Kürt Bölgesel Medyası, PKK/KCK Açık Kaynak.
+# - Uzun aralık tek dev sorgu olarak gönderilmez; 3/7/14/30 günlük dilimlere
+#   bölünür. Bu, arama motorlarının eski tarih sonuçlarını daha fazla döndürmesini
+#   ve tek sorgudaki sonuç tavanının etkisini azaltmayı amaçlar.
+# - Google News / Bing / DDGS yanında yabancı sorgularda tarih aralıklı GDELT
+#   kullanılır. DDGS geçmiş taramasında güncel timelimit uygulanmaz.
+# - Sonuçlar otomatik akademik veri olmaz; araştırmacı manuel seçerse V174
+#   Akademik Kodlama Sepetine aktarılır.
+# ============================================================
+
+V175_RESULTS_SESSION='v175_archive_scan_results'
+V175_DIAG_SESSION='v175_archive_scan_diag'
+
+V175_FAMILY_TO_MODE={
+    'Yerli Basın':'turkish',
+    'Yabancı Basın':'foreign',
+    'Kürt Bölgesel Medyası':'kurdish',
+    'PKK/KCK Açık Kaynak':'movement',
+}
+
+
+def _v175_clean_query_for_date(q,start_day,end_day):
+    """Arama sorgusuna motorların anlayabildiği açık tarih sınırı ekler."""
+    q=str(q or '').strip()
+    # before çoğu arama motorunda dışlayıcıdır; kullanıcı bitiş gününün tamamını
+    # kapsasın diye bir sonraki gün kullanılır.
+    before=(pd.Timestamp(end_day)+pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+    after=pd.Timestamp(start_day).strftime('%Y-%m-%d')
+    return f'{q} after:{after} before:{before}'.strip()
+
+
+def _v175_date_chunks(start_day,end_day,chunk_days):
+    s=pd.Timestamp(start_day).date(); e=pd.Timestamp(end_day).date()
+    n=max(1,int(chunk_days or 7))
+    out=[]
+    cur=s
+    while cur<=e:
+        ce=min(e,cur+timedelta(days=n-1))
+        out.append((cur,ce))
+        cur=ce+timedelta(days=1)
+    return out
+
+
+def _v175_ddgs_range(query,max_results=80,region='wt-wt'):
+    """Geçmiş taramada 'son gün/hafta/yıl' timelimit'i uygulamadan DDGS araması."""
+    q=_v6_clean_query(query)
+    try:
+        from ddgs import DDGS
+    except Exception:
+        try:
+            from duckduckgo_search import DDGS
+        except Exception:
+            return []
+    try:
+        with DDGS() as engine:
+            try:
+                items=list(engine.text(q,region=region,safesearch='moderate',max_results=int(max_results)))
+            except TypeError:
+                items=list(engine.text(q,region=region,max_results=int(max_results)))
+    except Exception:
+        return []
+    out=[]
+    for item in items or []:
+        url=str(item.get('href') or item.get('url') or '').strip()
+        title=str(item.get('title') or '').strip()
+        if not url or not title:
+            continue
+        d=_tt_norm_domain(url)
+        out.append({
+            'title':title,'url':url,
+            'date':item.get('date') or item.get('published') or '',
+            'snippet':str(item.get('body') or item.get('snippet') or item.get('description') or ''),
+            'source':d,'source_url':('https://'+d if d else '')
+        })
+    return out
+
+
+def _v175_gdelt_range(query,start_day,end_day):
+    """GDELT DOC API'yi göreli timespan yerine mutlak başlangıç/bitiş ile tarar."""
+    try:
+        start=pd.Timestamp(start_day).strftime('%Y%m%d')+'000000'
+        end=(pd.Timestamp(end_day)+pd.Timedelta(days=1)).strftime('%Y%m%d')+'000000'
+        rr=requests.get(
+            'https://api.gdeltproject.org/api/v2/doc/doc',
+            params={
+                'query':_v6_clean_query(query),
+                'mode':'artlist','maxrecords':250,'format':'json','sort':'HybridRel',
+                'startdatetime':start,'enddatetime':end,
+            },
+            headers=HEADERS,timeout=12
+        )
+        rr.raise_for_status()
+        items=rr.json().get('articles',[]) or []
+    except Exception:
+        return []
+    out=[]
+    for item in items:
+        url=str(item.get('url') or '').strip(); title=str(item.get('title') or '').strip()
+        if not url or not title:
+            continue
+        d=str(item.get('domain') or domain(url) or '')
+        out.append({
+            'title':title,'url':url,
+            'date':item.get('seendate') or item.get('date') or '',
+            'snippet':str(item.get('description') or item.get('title') or ''),
+            'source':d,'source_url':('https://'+d if d else '')
+        })
+    return out
+
+
+def _v175_engine_fetch(engine,q,mode,start_day,end_day):
+    """V173 motor ailesini geçmiş tarih mantığıyla çalıştırır."""
+    dated_q=_v175_clean_query_for_date(q,start_day,end_day)
+    try:
+        if engine=='Google News TR':
+            return rss_google_locale(dated_q,'tr','TR','TR:tr')
+        if engine=='Google News US':
+            return rss_google_locale(dated_q,'en-US','US','US:en')
+        if engine=='Google News GB':
+            return rss_google_locale(dated_q,'en-GB','GB','GB:en')
+        if engine=='Google News DE':
+            return rss_google_locale(dated_q,'de','DE','DE:de')
+        if engine=='Google News FR':
+            return rss_google_locale(dated_q,'fr','FR','FR:fr')
+        if engine=='Google News AR':
+            return rss_google_locale(dated_q,'ar','SA','SA:ar')
+        if engine=='Bing News TR':
+            return _v8_bing_news_rss(dated_q,'tr-TR')
+        if engine=='Bing News US':
+            return _v8_bing_news_rss(dated_q,'en-US')
+        if engine=='Bing News GB':
+            return _v8_bing_news_rss(dated_q,'en-GB')
+        if engine=='Bing Web':
+            return _v19_bing_web_rss(dated_q,timeout=9)
+        if engine=='DDGS Local':
+            return _v175_ddgs_range(dated_q,85,'tr-tr')
+        if engine=='DDGS':
+            return _v175_ddgs_range(dated_q,85,'wt-wt')
+        if engine=='GDELT':
+            # GDELT query alanında after/before kullanılmaz; mutlak API tarihleri kullanılır.
+            return _v175_gdelt_range(q,start_day,end_day)
+    except Exception:
+        return []
+    return []
+
+
+def _v175_query_sets(user_query,selected_families):
+    selected=set(selected_families or [])
+    out={}
+    if 'Yerli Basın' in selected:
+        out['turkish']=list(_v22_turkish_queries())
+    if 'Yabancı Basın' in selected:
+        out['foreign']=list(_v22_foreign_queries())
+    if 'Kürt Bölgesel Medyası' in selected:
+        out['kurdish']=list(_v22_kurdish_queries())
+    if 'PKK/KCK Açık Kaynak' in selected:
+        out['movement']=list(_v22_movement_queries())
+
+    # Kullanıcının özgül terimleri günlük motorun geniş sorgularına ek bir keşif katmanı olur.
+    terms=_query_terms(user_query)[:6]
+    for mode in list(out):
+        extra=[]
+        for term in terms:
+            nt=norm(term)
+            if nt in {'terorsuz turkiye','terörsüz türkiye','pkk','kck'}:
+                continue
+            if mode=='turkish':
+                extra.append(f'"{term}" ("Terörsüz Türkiye" OR PKK OR Öcalan OR süreç)')
+            elif mode=='foreign':
+                extra.append(f'"{term}" (Turkey OR Türkiye) (PKK OR Ocalan OR "peace process")')
+            else:
+                extra.append(f'"{term}" (PKK OR KCK OR Ocalan OR Öcalan OR "peace process" OR "barış süreci")')
+        out[mode]=list(dict.fromkeys((out[mode] or [])+extra))
+    return out
+
+
+def _v175_rec_dt(rec):
+    for c in ['Tarih_dt','Tarih','published_at','publishedAt','date','seendate']:
+        v=rec.get(c,'') if isinstance(rec,dict) else ''
+        if v is None or str(v).strip()=='':
+            continue
+        try:
+            ts=pd.to_datetime(v,utc=True,dayfirst=True,errors='coerce')
+            if pd.notna(ts):
+                return ts
+        except Exception:
+            pass
+    return pd.NaT
+
+
+def _v175_finalize_window(rows,start_day,end_day,chunk_start=None,chunk_end=None):
+    start_ts=pd.Timestamp(start_day,tz='UTC')
+    end_ts=pd.Timestamp(end_day,tz='UTC')+pd.Timedelta(days=1)
+    out=[]
+    for r0 in rows or []:
+        r=dict(r0)
+        dt=_v175_rec_dt(r)
+        if pd.notna(dt):
+            if dt < start_ts or dt >= end_ts:
+                continue
+            r['Arşiv Tarih Durumu']='Doğrulandı'
+        else:
+            # Tarihi olmayan sonuç tarama diliminden gelmiş olabilir; tarih uydurulmaz.
+            r['Arşiv Tarih Durumu']='Doğrulanamadı — arama aralığından bulundu'
+        if chunk_start is not None:
+            r['Arşiv Tarama Dilimi']=f'{pd.Timestamp(chunk_start).strftime("%d.%m.%Y")} – {pd.Timestamp(chunk_end).strftime("%d.%m.%Y")}'
+        out.append(_v137_fix_record(r))
+    return out
+
+
+def _v175_scan_archive(start_day,end_day,user_query,selected_families,chunk_days=7):
+    if pd.Timestamp(end_day).date() < pd.Timestamp(start_day).date():
+        return [],{'error':'Bitiş tarihi başlangıç tarihinden önce olamaz.'}
+    qsets=_v175_query_sets(user_query,selected_families)
+    if not qsets:
+        return [],{'error':'En az bir kaynak ailesi seçilmelidir.'}
+    chunks=_v175_date_chunks(start_day,end_day,chunk_days)
+    all_rows=[]
+    diag={
+        'chunks':len(chunks),'jobs':0,'raw':0,'normalized':0,'verified':0,'undated':0,
+        'by_mode':{},'errors':0,
+    }
+    progress=st.progress(0.0,text='📚 Arşiv taraması hazırlanıyor...')
+    status=st.status('📚 Geçmiş dönem taraması başlıyor...',expanded=True)
+
+    for ci,(cs,ce) in enumerate(chunks,1):
+        jobs=[]
+        for mode,queries in qsets.items():
+            for q in queries:
+                for engine in _v22_engines(mode,q):
+                    # Reddit/Bluesky geçmiş arşiv akademik dört ailede zaten kullanılmaz.
+                    if engine in {'Reddit Public','Bluesky Public'}:
+                        continue
+                    jobs.append((mode,q,engine))
+        diag['jobs']+=len(jobs)
+        raw_by_mode={m:[] for m in qsets}
+        status.write(
+            f'🗓️ {cs.strftime("%d.%m.%Y")} – {ce.strftime("%d.%m.%Y")} • '
+            f'{len(jobs)} motor işi'
+        )
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(V22_WORKERS,max(1,len(jobs)))
+        ) as ex:
+            fmap={
+                ex.submit(_v175_engine_fetch,engine,q,mode,cs,ce):(mode,q,engine)
+                for mode,q,engine in jobs
+            }
+            for fut in concurrent.futures.as_completed(fmap):
+                mode,q,engine=fmap[fut]
+                try:
+                    chunk=fut.result() or []
+                    for item in chunk:
+                        if isinstance(item,dict):
+                            item['_origin_query']=q
+                            item['_v175_engine']=engine
+                    raw_by_mode.setdefault(mode,[]).extend(chunk)
+                    diag['raw']+=len(chunk)
+                except Exception:
+                    diag['errors']+=1
+
+        # Günlük V173 normalize/source-family kuralları aynen kullanılır.
+        for mode,raw in raw_by_mode.items():
+            if not raw:
+                continue
+            chunk_cutoff=datetime.combine(cs,datetime.min.time(),tzinfo=timezone.utc)
+            try:
+                nr,_reasons=normalize_rows(raw,chunk_cutoff,mode,user_query)
+            except Exception:
+                nr=[]
+            nr=dedupe(nr)
+            nr=_v175_finalize_window(nr,start_day,end_day,cs,ce)
+            diag['normalized']+=len(nr)
+            diag['by_mode'][mode]=diag['by_mode'].get(mode,0)+len(nr)
+            all_rows=dedupe(all_rows+nr)
+
+        progress.progress(ci/len(chunks),text=f'📚 Arşiv taraması: {ci}/{len(chunks)} tarih dilimi tamamlandı')
+
+    # Tarihi doğrulananları önce, sonra kronolojik olarak yeni -> eski göster.
+    def _sort_key(r):
+        dt=_v175_rec_dt(r)
+        return (0 if pd.notna(dt) else 1, -(dt.timestamp() if pd.notna(dt) else 0))
+    try:
+        all_rows=sorted(dedupe(all_rows),key=_sort_key)
+    except Exception:
+        all_rows=dedupe(all_rows)
+
+    for r in all_rows:
+        if r.get('Arşiv Tarih Durumu')=='Doğrulandı':
+            diag['verified']+=1
+        else:
+            diag['undated']+=1
+    diag['result']=len(all_rows)
+    progress.empty()
+    status.update(label=f'✅ Arşiv taraması tamamlandı — {len(all_rows)} tekil sonuç',state='complete',expanded=False)
+    return all_rows,diag
+
+
+def _v175_results_df(records):
+    rows=[]
+    for r in records or []:
+        rows.append({
+            'Tarih':_v174_clean_scalar(r.get('Tarih','')),
+            'Tarih Durumu':_v174_clean_scalar(r.get('Arşiv Tarih Durumu','')),
+            'Kaynak Ailesi':_v174_source_family(r),
+            'Kaynak':_v174_clean_scalar(r.get('Kaynak','') or r.get('Yayıncı','') or r.get('Domain','')),
+            'Başlık':_v174_clean_scalar(r.get('Başlık','')),
+            'İçerik / Özet':_v174_content_text(r)[:1200],
+            'URL':_v174_url(r),
+            'Tarama Dilimi':_v174_clean_scalar(r.get('Arşiv Tarama Dilimi','')),
+        })
+    return pd.DataFrame(rows)
+
+
+def _v175_render_archive_scan():
+    st.markdown('#### 📚 V175 — Arşiv / Geçmiş Dönem Taraması')
+    st.caption(
+        'Bu bölüm günlük V173 taramasından tamamen ayrıdır. Seçtiğiniz geçmiş tarih aralığını V173 ile aynı '
+        'kaynak aileleri ve geniş sorgu mantığıyla çoklu tarih dilimlerinde tarar. Hiçbir sonuç otomatik akademik '
+        'veri olmaz; yalnız sizin seçtiğiniz haberler V174 Akademik Kodlama Sepetine gider.'
+    )
+
+    today=pd.Timestamp.now(tz='Europe/Istanbul').date()
+    c1,c2,c3=st.columns([1,1,1])
+    start_day=c1.date_input('Başlangıç tarihi',value=today-timedelta(days=30),min_value=date(2000,1,1),max_value=today,key='v175_start')
+    end_day=c2.date_input('Bitiş tarihi',value=today,min_value=date(2000,1,1),max_value=today,key='v175_end')
+    depth=c3.selectbox(
+        'Tarama derinliği',
+        ['Çok derin — 3 günlük dilimler','Derin — 7 günlük dilimler','Geniş — 14 günlük dilimler','Hızlı — 30 günlük dilimler'],
+        index=1,key='v175_depth'
+    )
+    chunk_days={
+        'Çok derin — 3 günlük dilimler':3,'Derin — 7 günlük dilimler':7,
+        'Geniş — 14 günlük dilimler':14,'Hızlı — 30 günlük dilimler':30,
+    }[depth]
+
+    families=st.multiselect(
+        'Kaynak aileleri',
+        list(V175_FAMILY_TO_MODE.keys()),
+        default=list(V175_FAMILY_TO_MODE.keys()),
+        key='v175_families'
+    )
+    default_archive_query=(
+        'Terörsüz Türkiye OR PKK OR KCK OR Öcalan OR İmralı OR silah bırakma OR silahsızlanma OR '
+        'fesih OR çözüm süreci OR barış süreci OR DEM Parti OR MHP OR TBMM OR SDF OR SDG OR YPG OR Suriye OR Irak OR Kandil'
+    )
+    archive_query=st.text_area(
+        'Arşiv tarama sorgusu / ek takip terimleri',default_archive_query,height=105,key='v175_query'
+    )
+
+    chunks=_v175_date_chunks(start_day,end_day,chunk_days) if end_day>=start_day else []
+    qsets=_v175_query_sets(archive_query,families) if families else {}
+    est_queries=sum(len(v) for v in qsets.values())
+    st.info(
+        f'Plan: **{len(chunks)} tarih dilimi** • **{est_queries} temel/site sorgusu** • '
+        f'Google News + Bing + DDGS + uygun yabancı sorgularda GDELT. '
+        'Daha küçük tarih dilimi daha fazla arama yapar ve genellikle daha yüksek geri çağırım sağlar.'
+    )
+
+    if st.button('📚 GEÇMİŞ DÖNEM TARAMASINI BAŞLAT',type='primary',use_container_width=True,key='v175_run_archive'):
+        if end_day<start_day:
+            st.error('Bitiş tarihi başlangıç tarihinden önce olamaz.')
+        elif not families:
+            st.error('En az bir kaynak ailesi seçin.')
+        else:
+            results,diag=_v175_scan_archive(start_day,end_day,archive_query,families,chunk_days)
+            if diag.get('error'):
+                st.error(diag['error'])
+            else:
+                st.session_state[V175_RESULTS_SESSION]=results
+                st.session_state[V175_DIAG_SESSION]=diag
+                st.success(f'✅ {len(results)} tekil geçmiş dönem sonucu bulundu.')
+
+    records=list(st.session_state.get(V175_RESULTS_SESSION) or [])
+    diag=st.session_state.get(V175_DIAG_SESSION) or {}
+    if not records:
+        st.info('Henüz arşiv taraması sonucu yok.')
+        return
+
+    m1,m2,m3,m4,m5=st.columns(5)
+    m1.metric('Tekil Sonuç',len(records))
+    m2.metric('Ham Yakalama',int(diag.get('raw',0) or 0))
+    m3.metric('Tarihi Doğrulanan',int(diag.get('verified',0) or 0))
+    m4.metric('Tarihi Belirsiz',int(diag.get('undated',0) or 0))
+    m5.metric('Tarih Dilimi',int(diag.get('chunks',0) or 0))
+
+    rdf=_v175_results_df(records)
+    if not rdf.empty:
+        fam_counts=rdf['Kaynak Ailesi'].value_counts().rename_axis('Kaynak Ailesi').reset_index(name='Haber')
+        st.dataframe(fam_counts,hide_index=True,use_container_width=True)
+        st.download_button(
+            '⬇️ Arşiv Tarama Sonuçlarını CSV İndir',
+            rdf.to_csv(index=False).encode('utf-8-sig'),
+            file_name=f'Arsiv_Tarama_V175_{pd.Timestamp.now().strftime("%Y-%m-%d")}.csv',
+            mime='text/csv',use_container_width=True,key='v175_download_results'
+        )
+
+    st.markdown('##### 🎓 Manuel seçim → Akademik Kodlama Sepeti')
+    f1,f2=st.columns([1,2])
+    fam_options=sorted(rdf['Kaynak Ailesi'].dropna().astype(str).unique().tolist()) if not rdf.empty else []
+    chosen_fams=f1.multiselect('Sonuçlarda kaynak ailesi filtresi',fam_options,default=fam_options,key='v175_result_fam_filter')
+    kw=f2.text_input('Başlık/içerik içinde ara',value='',key='v175_result_kw')
+
+    keep_idx=[]
+    for i,row in rdf.fillna('').iterrows():
+        if chosen_fams and str(row.get('Kaynak Ailesi','')) not in chosen_fams:
+            continue
+        if kw.strip():
+            hay=norm(f"{row.get('Başlık','')} {row.get('İçerik / Özet','')} {row.get('Kaynak','')}")
+            if norm(kw) not in hay:
+                continue
+        keep_idx.append(i)
+    filtered_records=[records[i] for i in keep_idx]
+    fdf=rdf.iloc[keep_idx].reset_index(drop=True) if keep_idx else pd.DataFrame(columns=rdf.columns)
+
+    if fdf.empty:
+        st.info('Bu filtrelerle gösterilecek sonuç yok.')
+        return
+    fdf.insert(0,'Akademik Sepete Ekle',False)
+    fed=st.data_editor(
+        fdf,hide_index=True,use_container_width=True,height=min(760,150+38*min(len(fdf),16)),
+        column_config={
+            'Akademik Sepete Ekle':st.column_config.CheckboxColumn('Seç'),
+            'Başlık':st.column_config.TextColumn('Başlık',width='large'),
+            'İçerik / Özet':st.column_config.TextColumn('İçerik / Özet',width='large'),
+            'URL':st.column_config.LinkColumn('Haber',display_text='Aç'),
+        },
+        disabled=[c for c in fdf.columns if c!='Akademik Sepete Ekle'],
+        key='v175_archive_result_editor'
+    )
+    if st.button('🎓 Seçilen Geçmiş Haberleri Akademik Sepete Ekle',type='primary',use_container_width=True,key='v175_add_selected_academic'):
+        idx=fed.index[fed['Akademik Sepete Ekle'].fillna(False).astype(bool)].tolist()
+        if not idx:
+            st.warning('Önce akademik sepete eklenecek haberleri seçin.')
+        else:
+            selected=[filtered_records[i] for i in idx if 0 <= i < len(filtered_records)]
+            added=_v174_academic_add(selected)
+            if added:
+                st.success(f'✅ {added} geçmiş dönem haberi Akademik Kodlama Sepetine eklendi.')
+                st.rerun()
+            else:
+                st.info('Yeni kayıt eklenmedi; seçilen haberler akademik sepette zaten bulunuyor olabilir.')
+
+
+# Arşiv taraması günlük tarama yapılmamışken de erişilebilir olsun.
+if st.session_state.get('rows') is None:
+    st.markdown('---')
+    with st.expander('📚 Arşiv / Geçmiş Dönem Taraması (V175)',expanded=False):
+        _v175_render_archive_scan()
+
 rows=st.session_state.rows
 
 if rows is None:
@@ -43696,15 +44158,16 @@ Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bi
     st.subheader('🧺 Analiz Sepetleri')
     st.caption(
         'V173 kararlı tarama/raporlama akışı korunur. Manuel Link Havuzu, Günlük Analiz Sepeti ve Günlük Rapor Arşivi aynen çalışır. '
-        'V174 yalnız ayrıca Akademik Kodlama sekmesi ekler: Günlük Sepetten manuel seçilen haberler ChatGPT paketine dönüştürülür; '
+        'V174 Akademik Kodlama akışı korunur. V175 ayrıca geçmiş tarih aralığı taraması ekler: geçmiş sonuçlardan manuel seçilen haberler de aynı Akademik Kodlama Sepetine aktarılır; '
         'AI sonucu geri yüklenir ve Gephi yalnız araştırmacının kontrol ettiği Nihai Çerçeve alanından üretilir.'
     )
 
-    _manual_tab,_daily_tab,_archive_tab,_academic_tab=st.tabs([
+    _manual_tab,_daily_tab,_archive_tab,_academic_tab,_historical_tab=st.tabs([
         f'🔗 Manuel Link Havuzu ({len(_v140_manual_pool())})',
         f'📅 Günlük Analiz Sepeti ({len(_v136_daily_basket())})',
         f'🗂️ Günlük Rapor Arşivi ({len(_v136_archive_basket())})',
-        f'🎓 Akademik Kodlama ({len(_v174_academic_basket())})'
+        f'🎓 Akademik Kodlama ({len(_v174_academic_basket())})',
+        f'📚 Arşiv Tarama ({len(st.session_state.get(V175_RESULTS_SESSION) or [])})'
     ])
 
     with _manual_tab:
@@ -43730,6 +44193,9 @@ Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bi
 
     with _academic_tab:
         _v174_render_academic_tab()
+
+    with _historical_tab:
+        _v175_render_archive_scan()
 
     st.markdown('---')
 
