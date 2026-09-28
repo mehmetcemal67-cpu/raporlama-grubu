@@ -629,7 +629,7 @@ def _official_radar_rows(df):
 st.set_page_config(page_title='Terörsüz Türkiye OSINT Radarı', page_icon='🛡️', layout='wide')
 _v166_apply_background()
 # V177 görünür sürüm teyidi: yanlış dosya çalıştırılıyorsa kullanıcı hemen fark eder.
-st.sidebar.success('✅ AKTİF SÜRÜM: V179 — Arşiv Tarama + ChatGPT Akademik Kodlama')
+st.sidebar.success('✅ AKTİF SÜRÜM: V180 — Arşiv Tarama + ChatGPT Akademik Kodlama')
 
 # ============================================================
 # V55 — ŞİFRE KORUMASI
@@ -43074,6 +43074,11 @@ def _v174_render_academic_tab():
 # ============================================================
 
 # ============================================================
+# V180 — ARŞİV TARAMASI = GÜNLÜK RAPORLAMA MOTORU + TARİH ARALIĞI
+# V178 kararlı günlük motorun sorgu/engine/normalize mantığı arşivde yeniden kullanılır.
+# V174 akademik kodlama ve V176 toplu silme korunur.
+# ============================================================
+
 # V176 — ARŞİV TARAMASI TOPLU SİLME
 # V175 arşiv tarama motoru aynen korunur; yalnız toplu sonuç temizleme eklenmiştir.
 # Günlük V173 motoruna, raporlama akışına ve akademik kodlama motoruna dokunulmaz.
@@ -43419,24 +43424,34 @@ def _v175_engine_fetch(engine,q,mode,start_day,end_day):
 
 
 def _v175_query_sets(user_query,selected_families):
+    """
+    V180: Arşiv taramasında günlük raporlama ekranındaki V22 sorgu mantığını
+    aynen kullanır. Tek fark, sonuçların bugüne göre değil kullanıcının seçtiği
+    başlangıç/bitiş tarihine göre aranmasıdır.
+    """
     selected=set(selected_families or [])
     out={}
-    if 'Yerli Basın' in selected: out['turkish']=list(_v22_turkish_queries())
-    if 'Yabancı Basın' in selected: out['foreign']=list(_v22_foreign_queries())
-    if 'Kürt Bölgesel Medyası' in selected: out['kurdish']=list(_v22_kurdish_queries())
-    if 'PKK/KCK Açık Kaynak' in selected: out['movement']=list(_v22_movement_queries())
-    terms=_query_terms(user_query)[:18]
-    for mode in list(out):
-        # Tam site-bazlı tarihsel kurtarma sorguları aşağıdaki rescue katmanında
-        # bir kez çalışır; burada yalnız ek kullanıcı terimleri genişletilir.
-        extra=[]
-        for term in terms:
-            if mode=='turkish': extra.append(f'"{term}" (Öcalan OR İmralı OR PKK OR Bahçeli OR MHP OR süreç OR barış)')
-            elif mode=='foreign': extra.append(f'"{term}" (Turkey OR Türkiye OR PKK OR Ocalan OR Bahceli OR "peace process")')
-            else: extra.append(f'"{term}" (PKK OR KCK OR Ocalan OR Öcalan OR Bahçeli OR "peace process" OR "barış süreci")')
-        out[mode]=list(dict.fromkeys((out[mode] or [])+extra))
-    return out
+    if 'Yerli Basın' in selected:
+        out['turkish']=list(_v22_turkish_queries())
+    if 'Yabancı Basın' in selected:
+        out['foreign']=list(_v22_foreign_queries())
+    if 'Kürt Bölgesel Medyası' in selected:
+        out['kurdish']=list(_v22_kurdish_queries())
+    if 'PKK/KCK Açık Kaynak' in selected:
+        out['movement']=list(_v22_movement_queries())
 
+    # Günlük ana taramadakiyle aynı yaklaşım: kullanıcının özgül takip
+    # terimlerinden en fazla iki ek yerli sorgu oluştur.
+    if 'turkish' in out:
+        for term in _query_terms(user_query)[:2]:
+            if norm(term) not in {'terörsüz türkiye','terorsuz turkiye','pkk'}:
+                out['turkish'].append(
+                    f'"{term}" ("Terörsüz Türkiye" OR PKK OR Öcalan)'
+                )
+
+    for mode in list(out):
+        out[mode]=list(dict.fromkeys(out[mode] or []))
+    return out
 
 def _v175_rec_dt(rec):
     for c in ['Tarih_dt','Tarih','published_at','publishedAt','date','seendate']:
@@ -43473,34 +43488,53 @@ def _v175_finalize_window(rows,start_day,end_day,chunk_start=None,chunk_end=None
 
 
 def _v175_scan_archive(start_day,end_day,user_query,selected_families,chunk_days=7):
+    """
+    V180 — ARŞİV = GÜNLÜK RAPORLAMA MOTORU + MUTLAK TARİH ARALIĞI
+
+    Günlük ekrandaki dört akademik kaynak ailesinin aynı V22 sorgularını,
+    aynı _v22_engines motor seçimini, aynı normalize_rows kaynak/konu
+    kurallarını ve aynı dedupe mantığını kullanır. Arşiv modunun tek farkı,
+    göreli `when:` yerine seçilen tarih dilimine `after:/before:` uygulanmasıdır.
+
+    V179'daki ayrıca tarihsel rescue/site katmanı bu akışta kullanılmaz.
+    Böylece günlük tarama ile arşiv taraması arasında iki farklı arama mantığı
+    oluşmaz.
+    """
     if pd.Timestamp(end_day).date() < pd.Timestamp(start_day).date():
         return [],{'error':'Bitiş tarihi başlangıç tarihinden önce olamaz.'}
+
     qsets=_v175_query_sets(user_query,selected_families)
     if not qsets:
         return [],{'error':'En az bir kaynak ailesi seçilmelidir.'}
+
     chunks=_v175_date_chunks(start_day,end_day,chunk_days)
     all_rows=[]
     diag={
-        'chunks':len(chunks),'jobs':0,'raw':0,'normalized':0,'verified':0,'undated':0,
-        'by_mode':{},'errors':0,
+        'chunks':len(chunks),'jobs':0,'raw':0,'normalized':0,
+        'verified':0,'undated':0,'by_mode':{},'errors':0,
+        'engine_logic':'V173/V178 günlük V22 motor seçimi',
     }
+
     progress=st.progress(0.0,text='📚 Arşiv taraması hazırlanıyor...')
-    status=st.status('📚 Geçmiş dönem taraması başlıyor...',expanded=True)
+    status=st.status('📚 Günlük raporlama motoruyla geçmiş dönem taraması başlıyor...',expanded=True)
 
     for ci,(cs,ce) in enumerate(chunks,1):
         jobs=[]
         for mode,queries in qsets.items():
             for q in queries:
-                for engine in _v179_archive_engines(mode,q):
-                    # Reddit/Bluesky geçmiş arşiv akademik dört ailede zaten kullanılmaz.
+                # Günlük raporlama ekranındaki motor seçiminin aynısı.
+                for engine in _v22_engines(mode,q):
+                    # Dört akademik ailede sosyal motorlar kullanılmaz; yine de
+                    # olası bir gelecekteki motor genişlemesinde güvenli kal.
                     if engine in {'Reddit Public','Bluesky Public'}:
                         continue
                     jobs.append((mode,q,engine))
+
         diag['jobs']+=len(jobs)
         raw_by_mode={m:[] for m in qsets}
         status.write(
             f'🗓️ {cs.strftime("%d.%m.%Y")} – {ce.strftime("%d.%m.%Y")} • '
-            f'{len(jobs)} motor işi'
+            f'{len(jobs)} günlük-motor işi'
         )
 
         with concurrent.futures.ThreadPoolExecutor(
@@ -43513,17 +43547,17 @@ def _v175_scan_archive(start_day,end_day,user_query,selected_families,chunk_days
             for fut in concurrent.futures.as_completed(fmap):
                 mode,q,engine=fmap[fut]
                 try:
-                    chunk=fut.result() or []
-                    for item in chunk:
+                    part=fut.result() or []
+                    for item in part:
                         if isinstance(item,dict):
                             item['_origin_query']=q
                             item['_v175_engine']=engine
-                    raw_by_mode.setdefault(mode,[]).extend(chunk)
-                    diag['raw']+=len(chunk)
+                    raw_by_mode.setdefault(mode,[]).extend(part)
+                    diag['raw']+=len(part)
                 except Exception:
                     diag['errors']+=1
 
-        # Günlük V173 normalize/source-family kuralları aynen kullanılır.
+        # Günlük V173/V178 normalize/source-family/konu kuralları aynen.
         for mode,raw in raw_by_mode.items():
             if not raw:
                 continue
@@ -43538,23 +43572,13 @@ def _v175_scan_archive(start_day,end_day,user_query,selected_families,chunk_days
             diag['by_mode'][mode]=diag['by_mode'].get(mode,0)+len(nr)
             all_rows=dedupe(all_rows+nr)
 
-        diag.setdefault('rescue_raw',0); diag.setdefault('rescue_jobs',0); diag.setdefault('rescue_by_mode',{})
-        for _mode in qsets:
-            try:
-                _rr,_raw_n,_job_n=_v179_rescue_archive_family(_mode,cs,ce,user_query)
-                diag['rescue_raw']+=int(_raw_n or 0); diag['rescue_jobs']+=int(_job_n or 0); diag['raw']+=int(_raw_n or 0)
-                if _rr:
-                    diag['rescue_by_mode'][_mode]=diag['rescue_by_mode'].get(_mode,0)+len(_rr)
-                    diag['by_mode'][_mode]=diag['by_mode'].get(_mode,0)+len(_rr)
-                    all_rows=dedupe(all_rows+_rr)
-            except Exception:
-                diag['errors']+=1
+        progress.progress(
+            ci/len(chunks),
+            text=f'📚 Arşiv taraması: {ci}/{len(chunks)} tarih dilimi tamamlandı'
+        )
 
-        progress.progress(ci/len(chunks),text=f'📚 Arşiv taraması: {ci}/{len(chunks)} tarih dilimi tamamlandı')
-
-    all_rows=[_v179_reclassify_archive_record(r) for r in dedupe(all_rows)]
-
-    # Tarihi doğrulananları önce, sonra kronolojik olarak yeni -> eski göster.
+    # Günlük taramadaki tekilleştirme mantığı korunur; yalnız görünüm için
+    # doğrulanmış tarihli kayıtlar önce ve yeni -> eski sıralanır.
     def _sort_key(r):
         dt=_v175_rec_dt(r)
         return (0 if pd.notna(dt) else 1, -(dt.timestamp() if pd.notna(dt) else 0))
@@ -43569,10 +43593,13 @@ def _v175_scan_archive(start_day,end_day,user_query,selected_families,chunk_days
         else:
             diag['undated']+=1
     diag['result']=len(all_rows)
-    progress.empty()
-    status.update(label=f'✅ Arşiv taraması tamamlandı — {len(all_rows)} tekil sonuç',state='complete',expanded=False)
-    return all_rows,diag
 
+    progress.empty()
+    status.update(
+        label=f'✅ Arşiv taraması tamamlandı — {len(all_rows)} tekil sonuç',
+        state='complete',expanded=False
+    )
+    return all_rows,diag
 
 def _v175_results_df(records):
     rows=[]
@@ -43591,11 +43618,11 @@ def _v175_results_df(records):
 
 
 def _v175_render_archive_scan():
-    st.markdown('#### 📚 V179 — Arşiv / Geçmiş Dönem Taraması')
+    st.markdown('#### 📚 V180 — Arşiv / Geçmiş Dönem Taraması')
     st.caption(
-        'Bu bölüm günlük V173 taramasından tamamen ayrıdır. Seçtiğiniz geçmiş tarih aralığını V173 ile aynı '
-        'kaynak aileleri ve geniş sorgu mantığıyla çoklu tarih dilimlerinde tarar. Hiçbir sonuç otomatik akademik '
-        'veri olmaz; yalnız sizin seçtiğiniz haberler V174 Akademik Kodlama Sepetine gider.'
+        'Bu bölüm günlük raporlama ekranındaki V173/V178 tarama mantığını kullanır. Aynı V22 sorgu aileleri, aynı '
+        'arama motoru seçimi, aynı kaynak sınıflandırması ve aynı konu filtresi çalışır; yalnız zaman filtresi '
+        'seçtiğiniz geçmiş başlangıç/bitiş tarihine uygulanır. Son akademik seçim yine size aittir.'
     )
 
     today=pd.Timestamp.now(tz='Europe/Istanbul').date()
@@ -43631,8 +43658,8 @@ def _v175_render_archive_scan():
     est_queries=sum(len(v) for v in qsets.values())
     st.info(
         f'Plan: **{len(chunks)} tarih dilimi** • **{est_queries} temel/site sorgusu** • '
-        f'Google News + Bing + DDGS + GDELT + tarihsel kaynak/site kurtarma katmanı. '
-        'Daha küçük tarih dilimi daha fazla arama yapar ve genellikle daha yüksek geri çağırım sağlar.'
+        f'Günlük raporlama ekranındaki V22 sorgu + motor mantığı tarih aralığına uygulanır. '
+        'Daha küçük tarih dilimi daha fazla ayrı arama yapar ve geçmiş indekslerde daha fazla sonuç yakalayabilir.'
     )
 
     if st.button('📚 GEÇMİŞ DÖNEM TARAMASINI BAŞLAT',type='primary',use_container_width=True,key='v175_run_archive'):
@@ -43671,12 +43698,8 @@ def _v175_render_archive_scan():
     m3.metric('Tarihi Doğrulanan',int(_v176_verified))
     m4.metric('Tarihi Belirsiz',int(_v176_undated))
     m5.metric('Tarih Dilimi',int(diag.get('chunks',0) or 0))
-    if diag.get('rescue_jobs'):
-        st.caption(
-            f"V179 tarihsel kurtarma: {int(diag.get('rescue_jobs',0))} ek kaynak işi • "
-            f"{int(diag.get('rescue_raw',0))} ham yakalama • "
-            + ' / '.join(f"{k}: {v}" for k,v in (diag.get('rescue_by_mode') or {}).items())
-        )
+    if diag.get('engine_logic'):
+        st.caption(f"Tarama motoru: {diag.get('engine_logic')}")
 
     rdf=_v175_results_df(records)
     if not rdf.empty:
@@ -43685,7 +43708,7 @@ def _v175_render_archive_scan():
         st.download_button(
             '⬇️ Arşiv Tarama Sonuçlarını CSV İndir',
             rdf.to_csv(index=False).encode('utf-8-sig'),
-            file_name=f'Arsiv_Tarama_V175_{pd.Timestamp.now().strftime("%Y-%m-%d")}.csv',
+            file_name=f'Arsiv_Tarama_V180_{pd.Timestamp.now().strftime("%Y-%m-%d")}.csv',
             mime='text/csv',use_container_width=True,key='v175_download_results'
         )
 
@@ -43790,7 +43813,7 @@ def _v175_render_archive_scan():
 # Arşiv taraması günlük tarama yapılmamışken de erişilebilir olsun.
 if st.session_state.get('rows') is None:
     st.markdown('---')
-    with st.expander('📚 Arşiv / Geçmiş Dönem Taraması (V175)',expanded=False):
+    with st.expander('📚 Arşiv / Geçmiş Dönem Taraması (V180)',expanded=False):
         _v175_render_archive_scan()
 
 rows=st.session_state.rows
