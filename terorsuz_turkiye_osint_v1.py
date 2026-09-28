@@ -10396,6 +10396,15 @@ def _v166_build_geo_records(df_raw):
     return pts,unmapped
 
 
+# ============================================================
+# V173 — V172 HARİTA -> GÜNLÜK ANALİZ SEPETİ HATA DÜZELTMESİ
+# - Kaynak dataframe zaten "Seç" sütunu taşısa bile ikinci kez insert edilmez.
+# - UI'ye ait geçici sütunlar kalıcı günlük sepete yazılmaz.
+# - Veri kümesi değiştiğinde eski checkbox durumu başka haberlere taşınmasın diye
+#   editör/form anahtarı mevcut kayıt kümesinin imzasıyla ayrıştırılır.
+# - Checkbox NaN/None değerleri güvenli biçimde False kabul edilir.
+# ============================================================
+
 def _v172_mapped_rows(df_raw):
     """Haritada gerçekten bir konuma bağlanan özgün haberleri sepete ekleme editörü için hazırlar."""
     rows=[]; seen=set()
@@ -10406,10 +10415,21 @@ def _v172_mapped_rows(df_raw):
         if not locs:
             continue
         rec=dict(row)
+
+        # Üst tablolardan gelebilen UI/geçici alanları bu katmanda taşımıyoruz.
+        # Özellikle "Seç" alanı aşağıdaki editörde yeniden ve tek kez oluşturulur.
+        for _ui_col in ('Seç','Harita Konumu','_Harita_Konumu','_row_key'):
+            rec.pop(_ui_col,None)
+
         if not str(rec.get('URL','') or '').strip() and str(rec.get('Gerçek Bağlantı','') or '').strip():
             rec['URL']=str(rec.get('Gerçek Bağlantı') or '').strip()
+
+        # Boş URL + boş başlık kaydı sepete taşınmasın.
+        if not str(rec.get('URL','') or '').strip() and not str(rec.get('Başlık','') or '').strip():
+            continue
+
         key=_v3_analysis_dedup_key(rec)
-        if not key or key in seen:
+        if key in seen:
             continue
         seen.add(key)
         rec['_Harita_Konumu']=', '.join(x['name'] for x in locs)
@@ -10422,20 +10442,40 @@ def _v172_map_daily_basket_editor(src,scope):
     if scope=='Günlük Analiz Sepeti':
         st.caption('🧺 Bu görünüm zaten Günlük Analiz Sepetindeki kayıtları göstermektedir.')
         return
+
     mapped=_v172_mapped_rows(src)
     if not mapped:
         return
+
     with st.expander('🧺 Haritadaki haberlerden Günlük Analiz Sepetine ekle',expanded=False):
         x=pd.DataFrame(mapped).reset_index(drop=True)
-        x.insert(0,'Seç',False)
+
+        # V172'deki crash'in ana nedeni: x içinde "Seç" zaten varken tekrar insert edilmesiydi.
+        # Her ihtimale karşı varsa sıfırla ve ilk sütuna taşı; yoksa bir kez oluştur.
+        if 'Seç' in x.columns:
+            x['Seç']=False
+            _cols=['Seç']+[c for c in x.columns if c!='Seç']
+            x=x[_cols]
+        else:
+            x.insert(0,'Seç',False)
+
         x['Harita Konumu']=x.get('_Harita_Konumu','')
+
         # Gerçek bağlantı varsa URL görünümünü de garanti et.
         if 'URL' not in x.columns:
             x['URL']=''
+        x['URL']=x['URL'].fillna('').astype(str)
         if 'Gerçek Bağlantı' in x.columns:
-            x['URL']=x['URL'].where(x['URL'].astype(str).str.strip().ne(''),x['Gerçek Bağlantı'].astype(str))
+            _real=x['Gerçek Bağlantı'].fillna('').astype(str)
+            x['URL']=x['URL'].where(x['URL'].str.strip().ne(''),_real)
+
         show=[c for c in ['Seç','Harita Konumu','Tarih','Kaynak','Kategori','Başlık','URL'] if c in x.columns]
-        with st.form('v172_map_daily_basket_form',clear_on_submit=False):
+
+        # Filtre/scope değişince önceki editör işaretleri başka satırlara taşınmasın.
+        _sig_src='||'.join(_v3_analysis_dedup_key(r) for r in mapped)
+        _sig=hashlib.sha1(_sig_src.encode('utf-8',errors='ignore')).hexdigest()[:12]
+
+        with st.form(f'v173_map_daily_basket_form_{_sig}',clear_on_submit=False):
             edited=st.data_editor(
                 x[show],
                 column_config={
@@ -10445,21 +10485,31 @@ def _v172_map_daily_basket_editor(src,scope):
                     'Harita Konumu':st.column_config.TextColumn('Olay Yeri',width='medium'),
                 },
                 disabled=[c for c in show if c!='Seç'],
-                hide_index=True,use_container_width=True,height=min(520,95+34*len(x)),
-                key='v172_map_daily_basket_editor'
+                hide_index=True,
+                use_container_width=True,
+                height=min(520,95+34*len(x)),
+                key=f'v173_map_daily_basket_editor_{_sig}'
             )
             add=st.form_submit_button('🧺 Seçilenleri Günlük Analiz Sepetine Ekle',use_container_width=True)
+
         if add:
-            mask=edited['Seç'].astype(bool).to_numpy() if 'Seç' in edited.columns else []
-            idxs=[i for i,v in enumerate(mask) if bool(v)]
+            if 'Seç' in edited.columns:
+                mask=edited['Seç'].fillna(False).astype(bool).to_numpy()
+            else:
+                mask=[]
+            idxs=[i for i,v in enumerate(mask) if bool(v) and i < len(mapped)]
+
             if not idxs:
                 st.warning('Önce en az bir haber seçin.')
             else:
                 selected=[]
                 for i in idxs:
                     rec=dict(mapped[i])
-                    rec.pop('_Harita_Konumu',None)
+                    # Editör/harita yardımcı alanları günlük sepete kalıcı yazılmasın.
+                    for _ui_col in ('Seç','Harita Konumu','_Harita_Konumu','_row_key'):
+                        rec.pop(_ui_col,None)
                     selected.append(rec)
+
                 n=_v136_daily_add(selected)
                 if n:
                     st.success(f'✅ {n} haber Günlük Analiz Sepetine eklendi.')
