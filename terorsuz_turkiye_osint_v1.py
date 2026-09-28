@@ -628,8 +628,8 @@ def _official_radar_rows(df):
 
 st.set_page_config(page_title='Terörsüz Türkiye OSINT Radarı', page_icon='🛡️', layout='wide')
 _v166_apply_background()
-# V153 görünür sürüm teyidi: yanlış dosya çalıştırılıyorsa kullanıcı hemen fark eder.
-st.sidebar.success('✅ AKTİF SÜRÜM: V153 — Birleşik Kürt Medyası / PKK-KCK Kaynak Havuzu')
+# V177 görünür sürüm teyidi: yanlış dosya çalıştırılıyorsa kullanıcı hemen fark eder.
+st.sidebar.success('✅ AKTİF SÜRÜM: V178 — Arşiv Tarama + ChatGPT Akademik Kodlama')
 
 # ============================================================
 # V55 — ŞİFRE KORUMASI
@@ -43074,6 +43074,10 @@ def _v174_render_academic_tab():
 # ============================================================
 
 # ============================================================
+# V176 — ARŞİV TARAMASI TOPLU SİLME
+# V175 arşiv tarama motoru aynen korunur; yalnız toplu sonuç temizleme eklenmiştir.
+# Günlük V173 motoruna, raporlama akışına ve akademik kodlama motoruna dokunulmaz.
+#
 # V175 — ARŞİV / GEÇMİŞ DÖNEM TARAMASI
 #
 # KARARLI TABAN: V174 (dolayısıyla V173 günlük tarama motoru).
@@ -43464,11 +43468,21 @@ def _v175_render_archive_scan():
         st.info('Henüz arşiv taraması sonucu yok.')
         return
 
+    # V176 — Toplu silme sonrasında metrikler mevcut sonuç listesini yansıtsın.
+    _v176_verified=0
+    _v176_undated=0
+    for _r in records:
+        _status=str((_r or {}).get('Arşiv Tarih Durumu','') or '').strip().lower()
+        if 'doğrulan' in _status and 'doğrulanamad' not in _status:
+            _v176_verified+=1
+        else:
+            _v176_undated+=1
+
     m1,m2,m3,m4,m5=st.columns(5)
     m1.metric('Tekil Sonuç',len(records))
     m2.metric('Ham Yakalama',int(diag.get('raw',0) or 0))
-    m3.metric('Tarihi Doğrulanan',int(diag.get('verified',0) or 0))
-    m4.metric('Tarihi Belirsiz',int(diag.get('undated',0) or 0))
+    m3.metric('Tarihi Doğrulanan',int(_v176_verified))
+    m4.metric('Tarihi Belirsiz',int(_v176_undated))
     m5.metric('Tarih Dilimi',int(diag.get('chunks',0) or 0))
 
     rdf=_v175_results_df(records)
@@ -43499,6 +43513,57 @@ def _v175_render_archive_scan():
         keep_idx.append(i)
     filtered_records=[records[i] for i in keep_idx]
     fdf=rdf.iloc[keep_idx].reset_index(drop=True) if keep_idx else pd.DataFrame(columns=rdf.columns)
+
+    # ========================================================
+    # V176 — ARŞİV TARAMASI TOPLU SİLME
+    # - Tek tek işaretleme zorunluluğu yok.
+    # - Filtrelenen/görünen kayıtların tamamı tek işlemde çıkarılabilir.
+    # - İstenirse mevcut arşiv tarama sonucu tamamen temizlenebilir.
+    # - Yalnız V175 tarama sonuç oturumunu etkiler; Günlük Analiz Sepeti,
+    #   Akademik Kodlama Sepeti ve kalıcı rapor arşivine dokunmaz.
+    # ========================================================
+    st.markdown('##### 🧹 Toplu sonuç temizleme')
+    st.caption(
+        'Buradaki silme yalnız mevcut **Arşiv Tarama sonuç listesini** temizler. '
+        'Günlük Analiz Sepeti, Akademik Kodlama Sepeti ve Günlük Rapor Arşivi etkilenmez.'
+    )
+
+    _del1,_del2=st.columns(2)
+    with _del1:
+        _confirm_filtered=st.checkbox(
+            f'Filtrede görünen {len(keep_idx)} kaydı topluca silmeyi onaylıyorum.',
+            key='v176_confirm_delete_filtered'
+        )
+        if st.button(
+            f'🧹 FİLTRELENEN {len(keep_idx)} SONUCU TOPLU SİL',
+            use_container_width=True,
+            disabled=(not _confirm_filtered or not keep_idx),
+            key='v176_delete_filtered'
+        ):
+            _kill=set(int(i) for i in keep_idx)
+            _remaining=[r for i,r in enumerate(records) if i not in _kill]
+            st.session_state[V175_RESULTS_SESSION]=_remaining
+            # Data editor eski satır durumunu taşımamalı.
+            st.session_state.pop('v175_archive_result_editor',None)
+            st.success(f'✅ {len(_kill)} arşiv tarama sonucu topluca silindi.')
+            st.rerun()
+
+    with _del2:
+        _confirm_all=st.checkbox(
+            f'Mevcut {len(records)} arşiv tarama sonucunun tamamını silmeyi onaylıyorum.',
+            key='v176_confirm_delete_all'
+        )
+        if st.button(
+            '🗑️ TÜM ARŞİV TARAMA SONUÇLARINI TEMİZLE',
+            use_container_width=True,
+            disabled=(not _confirm_all or not records),
+            key='v176_delete_all'
+        ):
+            st.session_state[V175_RESULTS_SESSION]=[]
+            st.session_state[V175_DIAG_SESSION]={}
+            st.session_state.pop('v175_archive_result_editor',None)
+            st.success('✅ Mevcut arşiv tarama sonuçlarının tamamı temizlendi.')
+            st.rerun()
 
     if fdf.empty:
         st.info('Bu filtrelerle gösterilecek sonuç yok.')
