@@ -629,7 +629,7 @@ def _official_radar_rows(df):
 st.set_page_config(page_title='Terörsüz Türkiye OSINT Radarı', page_icon='🛡️', layout='wide')
 _v166_apply_background()
 # V177 görünür sürüm teyidi: yanlış dosya çalıştırılıyorsa kullanıcı hemen fark eder.
-st.sidebar.success('✅ AKTİF SÜRÜM: V180 — Arşiv Tarama + ChatGPT Akademik Kodlama')
+st.sidebar.success('✅ AKTİF SÜRÜM: V181 — Arşiv Tarama + ChatGPT Akademik Kodlama')
 
 # ============================================================
 # V55 — ŞİFRE KORUMASI
@@ -43618,7 +43618,7 @@ def _v175_results_df(records):
 
 
 def _v175_render_archive_scan():
-    st.markdown('#### 📚 V180 — Arşiv / Geçmiş Dönem Taraması')
+    st.markdown('#### 📚 V181 — Arşiv / Geçmiş Dönem Taraması')
     st.caption(
         'Bu bölüm günlük raporlama ekranındaki V173/V178 tarama mantığını kullanır. Aynı V22 sorgu aileleri, aynı '
         'arama motoru seçimi, aynı kaynak sınıflandırması ve aynı konu filtresi çalışır; yalnız zaman filtresi '
@@ -43701,6 +43701,23 @@ def _v175_render_archive_scan():
     if diag.get('engine_logic'):
         st.caption(f"Tarama motoru: {diag.get('engine_logic')}")
 
+    if diag.get('by_mode_raw'):
+        _labels={'turkish':'Yerli Basın','foreign':'Yabancı Basın','kurdish':'Kürt Bölgesel','movement':'PKK/KCK'}
+        _diag_rows=[]
+        for _m in ['turkish','foreign','kurdish','movement']:
+            _raw=int((diag.get('by_mode_raw') or {}).get(_m,0) or 0)
+            _kept=int((diag.get('by_mode') or {}).get(_m,0) or 0)
+            _reas=(diag.get('reasons_by_mode') or {}).get(_m,{}) or {}
+            _diag_rows.append({
+                'Kaynak Ailesi':_labels.get(_m,_m),
+                'Ham':_raw,'Korunan':_kept,
+                'Tarih Dilimi Dışı':int(_reas.get('dilim_disi',0) or 0),
+                'Kaynak Dışı':int(_reas.get('kaynak',0) or 0),
+                'Konu Dışı':int(_reas.get('konu',0) or 0),
+                'Tarihsiz/Geniş Sorgu':int(_reas.get('tarih_yok',0) or 0),
+            })
+        st.dataframe(pd.DataFrame(_diag_rows),hide_index=True,use_container_width=True)
+
     rdf=_v175_results_df(records)
     if not rdf.empty:
         fam_counts=rdf['Kaynak Ailesi'].value_counts().rename_axis('Kaynak Ailesi').reset_index(name='Haber')
@@ -43708,7 +43725,7 @@ def _v175_render_archive_scan():
         st.download_button(
             '⬇️ Arşiv Tarama Sonuçlarını CSV İndir',
             rdf.to_csv(index=False).encode('utf-8-sig'),
-            file_name=f'Arsiv_Tarama_V180_{pd.Timestamp.now().strftime("%Y-%m-%d")}.csv',
+            file_name=f'Arsiv_Tarama_V181_{pd.Timestamp.now().strftime("%Y-%m-%d")}.csv',
             mime='text/csv',use_container_width=True,key='v175_download_results'
         )
 
@@ -43813,7 +43830,7 @@ def _v175_render_archive_scan():
 # Arşiv taraması günlük tarama yapılmamışken de erişilebilir olsun.
 if st.session_state.get('rows') is None:
     st.markdown('---')
-    with st.expander('📚 Arşiv / Geçmiş Dönem Taraması (V180)',expanded=False):
+    with st.expander('📚 Arşiv / Geçmiş Dönem Taraması (V181)',expanded=False):
         _v175_render_archive_scan()
 
 rows=st.session_state.rows
@@ -44433,6 +44450,407 @@ Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bi
             )
 
     st.markdown('---')
+
+
+    # ============================================================
+    # V181 — ARŞİV TARAMASINDA YÜKSEK GERİ ÇAĞIRIM / GERÇEK TARİH PENCERESİ
+    #
+    # Sorun (V180):
+    # - Arama motorları yüzlerce ham kayıt döndürebiliyor; ancak günlük tarama için
+    #   geliştirilmiş normalize/freshness zinciri geçmiş tarih aramasında bunların
+    #   çok büyük bölümünü eliyordu.
+    # - DDGS/Bing Web, Google tipi after:/before: operatörlerini her zaman kesin
+    #   tarih filtresi olarak uygulamıyor. Bu nedenle güncel sonuçlar ham havuza
+    #   girebiliyor, sonra tarih aşamasında topluca düşüyordu.
+    # - Site hedefli Kürt/PKK-KCK sorgularında günlük motor seçimi GDELT/Google News
+    #   tarihsel kapsamasını yeterince kullanmıyordu.
+    #
+    # V181 yalnız ARŞİV taramasını değiştirir. Günlük V173/V178 motoruna DOKUNMAZ.
+    # - Aynı V22 sorgu aileleri korunur.
+    # - Tarihsel taramada tüm dört aile için gerçek mutlak tarih motorları genişletilir.
+    # - Günlük normalize zinciri yerine arşive özel, yüksek geri çağırımlı normalizer
+    #   kullanılır: seçilen tarih aralığı + konu + kaynak ailesi doğrulanır.
+    # - Tarihi bilinen kayıt MUTLAKA ait olduğu 3/7/14/30 günlük dilimde olmalıdır.
+    # - Tarihi bilinmeyen kayıt yalnız hedefli site sorgusunda, gerçekten o kaynak
+    #   ailesinin alan adından geliyorsa korunur. Böylece güncel Wikipedia vb.
+    #   sonuçların geçmiş tarih gibi görünmesi azaltılır.
+    # - Tekilleştirme URL + kaynak-domain + başlık düzeyindedir; farklı kaynakların
+    #   aynı olayı haberleştirmesi Gephi için korunur.
+    # ============================================================
+
+    V181_REFERENCE_DOMAINS={
+        'wikipedia.org','en.wikipedia.org','tr.wikipedia.org','ar.wikipedia.org',
+        'wikidata.org','britannica.com','congress.gov'
+    }
+
+    V181_TR_KNOWN_EXTRA={
+        'aa.com.tr','trthaber.com','trtworld.com','ntv.com.tr','cnnturk.com',
+        'hurriyet.com.tr','milliyet.com.tr','sabah.com.tr','haberturk.com',
+        'sozcu.com.tr','cumhuriyet.com.tr','t24.com.tr','t24.com','bianet.org',
+        'evrensel.net','birgun.net','karar.com','gazeteduvar.com.tr',
+        'medyascope.tv','haberler.com','sondakika.com','gzt.com','yenisafak.com',
+        'yeniakit.com.tr','internethaber.com','ekoturk.com','diken.com.tr'
+    }
+
+    def _v181_site_targets(q):
+        vals=[]
+        for m in re.finditer(r'\bsite:([A-Za-z0-9._-]+)',str(q or ''),re.I):
+            d=_tt_norm_domain(m.group(1))
+            if d and d not in vals:
+                vals.append(d)
+        return vals
+
+    def _v181_raw_domain(item,q=''):
+        item=item or {}
+        src=str(item.get('source') or item.get('publisher') or '').strip()
+        su=str(item.get('source_url') or item.get('publisher_url') or '').strip()
+        url=str(item.get('url') or item.get('link') or item.get('href') or '').strip()
+        try:
+            d=_tt_norm_domain(infer_source(src,su,url) or su or url)
+        except Exception:
+            d=_tt_norm_domain(su or url)
+        if d in {'news.google.com','google.com','www.google.com','bing.com','www.bing.com'} or not d:
+            # Site-hedefli aramada gerçek yayın alan adı arama motoru yönlendirmesi
+            # yüzünden kaybolmuşsa sorgudaki hedef alan adı güvenli yedektir.
+            targets=_v181_site_targets(q)
+            if len(targets)==1:
+                d=targets[0]
+        return _tt_norm_domain(d)
+
+    def _v181_turkish_date(text):
+        months={
+            'ocak':1,'şubat':2,'subat':2,'mart':3,'nisan':4,'mayıs':5,'mayis':5,
+            'haziran':6,'temmuz':7,'ağustos':8,'agustos':8,'eylül':9,'eylul':9,
+            'ekim':10,'kasım':11,'kasim':11,'aralık':12,'aralik':12
+        }
+        m=re.search(r'\b(\d{1,2})\s+(ocak|şubat|subat|mart|nisan|mayıs|mayis|haziran|temmuz|ağustos|agustos|eylül|eylul|ekim|kasım|kasim|aralık|aralik)\s+(20\d{2})\b',norm(text or ''),re.I)
+        if not m:
+            return pd.NaT
+        try:
+            return pd.Timestamp(year=int(m.group(3)),month=months[m.group(2).lower()],day=int(m.group(1)),tz='UTC')
+        except Exception:
+            return pd.NaT
+
+    def _v181_raw_dt(item):
+        item=item or {}
+        raw=item.get('date') or item.get('publishedAt') or item.get('published') or item.get('seendate') or ''
+        if str(raw).strip():
+            try:
+                dt=pd.to_datetime(raw,utc=True,dayfirst=True,errors='coerce')
+                if pd.notna(dt):
+                    return dt
+            except Exception:
+                pass
+
+        title=str(item.get('title') or '')
+        snippet=str(item.get('snippet') or item.get('body') or item.get('description') or '')
+        url=str(item.get('url') or item.get('link') or item.get('href') or '')
+        lead=(title+' '+snippet[:220]+' '+url[:500]).strip()
+
+        # Mevcut V17 tarih çıkarıcısını önce kullan.
+        try:
+            inferred,_src=_v17_extract_explicit_date(title,snippet[:350],url)
+            if inferred:
+                dt=pd.to_datetime(inferred,utc=True,errors='coerce')
+                if pd.notna(dt):
+                    return dt
+        except Exception:
+            pass
+
+        # DDGS/Bing snippet'lerinde sık görülen: Oct 24, 2024 · ...
+        em=re.search(r'\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2}),\s+(20\d{2})\b',lead,re.I)
+        if em:
+            try:
+                dt=pd.to_datetime(em.group(0),utc=True,errors='coerce')
+                if pd.notna(dt): return dt
+            except Exception:
+                pass
+
+        tm=_v181_turkish_date(lead)
+        if pd.notna(tm):
+            return tm
+
+        # URL içindeki /YYYY/MM/DD veya YYYY-MM-DD kalıbı.
+        um=re.search(r'(?<!\d)(20\d{2})[/-](\d{1,2})[/-](\d{1,2})(?!\d)',url)
+        if um:
+            try:
+                return pd.Timestamp(year=int(um.group(1)),month=int(um.group(2)),day=int(um.group(3)),tz='UTC')
+            except Exception:
+                pass
+        return pd.NaT
+
+    def _v181_is_reference_or_index(d,url,title):
+        d=_tt_norm_domain(d)
+        u=str(url or '').lower()
+        t=norm(title or '')
+        if d in V181_REFERENCE_DOMAINS or any(d.endswith('.'+x) for x in V181_REFERENCE_DOMAINS):
+            return True
+        if any(x in u for x in ['/tag/','/etiket/','/category/','/kategori/','/search','?s=','/author/','/yazar/']):
+            return True
+        if any(x in t for x in ['wikipedia','ana sayfa','homepage','arama sonuçları','search results']):
+            return True
+        return False
+
+    def _v181_domain_mode(d,requested_mode,q=''):
+        d=_tt_norm_domain(d)
+        targets=_v181_site_targets(q)
+        target_match=any(d==x or d.endswith('.'+x) for x in targets) if d else False
+
+        # Önce özel aileler: aynı domain yabancı-keşif kuralına düşmesin.
+        try:
+            if _tt_domain_match(d,V179_MOVEMENT_HISTORICAL_DOMAINS) or _tt_is_movement_osint_domain(d):
+                return 'movement'
+        except Exception:
+            if _tt_is_movement_osint_domain(d): return 'movement'
+        try:
+            if _tt_domain_match(d,V179_KURDISH_HISTORICAL_DOMAINS) or _tt_is_kurdish_regional_domain(d):
+                return 'kurdish'
+        except Exception:
+            if _tt_is_kurdish_regional_domain(d): return 'kurdish'
+
+        if requested_mode=='movement':
+            return 'movement' if target_match else ''
+        if requested_mode=='kurdish':
+            return 'kurdish' if target_match else ''
+        if requested_mode=='foreign':
+            try:
+                if _tt_is_foreign_press_domain(d) or _tt_foreign_discovery_allowed(d):
+                    return 'foreign'
+            except Exception:
+                if _tt_is_foreign_press_domain(d): return 'foreign'
+            return ''
+        if requested_mode=='turkish':
+            if not d:
+                return ''
+            if (_tt_is_social_domain(d) or _tt_is_thinktank_domain(d)
+                    or _tt_is_foreign_press_domain(d) or _tt_is_kurdish_media_domain(d)):
+                return ''
+            if (_tt_is_local_domain(d) or d.endswith('.tr') or d in V181_TR_KNOWN_EXTRA or target_match):
+                return 'turkish'
+            # Günlük Türk taramasındaki yüksek geri çağırım ruhunu koru:
+            # açıkça başka aileye ait değilse ve Türkçe hedefli sorgudan geldiyse
+            # .com/.net haber alan adını kaybetme.
+            if d.endswith(('.com','.net','.org','.tv')):
+                return 'turkish'
+        return ''
+
+    V181_MODE_META={
+        'turkish':('Yerli Basın','🇹🇷 Yerli Basın','Türkiye / yerli açık kaynak'),
+        'foreign':('Yabancı Basın','🌍 Yabancı Basın','Yabancı basın'),
+        'kurdish':('Kürt Bölgesel Medyası','🟣 Kürt Bölgesel Medyası','Kürt bölgesel medya'),
+        'movement':('PKK/KCK Açık Kaynak','🛰️ PKK/KCK Çevresi / Hareket Söylemi Açık Kaynak','Hareket çevresi açık kaynak'),
+    }
+
+    def _v181_archive_engines(mode,q):
+        """Günlük motor listesi + geçmiş tarih için güvenilir mutlak-tarih motorları."""
+        base=list(_v22_engines(mode,q))
+        if mode=='turkish':
+            extra=['Google News TR','DDGS Local','Bing News TR','Bing Web','GDELT']
+        elif mode=='foreign':
+            extra=['Google News US','Google News GB','DDGS','Bing Web','GDELT']
+        elif mode in {'kurdish','movement'}:
+            # V180'de site sorguları çoğunlukla DDGS+Bing Web'e kalıyordu.
+            # Geçmiş aramada Google News + GDELT mutlaka devreye girsin.
+            extra=['Google News US','Google News TR','DDGS','Bing Web','GDELT']
+        else:
+            extra=[]
+        return list(dict.fromkeys(base+extra))
+
+    def _v181_archive_normalize(raw,mode,user_query,q,chunk_start,chunk_end,diag_reason):
+        out=[]
+        cs=pd.Timestamp(chunk_start,tz='UTC')
+        ce=pd.Timestamp(chunk_end,tz='UTC')+pd.Timedelta(days=1)
+        site_targeted=bool(_v181_site_targets(q))
+
+        for item in raw or []:
+            if not isinstance(item,dict):
+                diag_reason['gecersiz']=diag_reason.get('gecersiz',0)+1
+                continue
+            url=str(item.get('url') or item.get('link') or item.get('href') or '').strip()
+            title=html.unescape(str(item.get('title') or '').strip())
+            if not url or not title:
+                diag_reason['gecersiz']=diag_reason.get('gecersiz',0)+1
+                continue
+
+            d=_v181_raw_domain(item,q)
+            if _v181_is_reference_or_index(d,url,title):
+                diag_reason['referans/index']=diag_reason.get('referans/index',0)+1
+                continue
+
+            routed=_v181_domain_mode(d,mode,q)
+            if routed!=mode:
+                diag_reason['kaynak']=diag_reason.get('kaynak',0)+1
+                continue
+
+            snippet=html.unescape(str(item.get('snippet') or item.get('body') or item.get('description') or '').strip())
+            txt=f'{title} {snippet}'
+            topical=False
+            try: topical=bool(relevant(txt,user_query))
+            except Exception: topical=False
+            try: topical=topical or bool(_v138_topic_hit(txt))
+            except Exception: pass
+            if not topical:
+                # Hedefli Kürt/PKK site sorgusunda sorgunun kendisi zaten araştırma
+                # evrenini daraltır; başlıkta kısa ifade nedeniyle sonuç kaybolmasın.
+                if not (site_targeted and mode in {'kurdish','movement'}):
+                    diag_reason['konu']=diag_reason.get('konu',0)+1
+                    continue
+
+            dt=_v181_raw_dt(item)
+            if pd.notna(dt):
+                # V180'in kritik hatası: yalnız toplam aralık kontrol ediliyordu.
+                # Artık sonuç kendi tarih dilimine de ait olmak zorunda.
+                if dt<cs or dt>=ce:
+                    diag_reason['dilim_disi']=diag_reason.get('dilim_disi',0)+1
+                    continue
+                date_status='Doğrulandı'
+                date_text=fmt_dt(dt)
+            else:
+                # DDGS/Bing Web'de tarih alanı olmayabilir. Geniş sorgudan gelen
+                # tarihsiz sonuç güncel bir sayfa olabilir; yalnız site-hedefli gerçek
+                # kaynak sonucuysa yüksek geri çağırım için koru.
+                if not site_targeted:
+                    diag_reason['tarih_yok']=diag_reason.get('tarih_yok',0)+1
+                    continue
+                date_status='Doğrulanamadı — hedefli kaynak sorgusundan bulundu'
+                date_text='Tarih/saat bilinmiyor'
+
+            fam,group,persp=V181_MODE_META[mode]
+            src=str(item.get('source') or item.get('publisher') or '').strip()
+            if not src or norm(src) in {'google news','google','bing','news.google.com'}:
+                src=d or 'Açık Kaynak'
+
+            try:
+                sentiment,score,status,neg,risk,cat,risk_reasons=classify(title,snippet,d)
+            except Exception:
+                sentiment,score,status,neg,risk,cat,risk_reasons=('Nötr',0,'Normal',[],[],'Genel / Terörsüz Türkiye',[])
+
+            rec={
+                'Tarih_dt':dt if pd.notna(dt) else None,
+                'Tarih':date_text,
+                'Başlık':title,
+                'İçerik_Özeti':snippet or title,
+                'URL':url,'RSS_URL':url,'Gerçek Bağlantı':url,
+                'Kaynak':src,'Yayıncı':src,
+                'Yayıncı_URL':str(item.get('source_url') or item.get('publisher_url') or '').strip(),
+                'Domain':d,
+                'Kaynak Ailesi':fam,'Kaynak_Grubu':group,'Kaynak Perspektifi':persp,
+                'Tarama Kanalı':mode,'_mode':mode,
+                'Kategori':cat,'Duygu':sentiment,'Skor':score,'Risk_Skoru':score,
+                'Risk_Durumu':status,'Risk_Gerekçesi':'; '.join(risk_reasons),
+                'Negatif_Sinyaller':neg,'Risk_Sinyalleri':risk,
+                'Arşiv Tarih Durumu':date_status,
+                'Arşiv Tarama Dilimi':f'{pd.Timestamp(chunk_start).strftime("%d.%m.%Y")} – {pd.Timestamp(chunk_end).strftime("%d.%m.%Y")}',
+                '_origin_query':q,'_v181_engine':str(item.get('_v175_engine') or ''),
+                'Seç':False,'Görsel_URL':''
+            }
+            try:
+                rec=_v137_fix_record(rec)
+            except Exception:
+                pass
+            # fix/enrich katmanlarının aileyi tekrar yorumlamasına izin verme.
+            rec['Kaynak Ailesi']=fam; rec['Kaynak_Grubu']=group; rec['Tarama Kanalı']=mode
+            rec['Arşiv Tarih Durumu']=date_status
+            rec['Arşiv Tarama Dilimi']=f'{pd.Timestamp(chunk_start).strftime("%d.%m.%Y")} – {pd.Timestamp(chunk_end).strftime("%d.%m.%Y")}'
+            out.append(rec)
+        return out
+
+    def _v181_archive_dedupe(rows):
+        """Aynı kaynaktaki aynı haberi tekilleştir; farklı kaynakların aynı olayı korunsun."""
+        out=[]; seen_url=set(); seen_source_title=set()
+        for r in rows or []:
+            u=str(r.get('URL') or '').strip().lower().rstrip('/')
+            d=_tt_norm_domain(r.get('Domain') or u)
+            tk=title_key(str(r.get('Başlık') or ''))
+            if u and u in seen_url:
+                continue
+            st=(d,tk)
+            if d and tk and st in seen_source_title:
+                continue
+            if u: seen_url.add(u)
+            if d and tk: seen_source_title.add(st)
+            out.append(r)
+        return out
+
+    def _v175_scan_archive(start_day,end_day,user_query,selected_families,chunk_days=7):
+        """V181 — V22 sorguları + arşive özel yüksek geri çağırımlı tarihsel toplama."""
+        if pd.Timestamp(end_day).date() < pd.Timestamp(start_day).date():
+            return [],{'error':'Bitiş tarihi başlangıç tarihinden önce olamaz.'}
+        qsets=_v175_query_sets(user_query,selected_families)
+        if not qsets:
+            return [],{'error':'En az bir kaynak ailesi seçilmelidir.'}
+
+        chunks=_v175_date_chunks(start_day,end_day,chunk_days)
+        all_rows=[]
+        diag={
+            'chunks':len(chunks),'jobs':0,'raw':0,'normalized':0,'verified':0,'undated':0,
+            'by_mode':{},'by_mode_raw':{},'errors':0,'reasons_by_mode':{},
+            'engine_logic':'V181 — V22 günlük sorguları + mutlak tarih motorları + arşiv yüksek geri çağırım filtresi'
+        }
+        progress=st.progress(0.0,text='📚 V181 arşiv taraması hazırlanıyor...')
+        status=st.status('📚 V181 yüksek geri çağırımlı geçmiş dönem taraması başlıyor...',expanded=True)
+
+        for ci,(cs,ce) in enumerate(chunks,1):
+            jobs=[]
+            for mode,queries in qsets.items():
+                for q in queries:
+                    for engine in _v181_archive_engines(mode,q):
+                        if engine in {'Reddit Public','Bluesky Public'}:
+                            continue
+                        jobs.append((mode,q,engine))
+            diag['jobs']+=len(jobs)
+            status.write(f'🗓️ {cs.strftime("%d.%m.%Y")} – {ce.strftime("%d.%m.%Y")} • {len(jobs)} motor işi')
+
+            raw_jobs=[]
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(V22_WORKERS,max(1,len(jobs)))) as ex:
+                fmap={
+                    ex.submit(_v175_engine_fetch,engine,q,mode,cs,ce):(mode,q,engine)
+                    for mode,q,engine in jobs
+                }
+                for fut in concurrent.futures.as_completed(fmap):
+                    mode,q,engine=fmap[fut]
+                    try:
+                        part=fut.result() or []
+                    except Exception:
+                        part=[]; diag['errors']+=1
+                    diag['raw']+=len(part)
+                    diag['by_mode_raw'][mode]=diag['by_mode_raw'].get(mode,0)+len(part)
+                    if part:
+                        raw_jobs.append((mode,q,engine,part))
+
+            chunk_rows=[]
+            for mode,q,engine,part in raw_jobs:
+                for item in part:
+                    if isinstance(item,dict):
+                        item['_v175_engine']=engine
+                rs=diag['reasons_by_mode'].setdefault(mode,{})
+                kept=_v181_archive_normalize(part,mode,user_query,q,cs,ce,rs)
+                if kept:
+                    diag['by_mode'][mode]=diag['by_mode'].get(mode,0)+len(kept)
+                    chunk_rows.extend(kept)
+
+            chunk_rows=_v181_archive_dedupe(chunk_rows)
+            all_rows=_v181_archive_dedupe(all_rows+chunk_rows)
+            diag['normalized']=len(all_rows)
+            progress.progress(ci/len(chunks),text=f'📚 V181: {ci}/{len(chunks)} tarih dilimi • {len(all_rows)} tekil sonuç')
+
+        def _sort_key(r):
+            dt=_v175_rec_dt(r)
+            return (0 if pd.notna(dt) else 1, -(dt.timestamp() if pd.notna(dt) else 0))
+        try:
+            all_rows=sorted(_v181_archive_dedupe(all_rows),key=_sort_key)
+        except Exception:
+            all_rows=_v181_archive_dedupe(all_rows)
+
+        for r in all_rows:
+            if str(r.get('Arşiv Tarih Durumu','')).startswith('Doğrulandı'):
+                diag['verified']+=1
+            else:
+                diag['undated']+=1
+        diag['result']=len(all_rows)
+        progress.empty()
+        status.update(label=f'✅ V181 arşiv taraması tamamlandı — {len(all_rows)} tekil sonuç',state='complete',expanded=False)
+        return all_rows,diag
 
     # ---------------- ÇİFT ANALİZ SEPETİ — V136 ----------------
     st.markdown('---')
