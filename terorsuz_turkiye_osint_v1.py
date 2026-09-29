@@ -629,7 +629,7 @@ def _official_radar_rows(df):
 st.set_page_config(page_title='Terörsüz Türkiye OSINT Radarı', page_icon='🛡️', layout='wide')
 _v166_apply_background()
 # V177 görünür sürüm teyidi: yanlış dosya çalıştırılıyorsa kullanıcı hemen fark eder.
-st.sidebar.success('✅ AKTİF SÜRÜM: V187 — V186 Arama Mantığı + Akademik Metodoloji v1.0')
+st.sidebar.success('✅ AKTİF SÜRÜM: V188 — V187 Kararlı Taban + Tarih/Aşama Filtresi')
 
 # ============================================================
 # V55 — ŞİFRE KORUMASI
@@ -45399,6 +45399,157 @@ def _v174_render_academic_tab():
 
 # ============================================================
 # /V187
+# ============================================================
+
+
+# ============================================================
+# V188 — SONUÇ EKRANI TARİH / MİLAT AŞAMA FİLTRESİ
+# KARARLI TABAN: V187.
+# ÖNEMLİ: Arama motoru, sorgular, tarih aralığı taraması, normalize zinciri,
+# kaynak sınıflandırması, akademik kodlama ve Gephi mantığına DOKUNMAZ.
+# Yalnız mevcut sonuç tablolarının GÖRÜNÜMÜNE şu filtreleri ekler:
+#   Tümü / Öncesi / Milat / Sonrası + Gün filtresi
+# Tek bir milat penceresi seçiliyse aşama filtresi otomatik etkinleşir.
+# ============================================================
+
+
+def _v188_row_day(rec):
+    """Sonuç satırının takvim gününü güvenli biçimde çöz."""
+    try:
+        d=_v187_record_day(rec if isinstance(rec,dict) else dict(rec))
+        if d:
+            return d
+    except Exception:
+        pass
+    try:
+        for c in ['Tarih_dt','Tarih','Yayın Tarihi','Yayin Tarihi','Tarama Günü']:
+            if isinstance(rec,dict):
+                v=rec.get(c,'')
+            else:
+                v=rec[c] if c in rec else ''
+            if v is None or str(v).strip()=='':
+                continue
+            ts=pd.to_datetime(v,dayfirst=True,errors='coerce')
+            if pd.notna(ts):
+                return ts.date()
+    except Exception:
+        pass
+    return None
+
+
+def _v188_active_milestone(data):
+    """
+    Tek bir T-7/T+7 milat penceresi seçiliyse (veya tablo bütünü bu pencere
+    içindeyse) ilgili miladı döndürür. M5+M6 gibi iki miladın aynı seçili
+    aralıkta bulunduğu durumda aşama filtresi zorlanmaz; yalnız gün filtresi
+    gösterilir.
+    """
+    start=end=None
+    try:
+        if bool(globals().get('custom_date_mode')):
+            start=globals().get('custom_start_date')
+            end=globals().get('custom_end_date')
+    except Exception:
+        start=end=None
+
+    if start is None or end is None:
+        try:
+            days=[_v188_row_day(r) for r in data.to_dict('records')]
+            days=[d for d in days if d]
+            if days:
+                start=min(days); end=max(days)
+        except Exception:
+            pass
+
+    if start is None or end is None:
+        return None
+    try:
+        start=pd.Timestamp(start).date(); end=pd.Timestamp(end).date()
+    except Exception:
+        return None
+    if start>end:
+        start,end=end,start
+
+    candidates=[]
+    for code,(iso,label) in V187_MILESTONES.items():
+        md=pd.Timestamp(iso).date()
+        if start <= md <= end:
+            # Aşama filtresini yalnız kitapçıktaki T-7/T+7 mantığına yakın
+            # bir aralıkta kullan; geniş dönemleri yanlışlıkla bölme.
+            if start >= (md-timedelta(days=7)) and end <= (md+timedelta(days=7)):
+                candidates.append((code,md,label))
+    return candidates[0] if len(candidates)==1 else None
+
+
+def _v188_filter_result_view(section_key,data):
+    """Arama sonucunu değiştirmez; yalnız ekranda görünen satırları filtreler."""
+    if data is None or data.empty:
+        return data
+
+    x=data.copy()
+    try:
+        days=x.apply(lambda r:_v188_row_day(r),axis=1)
+    except Exception:
+        days=pd.Series([None]*len(x),index=x.index,dtype='object')
+    x['_V188_Gun']=days
+
+    milestone=_v188_active_milestone(x)
+    if milestone:
+        mcode,mday,mlabel=milestone
+        counts={
+            'Tümü':int(len(x)),
+            'Öncesi':int((x['_V188_Gun'].apply(lambda d: bool(d and d<mday))).sum()),
+            'Milat':int((x['_V188_Gun'].apply(lambda d: bool(d and d==mday))).sum()),
+            'Sonrası':int((x['_V188_Gun'].apply(lambda d: bool(d and d>mday))).sum()),
+        }
+        st.caption(f'📍 {mcode} • {mday.strftime("%d.%m.%Y")} — {mlabel}')
+        phase=st.radio(
+            'Zaman dilimi',
+            ['Tümü','Öncesi','Milat','Sonrası'],
+            horizontal=True,
+            format_func=lambda z:f'{z} ({counts.get(z,0)})',
+            key=f'v188_phase_{section_key}'
+        )
+        if phase=='Öncesi':
+            x=x[x['_V188_Gun'].apply(lambda d: bool(d and d<mday))].copy()
+        elif phase=='Milat':
+            x=x[x['_V188_Gun'].apply(lambda d: bool(d and d==mday))].copy()
+        elif phase=='Sonrası':
+            x=x[x['_V188_Gun'].apply(lambda d: bool(d and d>mday))].copy()
+
+    valid_days=sorted({d for d in x['_V188_Gun'].tolist() if d}) if '_V188_Gun' in x.columns else []
+    if valid_days:
+        day_options=['Tüm günler']+[d.strftime('%d.%m.%Y') for d in valid_days]
+        chosen_day=st.selectbox(
+            'Gün filtresi',
+            day_options,
+            index=0,
+            key=f'v188_day_{section_key}'
+        )
+        if chosen_day!='Tüm günler':
+            target=pd.to_datetime(chosen_day,format='%d.%m.%Y',errors='coerce')
+            if pd.notna(target):
+                td=target.date()
+                x=x[x['_V188_Gun'].apply(lambda d: bool(d and d==td))].copy()
+
+    return x.drop(columns=['_V188_Gun'],errors='ignore').reset_index(drop=True)
+
+
+# V187/V186 ortak tablo renderer'ı korunur; yalnız giriş verisi ekranda
+# filtrelenerek temel renderer'a gönderilir.
+_V188_BASE_SOURCE_TABLE=_v3_source_table
+
+def _v3_source_table(section_key,data,columns=None,height=590):
+    if data is None or data.empty:
+        return _V188_BASE_SOURCE_TABLE(section_key,data,columns,height)
+    filtered=_v188_filter_result_view(section_key,data)
+    if filtered is None or filtered.empty:
+        st.info('Seçilen zaman/gün filtresinde içerik bulunmamaktadır.')
+        return
+    return _V188_BASE_SOURCE_TABLE(section_key,filtered,columns,height)
+
+# ============================================================
+# /V188
 # ============================================================
 
 
