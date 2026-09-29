@@ -629,7 +629,7 @@ def _official_radar_rows(df):
 st.set_page_config(page_title='Terörsüz Türkiye OSINT Radarı', page_icon='🛡️', layout='wide')
 _v166_apply_background()
 # V177 görünür sürüm teyidi: yanlış dosya çalıştırılıyorsa kullanıcı hemen fark eder.
-st.sidebar.success('✅ AKTİF SÜRÜM: V188 — V187 Kararlı Taban + Tarih/Aşama Filtresi')
+st.sidebar.success('✅ AKTİF SÜRÜM: V190 — V189 Çalışma Snapshot + Hızlı Haber Kolon Sırası')
 
 # ============================================================
 # V55 — ŞİFRE KORUMASI
@@ -3063,6 +3063,229 @@ def _history_connect():
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     return conn
+
+# ============================================================
+# V189 — AKADEMİK / ARŞİV ÇALIŞMASINI SAKLA + GERİ YÜKLE
+# KARARLI TABAN: V188.
+#
+# AMAÇ:
+# - Arama motoruna, sorgulara, tarih aralığı taramasına ve sonuç üretimine
+#   dokunmadan yalnız tamamlanmış tarama sonucunu kalıcı bir snapshot olarak
+#   saklamak.
+# - Kullanıcı güncel taramaya geçip st.session_state.rows değişse bile eski
+#   akademik/arşiv sonucunu tek tıkla geri yükleyebilmek.
+# - V188 Gün filtresi ile Öncesi/Milat/Sonrası seçimlerini de snapshot içinde
+#   saklamak; geri dönüşte mümkün olduğunca kaldığı görünümü sürdürmek.
+# ============================================================
+
+V189_SNAPSHOT_TABLE='academic_scan_snapshots_v189'
+
+
+def _v189_snapshot_ensure():
+    try:
+        with _history_connect() as conn:
+            conn.execute(f'''CREATE TABLE IF NOT EXISTS {V189_SNAPSHOT_TABLE}(
+                snapshot_key TEXT PRIMARY KEY,
+                label TEXT NOT NULL,
+                start_date TEXT,
+                end_date TEXT,
+                updated_at TEXT NOT NULL,
+                row_count INTEGER NOT NULL,
+                rows_json TEXT NOT NULL,
+                meta_json TEXT,
+                ui_json TEXT
+            )''')
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+def _v189_rows_as_records(rows=None):
+    rows=st.session_state.get('rows') if rows is None else rows
+    if rows is None:
+        return []
+    try:
+        if isinstance(rows,pd.DataFrame):
+            return rows.to_dict('records') if not rows.empty else []
+    except Exception:
+        pass
+    try:
+        return [dict(r) if not isinstance(r,dict) else dict(r) for r in list(rows)]
+    except Exception:
+        return []
+
+
+def _v189_record_day_basic(rec):
+    for key in ('Tarih_dt','Tarih','Yayın_Tarihi','Tarih_Orijinal','published_at'):
+        raw=(rec or {}).get(key)
+        if raw is None or str(raw).strip()=='':
+            continue
+        try:
+            ts=pd.to_datetime(raw,dayfirst=True,errors='coerce',utc=True)
+            if pd.notna(ts):
+                return ts.tz_convert('Europe/Istanbul').date()
+        except Exception:
+            try:
+                ts=pd.to_datetime(raw,dayfirst=True,errors='coerce')
+                if pd.notna(ts): return ts.date()
+            except Exception:
+                pass
+    return None
+
+
+def _v189_range_from_records(records):
+    try:
+        if bool(globals().get('custom_date_mode')):
+            s=globals().get('custom_start_date'); e=globals().get('custom_end_date')
+            if s and e:
+                return pd.Timestamp(s).date(),pd.Timestamp(e).date()
+    except Exception:
+        pass
+    days=[]
+    for r in records or []:
+        d=_v189_record_day_basic(r)
+        if d: days.append(d)
+    return (min(days),max(days)) if days else (None,None)
+
+
+def _v189_suggest_label(rows=None):
+    records=_v189_rows_as_records(rows)
+    s,e=_v189_range_from_records(records)
+    if s and e:
+        if s==e: return s.strftime('%d.%m.%Y')
+        return f"{s.strftime('%d.%m.%Y')}–{e.strftime('%d.%m.%Y')}"
+    return 'Akademik Çalışma'
+
+
+def _v189_capture_filter_state():
+    out={}
+    try:
+        for k,v in st.session_state.items():
+            if str(k).startswith('v188_day_') or str(k).startswith('v188_phase_'):
+                if isinstance(v,(str,int,float,bool)) or v is None:
+                    out[str(k)]=v
+    except Exception:
+        pass
+    return out
+
+
+def _v189_snapshot_save(custom_label=''):
+    records=_v189_rows_as_records()
+    if not records:
+        return {'ok':False,'message':'Saklanacak aktif tarama sonucu bulunamadı.'}
+    if not _v189_snapshot_ensure():
+        return {'ok':False,'message':'Çalışma snapshot tablosu oluşturulamadı.'}
+    start_day,end_day=_v189_range_from_records(records)
+    label=str(custom_label or '').strip() or _v189_suggest_label(records)
+    start_iso=start_day.isoformat() if start_day else ''
+    end_iso=end_day.isoformat() if end_day else ''
+    snapshot_key=hashlib.sha1(f'{label}|{start_iso}|{end_iso}'.encode('utf-8','ignore')).hexdigest().upper()
+    meta={
+        'stats':st.session_state.get('stats',{}),
+        'scan_time':str(st.session_state.get('scan_time') or ''),
+        'current_scan_id':st.session_state.get('current_scan_id'),
+        'period':str(globals().get('period','') or ''),
+        'custom_start_date':start_iso,
+        'custom_end_date':end_iso,
+    }
+    ui=_v189_capture_filter_state()
+    try:
+        with _history_connect() as conn:
+            conn.execute(
+                f'''INSERT OR REPLACE INTO {V189_SNAPSHOT_TABLE}
+                    (snapshot_key,label,start_date,end_date,updated_at,row_count,rows_json,meta_json,ui_json)
+                    VALUES(?,?,?,?,?,?,?,?,?)''',
+                (
+                    snapshot_key,label,start_iso,end_iso,datetime.now(timezone.utc).isoformat(),len(records),
+                    json.dumps(records,ensure_ascii=False,default=str),
+                    json.dumps(meta,ensure_ascii=False,default=str),
+                    json.dumps(ui,ensure_ascii=False,default=str),
+                )
+            )
+            conn.commit()
+        st.session_state['_v189_active_snapshot_label']=label
+        return {'ok':True,'label':label,'count':len(records),'message':f'{label} • {len(records)} kayıt saklandı.'}
+    except Exception as e:
+        return {'ok':False,'message':f'Çalışma saklanamadı: {e}'}
+
+
+def _v189_snapshot_list():
+    if not _v189_snapshot_ensure():
+        return []
+    try:
+        with _history_connect() as conn:
+            rows=conn.execute(
+                f'''SELECT snapshot_key,label,start_date,end_date,updated_at,row_count
+                    FROM {V189_SNAPSHOT_TABLE}
+                    ORDER BY updated_at DESC'''
+            ).fetchall()
+        return [
+            {'snapshot_key':r[0],'label':r[1],'start_date':r[2] or '','end_date':r[3] or '',
+             'updated_at':r[4] or '','row_count':int(r[5] or 0)}
+            for r in rows
+        ]
+    except Exception:
+        return []
+
+
+def _v189_snapshot_restore(snapshot_key):
+    if not snapshot_key or not _v189_snapshot_ensure():
+        return {'ok':False,'message':'Kayıtlı çalışma bulunamadı.'}
+    try:
+        with _history_connect() as conn:
+            row=conn.execute(
+                f'''SELECT label,rows_json,meta_json,ui_json,row_count
+                    FROM {V189_SNAPSHOT_TABLE} WHERE snapshot_key=?''',
+                (str(snapshot_key),)
+            ).fetchone()
+        if not row:
+            return {'ok':False,'message':'Seçilen çalışma bulunamadı.'}
+        label,rows_json,meta_json,ui_json,row_count=row
+        records=json.loads(rows_json or '[]')
+        meta=json.loads(meta_json or '{}')
+        ui=json.loads(ui_json or '{}')
+        if not isinstance(records,list) or not records:
+            return {'ok':False,'message':'Seçilen çalışmanın kayıtları boş.'}
+
+        st.session_state.rows=records
+        if isinstance(meta.get('stats'),dict):
+            st.session_state.stats=meta.get('stats')
+        raw_scan_time=str(meta.get('scan_time') or '').strip()
+        if raw_scan_time:
+            try:
+                ts=pd.to_datetime(raw_scan_time,errors='coerce')
+                st.session_state.scan_time=ts.to_pydatetime() if pd.notna(ts) else raw_scan_time
+            except Exception:
+                st.session_state.scan_time=raw_scan_time
+        if meta.get('current_scan_id') is not None:
+            st.session_state.current_scan_id=meta.get('current_scan_id')
+        for k,v in (ui.items() if isinstance(ui,dict) else []):
+            if str(k).startswith('v188_day_') or str(k).startswith('v188_phase_'):
+                st.session_state[str(k)]=v
+
+        for k in ('_v133_general_gephi_package','_v20_frame_cmp_rows','docx_bytes','note_bytes'):
+            st.session_state.pop(k,None)
+        st.session_state['_v189_active_snapshot_label']=str(label or '')
+        return {'ok':True,'label':str(label or ''),'count':len(records),'message':f'{label} • {len(records)} kayıt geri yüklendi.'}
+    except Exception as e:
+        return {'ok':False,'message':f'Çalışma geri yüklenemedi: {e}'}
+
+
+def _v189_snapshot_delete(snapshot_key):
+    if not snapshot_key or not _v189_snapshot_ensure():
+        return False
+    try:
+        with _history_connect() as conn:
+            cur=conn.execute(f'DELETE FROM {V189_SNAPSHOT_TABLE} WHERE snapshot_key=?',(str(snapshot_key),))
+            conn.commit()
+            return int(cur.rowcount or 0)>0
+    except Exception:
+        return False
+
+# ============================================================
+# /V189
+# ============================================================
 
 def _init_history_db():
     try:
@@ -10755,6 +10978,66 @@ if 'current_scan_id' not in st.session_state: st.session_state.current_scan_id=N
 if 'history_status' not in st.session_state: st.session_state.history_status=_init_history_db()
 if 'basket_docx_bytes' not in st.session_state: st.session_state.basket_docx_bytes=None
 if 'section_selections' not in st.session_state: st.session_state.section_selections={}
+
+# V189 — yalnız mevcut sonuçları saklayan/geri yükleyen çalışma katmanı.
+with st.sidebar.expander('💾 Akademik Tarama Çalışması',expanded=False):
+    _v189_current_count=len(_v189_rows_as_records())
+    _v189_default_label=_v189_suggest_label() if _v189_current_count else ''
+    if st.session_state.get('_v189_active_snapshot_label'):
+        st.info(f"📚 Açık çalışma: {st.session_state.get('_v189_active_snapshot_label')}")
+    st.caption(
+        'Bu bölüm yeni arama yapmaz. Yalnız ekrandaki mevcut tarama sonucunu kalıcı olarak saklar ve sonra geri yükler. '
+        'Güncel taramaya geçmeniz V188 arama mantığını değiştirmez.'
+    )
+    _v189_name=st.text_input(
+        'Çalışma adı (opsiyonel)',
+        value='',
+        placeholder=_v189_default_label or 'Örn. M1 — 15.10.2024–29.10.2024',
+        key='v189_snapshot_name'
+    )
+    if st.button(
+        f'💾 MEVCUT SONUÇLARI SAKLA ({_v189_current_count})',
+        use_container_width=True,
+        disabled=(_v189_current_count==0),
+        key='v189_save_snapshot'
+    ):
+        _v189_res=_v189_snapshot_save(_v189_name)
+        if _v189_res.get('ok'): st.success('✅ '+_v189_res.get('message',''))
+        else: st.error(_v189_res.get('message','Çalışma saklanamadı.'))
+
+    _v189_saved=_v189_snapshot_list()
+    if _v189_saved:
+        _v189_map={r['snapshot_key']:r for r in _v189_saved}
+        _v189_key=st.selectbox(
+            'Kayıtlı çalışmalar',
+            options=[r['snapshot_key'] for r in _v189_saved],
+            format_func=lambda k:f"{_v189_map[k]['label']} • {_v189_map[k]['row_count']} haber",
+            key='v189_snapshot_select'
+        )
+        _v189_c1,_v189_c2=st.columns(2)
+        if _v189_c1.button('↩️ ÇALIŞMAYA DÖN',use_container_width=True,key='v189_restore_snapshot'):
+            _v189_res=_v189_snapshot_restore(_v189_key)
+            if _v189_res.get('ok'):
+                st.session_state['_v189_flash']='✅ '+_v189_res.get('message','')
+                st.rerun()
+            else:
+                st.error(_v189_res.get('message','Çalışma geri yüklenemedi.'))
+        if _v189_c2.button('🗑️ KAYDI SİL',use_container_width=True,key='v189_delete_snapshot'):
+            if _v189_snapshot_delete(_v189_key):
+                st.session_state['_v189_flash']='🗑️ Kayıtlı çalışma silindi.'
+                st.rerun()
+            else:
+                st.error('Kayıt silinemedi.')
+    else:
+        st.caption('Henüz kayıtlı çalışma yok.')
+
+_v189_flash=st.session_state.pop('_v189_flash',None)
+if _v189_flash:
+    st.success(_v189_flash)
+
+# Yeni bir tarama başlatılırsa yalnız "aktif snapshot" etiketi temizlenir; kayıtlı snapshot silinmez.
+if run:
+    st.session_state.pop('_v189_active_snapshot_label',None)
 
 
 # ============================================================
@@ -45550,6 +45833,50 @@ def _v3_source_table(section_key,data,columns=None,height=590):
 
 # ============================================================
 # /V188
+# ============================================================
+
+
+# ============================================================
+# V190 — HABER TABLOLARINDA HIZLI OKUMA KOLON SIRASI
+# KARARLI TABAN: V188; V189 snapshot katmanı korunur.
+# Arama motoru, sorgular, normalize/tekilleştirme, kaynak sınıflandırması,
+# akademik sepet ve Gephi mantığına DOKUNMAZ.
+# Yalnız _v3_source_table üzerinden gösterilen haber tablolarında kolonları
+# şu öncelikle sunar: Seç -> Tarih -> Başlık -> diğer alanlar.
+# ============================================================
+
+_V190_BASE_SOURCE_TABLE=_v3_source_table
+
+def _v190_fast_read_columns(columns=None):
+    # Mevcut kolon setini değiştirme; yalnız görünüm sırasını düzenle.
+    default_cols=[
+        'Seç','Tarih','Başlık','Durum','Bölge','Kaynak','Kategori','Yaklaşım',
+        'Çerçeve','İçerik Türü','İçerik_Özeti','Risk_Skoru','Doğrulama','URL'
+    ]
+    cols=list(columns) if columns else list(default_cols)
+
+    # Alt renderer Durum'u otomatik olarak Seç'in yanına eklemesin;
+    # onu Başlık'tan sonra bilinçli biçimde tutuyoruz.
+    if 'Seç' not in cols:
+        cols.insert(0,'Seç')
+    if 'Durum' not in cols:
+        cols.append('Durum')
+
+    preferred=['Seç','Tarih','Başlık','Durum']
+    ordered=[c for c in preferred if c in cols]
+    ordered += [c for c in cols if c not in preferred]
+    return ordered
+
+def _v3_source_table(section_key,data,columns=None,height=590):
+    return _V190_BASE_SOURCE_TABLE(
+        section_key,
+        data,
+        _v190_fast_read_columns(columns),
+        height
+    )
+
+# ============================================================
+# /V190
 # ============================================================
 
 
