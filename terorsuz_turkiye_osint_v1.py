@@ -629,7 +629,7 @@ def _official_radar_rows(df):
 st.set_page_config(page_title='Terörsüz Türkiye OSINT Radarı', page_icon='🛡️', layout='wide')
 _v166_apply_background()
 # V177 görünür sürüm teyidi: yanlış dosya çalıştırılıyorsa kullanıcı hemen fark eder.
-st.sidebar.success('✅ AKTİF SÜRÜM: V186 — Tarih Aralığı + Doğrudan Akademik Kodlama')
+st.sidebar.success('✅ AKTİF SÜRÜM: V187 — V186 Arama Mantığı + Akademik Metodoloji v1.0')
 
 # ============================================================
 # V55 — ŞİFRE KORUMASI
@@ -44563,6 +44563,846 @@ def _v175_render_archive_scan():
 # ============================================================
 
 # ============================================================
+# V187 — AKADEMİK METODOLOJİ UYUM KATMANI
+# KARARLI TABAN: V186.
+# ÖNEMLİ: Günlük/özel tarih arama motoru, sorgular, normalize zinciri,
+# raporlama ve V185 tarih aralığı mantığına DOKUNMAZ.
+# Bu katman yalnız Akademik Kodlama Sepeti ve akademik Gephi çıktısını
+# tez araştırma kitapçığı v1.0 ile uyumlu hâle getirir.
+# ============================================================
+
+V187_PANEL_VERSION='V187'
+V187_CODEBOOK_VERSION='1.0'
+V187_QUERY_VERSION='V22/V185 — V186 kararlı arama mantığı'
+V187_ALLOWED_ACADEMIC_FAMILIES={
+    'Yerli Basın','Yabancı Basın','Kürt Bölgesel Medyası','PKK/KCK Açık Kaynak'
+}
+
+V187_PERIODS={
+    'P0':('2024-10-15','2024-10-29','Başlangıç olayı penceresi'),
+    'P1':('2024-10-30','2025-02-19','İlk ara dönem'),
+    'P2':('2025-02-20','2025-03-06','27 Şubat çağrısı penceresi'),
+    'P3':('2025-03-07','2025-05-04','Çağrı-fesih arası'),
+    'P4':('2025-05-05','2025-05-19','Fesih kararı penceresi'),
+    'P5':('2025-05-20','2025-07-03','Fesih-silah bırakma arası'),
+    'P6':('2025-07-04','2025-07-18','Sembolik silah bırakma penceresi'),
+    'P7':('2025-07-19','2026-08-02','Uygulama/hukuki beklenti ara dönemi'),
+    'P8':('2026-08-03','2026-08-25','Yasama + yürürlük birleşik penceresi'),
+    'P9':('2026-08-26','2026-09-30','İlk yürürlük sonrası gözlem dönemi'),
+}
+V187_MILESTONES={
+    'M1':('2024-10-22','22 Ekim 2024 — başlangıç eşiği'),
+    'M2':('2025-02-27','27 Şubat 2025 — çağrı eşiği'),
+    'M3':('2025-05-12','12 Mayıs 2025 — örgütsel karar eşiği'),
+    'M4':('2025-07-11','11 Temmuz 2025 — uygulama eşiği'),
+    'M5':('2026-08-10','10 Ağustos 2026 — yasama eşiği'),
+    'M6':('2026-08-18','18 Ağustos 2026 — yürürlük eşiği'),
+}
+V187_MILESTONE_WINDOWS={
+    'M1':('2024-10-15','2024-10-29'),
+    'M2':('2025-02-20','2025-03-06'),
+    'M3':('2025-05-05','2025-05-19'),
+    'M4':('2025-07-04','2025-07-18'),
+    # Kitapçık gereği M5 ve M6 örtüşen tek 3–25 Ağustos penceresinde tutulur.
+    'M5+M6':('2026-08-03','2026-08-25'),
+}
+V187_CONSTRUCTED_WEEK_DATES={
+    '2024-11-04':'YH-2024Q4','2024-11-12':'YH-2024Q4','2024-12-18':'YH-2024Q4',
+    '2024-12-26':'YH-2024Q4','2024-11-01':'YH-2024Q4','2024-12-07':'YH-2024Q4','2024-12-01':'YH-2024Q4',
+    '2025-01-27':'YH-2025Q1','2025-03-18':'YH-2025Q1','2025-01-15':'YH-2025Q1',
+    '2025-01-02':'YH-2025Q1','2025-01-24':'YH-2025Q1','2025-02-15':'YH-2025Q1','2025-02-09':'YH-2025Q1',
+    '2025-04-21':'YH-2025Q2','2025-04-01':'YH-2025Q2','2025-06-25':'YH-2025Q2',
+    '2025-05-01':'YH-2025Q2','2025-06-13':'YH-2025Q2','2025-06-21':'YH-2025Q2','2025-06-08':'YH-2025Q2',
+    '2025-09-15':'YH-2025Q3','2025-09-30':'YH-2025Q3','2025-09-03':'YH-2025Q3',
+    '2025-08-07':'YH-2025Q3','2025-09-12':'YH-2025Q3','2025-08-23':'YH-2025Q3','2025-08-31':'YH-2025Q3',
+    '2025-11-03':'YH-2025Q4','2025-10-21':'YH-2025Q4','2025-12-17':'YH-2025Q4',
+    '2025-12-11':'YH-2025Q4','2025-12-26':'YH-2025Q4','2025-10-18':'YH-2025Q4','2025-12-07':'YH-2025Q4',
+    '2026-01-05':'YH-2026Q1','2026-01-20':'YH-2026Q1','2026-03-11':'YH-2026Q1',
+    '2026-03-26':'YH-2026Q1','2026-01-30':'YH-2026Q1','2026-03-21':'YH-2026Q1','2026-01-18':'YH-2026Q1',
+    '2026-06-29':'YH-2026Q2','2026-05-26':'YH-2026Q2','2026-04-08':'YH-2026Q2',
+    '2026-05-14':'YH-2026Q2','2026-04-03':'YH-2026Q2','2026-05-09':'YH-2026Q2','2026-06-14':'YH-2026Q2',
+    '2026-07-06':'YH-2026Q3','2026-09-08':'YH-2026Q3','2026-07-29':'YH-2026Q3',
+    '2026-07-23':'YH-2026Q3','2026-07-17':'YH-2026Q3','2026-09-19':'YH-2026Q3','2026-09-06':'YH-2026Q3',
+}
+
+V187_FRAME_RULES={
+    'F01':('Silahsızlanma / Fesih / Uygulama',
+           'Silah bırakma, fesih, tasfiye, silah teslimi/yakılması ve uygulama adımları.',
+           'Ana eksen fiziksel/örgütsel silahsızlanma veya fesih uygulamasıysa.',
+           'Öcalan’ın statüsü ana konuysa F03; örgüt içi siyasi pozisyon ana konuysa F11.'),
+    'F02':('Hukuki / Meclis / Komisyon / İnfaz-Af',
+           'Yasa, kanun teklifi, TBMM komisyonu, infaz, af, hukuki güvence ve yasal statü tartışmaları.',
+           'Somut mevzuat, Meclis süreci veya hukuki mekanizma ana konuysa.',
+           'Genel süreç takvimi/ilerleme ise F06; normatif hak talebi ise F10.'),
+    'F03':('Öcalan / İmralı / Statü-Rol',
+           'Abdullah Öcalan’ın rolü, statüsü, İmralı görüşmeleri, umut hakkı, özgürlük ve iletişim/müzakereci rolü.',
+           'Merkezi soru Öcalan’ın rolü veya statüsü ise.',
+           'Çağrının fesih sonucu ana konuysa F01; örgüt içi tartışma ise F11.'),
+    'F04':('Suriye / SDG-YPG / Şam-Entegrasyon',
+           'Suriye sahası, SDG/YPG, Şam yönetimi, entegrasyon ve Suriye’deki güvenlik/siyasi düzenlemeler.',
+           'Türkiye’deki süreç Suriye/SDG-YPG boyutu üzerinden anlamlandırılıyorsa.',
+           'Genel güvenlik/operasyon vurgusu baskınsa F08.'),
+    'F05':('Irak / IKBY / Kandil / Sincar',
+           'Irak, IKBY, Kandil, Sincar, Peşmerge ve Irak merkezli süreç bağlantıları.',
+           'Coğrafi ve siyasi ağırlık merkezi Irak/IKBY ise.',
+           'Silah bırakma töreninin kendisi ana konuysa F01; operasyon ana konuysa F08.'),
+    'F06':('Sürecin Takvimi / Aşaması / İzleme',
+           'Sürecin aşaması, takvim, yol haritası, ilerleme, gecikme, izleme ve sonraki adımlar.',
+           'Birden fazla adım süreç ilerlemesi/aksaması perspektifiyle bir araya getiriliyorsa.',
+           'Somut yasa F02; somut silah bırakma F01.'),
+    'F07':('Siyasi / Diplomatik Aktör Pozisyonları',
+           'Partiler, hükümet, muhalefet, yabancı devletler ve uluslararası aktörlerin süreç hakkındaki pozisyonları.',
+           'Ana haber değeri aktörün destek, eleştiri, koşul veya diplomatik tutumuysa.',
+           'Pozisyonun içeriğinde somut yasa/güvenlik/uygulama baskınsa ilgili özel çerçeve.'),
+    'F08':('Güvenlik / Operasyon / Çatışma',
+           'Askerî operasyon, çatışma, saldırı, güvenlik tedbiri, sınır güvenliği ve güvenlik riskleri.',
+           'Temel mantık tehdit, operasyon veya güvenlik sonucuysa.',
+           'Suriye coğrafyası tek başına F04 yapmaz; güvenlik mantığı baskınsa F08.'),
+    'F09':('Toplumsal Katılım / Kamuoyu / Mağduriyet',
+           'Toplumsal gruplar, aileler, sivil toplum, kamuoyu tepkisi, mağduriyet ve toplumsal katılım.',
+           'Toplumun süreçle ilişkisi veya sosyal etkisi merkeze alınıyorsa.',
+           'Normatif hak/barış talebi ana eksense F10.'),
+    'F10':('Demokratik Çözüm / Barış / Hak Talepleri',
+           'Barış, demokratik çözüm, eşitlik, temel haklar, siyasal çözüm ve hak talepleri.',
+           'Güvenlik/uygulamadan çok normatif çözüm modeli ve hak talebi merkezdeyse.',
+           'Somut hukuki düzenleme F02; toplumsal tepki F09.'),
+    'F11':('PKK/KCK Örgüt İçi / Hareket Pozisyonları',
+           'PKK/KCK içindeki açıklamalar, stratejik yönelimler, kadro pozisyonları ve örgüt içi değerlendirmeler.',
+           'Ana haber değeri örgüt/hareket içindeki pozisyon veya stratejik açıklamaysa.',
+           'Silah bırakma/fesih uygulamasının kendisi F01; Öcalan’ın statüsü F03.'),
+    'F12':('Ekonomi / Kalkınma / Bölgesel Refah Etkileri',
+           'Sürecin yatırım, ticaret, turizm, istihdam, kalkınma, maliyet ve bölgesel refah etkileri.',
+           'Ekonomik sonuç veya beklenti ana anlatıysa.',
+           'Ekonomi tali fayda olarak geçiyorsa ana çerçeveye dönülür.'),
+}
+
+
+def _v187_record_day(rec):
+    for c in ['Tarih_dt','Tarih','Yayın Tarihi','Yayin Tarihi','Tarama Günü']:
+        v=rec.get(c,'') if isinstance(rec,dict) else ''
+        if v is None or str(v).strip()=='' or 'bilinmiyor' in str(v).lower():
+            continue
+        try:
+            ts=pd.to_datetime(v,dayfirst=True,errors='coerce')
+            if pd.notna(ts):
+                if hasattr(ts,'date'):
+                    return ts.date()
+        except Exception:
+            pass
+    return None
+
+
+def _v187_period_code(day):
+    if not day:
+        return ''
+    for code,(s,e,label) in V187_PERIODS.items():
+        if pd.Timestamp(s).date() <= day <= pd.Timestamp(e).date():
+            return code
+    return 'KAPSAM-DIŞI'
+
+
+def _v187_sample_meta(rec):
+    day=_v187_record_day(rec)
+    out={
+        'Hedef_Tarih':day.isoformat() if day else '',
+        'Dönem_Kodu':_v187_period_code(day),
+        'Örneklem_Türü':'Tarih Belirsiz' if not day else 'Örneklem Dışı',
+        'Örneklem_Kodu':'',
+        'Milat_Kodu':'',
+        'Yapılandırılmış_Hafta':'',
+        'Planlı_Örneklem':'Hayır',
+    }
+    if not day:
+        return out
+    iso=day.isoformat()
+    for m,(s,e) in V187_MILESTONE_WINDOWS.items():
+        if pd.Timestamp(s).date() <= day <= pd.Timestamp(e).date():
+            out.update({
+                'Örneklem_Türü':'Milat Penceresi','Örneklem_Kodu':m,
+                'Milat_Kodu':m,'Planlı_Örneklem':'Evet'
+            })
+            return out
+    cw=V187_CONSTRUCTED_WEEK_DATES.get(iso,'')
+    if cw:
+        out.update({
+            'Örneklem_Türü':'Yapılandırılmış Hafta','Örneklem_Kodu':cw,
+            'Yapılandırılmış_Hafta':cw,'Planlı_Örneklem':'Evet'
+        })
+    return out
+
+
+def _v187_text_hash(rec):
+    try:
+        txt=f"{_v174_clean_scalar(rec.get('Başlık',''))} {_v174_content_text(rec)}"
+    except Exception:
+        txt=f"{_v174_clean_scalar(rec.get('Başlık',''))} {_v174_clean_scalar(rec.get('İçerik_Özeti',''))}"
+    txt=re.sub(r'\W+',' ',str(txt).lower(),flags=re.UNICODE).strip()
+    if not txt:
+        return ''
+    return hashlib.sha1(txt[:16000].encode('utf-8','ignore')).hexdigest().upper()
+
+
+_V187_BASE_ACAD_NORM=_v174_academic_normalize_record
+def _v174_academic_normalize_record(rec):
+    x=_V187_BASE_ACAD_NORM(rec)
+    meta=_v187_sample_meta(x)
+    for k,v in meta.items():
+        x[k]=v
+    x['Kodlama_Kitabı_Sürümü']=V187_CODEBOOK_VERSION
+    x['Akademik_Panel_Sürümü']=V187_PANEL_VERSION
+    x['Sorgu_Sürümü']=V187_QUERY_VERSION
+    x['Metin_Hash']=_v174_clean_scalar(x.get('Metin_Hash','')) or _v187_text_hash(x)
+    x['Sendikasyon_Grubu']=x.get('Metin_Hash','')[:12] if x.get('Metin_Hash') else ''
+    status=_v174_clean_scalar(x.get('Nihai_Onay_Durumu',''))
+    if not status:
+        # V186'da AI önerisi bazı eski kayıtlarda otomatik Nihai alana geçmiş olabilir.
+        # Kaynağı bilinmeyen eski nihai kodlar V187'de tekrar araştırmacı onayı bekler.
+        status='Onay Bekliyor (V186)' if _v174_clean_scalar(x.get('Nihai_Çerçeve_Kodu','')) else 'Onay Bekliyor'
+    x['Nihai_Onay_Durumu']=status
+    x['Nihai_Onay_Zamanı']=_v174_clean_scalar(x.get('Nihai_Onay_Zamanı',''))
+    return x
+
+
+V187_RESEARCH_LOG_TABLE='academic_research_log_v187'
+def _v187_ensure_log_table():
+    if not _init_history_db():
+        return False
+    try:
+        with _history_connect() as conn:
+            conn.execute(
+                f"CREATE TABLE IF NOT EXISTS {V187_RESEARCH_LOG_TABLE}("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, logged_at TEXT NOT NULL, action TEXT, "
+                "target_range TEXT, panel_version TEXT, query_version TEXT, visible_count INTEGER, "
+                "added_count INTEGER, note TEXT)"
+            )
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+def _v187_log_action(action,added_count=0,note='',records=None):
+    if not _v187_ensure_log_table():
+        return
+    target=''
+    try:
+        days=sorted({d for d in [_v187_record_day(r) for r in (records or [])] if d})
+        if days:
+            target=days[0].strftime('%d.%m.%Y') if len(days)==1 else f"{days[0].strftime('%d.%m.%Y')}–{days[-1].strftime('%d.%m.%Y')}"
+        elif globals().get('custom_date_mode'):
+            target=f"{globals().get('custom_start_date')}–{globals().get('custom_end_date')}"
+        else:
+            target=str(globals().get('period',''))
+    except Exception:
+        target=''
+    try:
+        visible=len(st.session_state.get('rows') or [])
+    except Exception:
+        visible=0
+    try:
+        with _history_connect() as conn:
+            conn.execute(
+                f"INSERT INTO {V187_RESEARCH_LOG_TABLE}(logged_at,action,target_range,panel_version,query_version,visible_count,added_count,note) VALUES (?,?,?,?,?,?,?,?)",
+                (datetime.now(timezone.utc).isoformat(),str(action),target,V187_PANEL_VERSION,V187_QUERY_VERSION,int(visible),int(added_count),str(note or ''))
+            )
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _v187_research_log_df():
+    if not _v187_ensure_log_table():
+        return pd.DataFrame()
+    try:
+        with _history_connect() as conn:
+            return pd.read_sql_query(
+                f"SELECT logged_at as Zaman, action as Eylem, target_range as 'Hedef Tarih/Aralık', panel_version as 'Panel Sürümü', query_version as 'Sorgu Sürümü', visible_count as 'Görüntülenen Kayıt', added_count as 'Akademik Eklenen', note as Not FROM {V187_RESEARCH_LOG_TABLE} ORDER BY id DESC",
+                conn
+            )
+    except Exception:
+        return pd.DataFrame()
+
+
+def _v174_academic_add(rows):
+    basket=[_v174_academic_normalize_record(r) for r in _v174_academic_basket()]
+    known={r.get('Haber_ID','') for r in basket}
+    added=0; rejected=[]; out_of_sample=[]; added_records=[]
+    for row in rows or []:
+        rec=_v174_academic_normalize_record(row)
+        fam=_v174_source_family(rec)
+        if fam not in V187_ALLOWED_ACADEMIC_FAMILIES:
+            rejected.append(fam or 'Diğer')
+            continue
+        if not rec.get('Haber_ID') or rec['Haber_ID'] in known:
+            continue
+        if rec.get('Planlı_Örneklem')!='Evet':
+            out_of_sample.append(rec.get('Haber_ID',''))
+        basket.append(rec); known.add(rec['Haber_ID'])
+        _v174_persist_record(rec)
+        added+=1; added_records.append(rec)
+    st.session_state[V174_ACADEMIC_SESSION]=basket
+    st.session_state['v187_last_rejected_families']=sorted(set(rejected))
+    st.session_state['v187_last_out_of_sample_count']=len(out_of_sample)
+    if rejected:
+        try:
+            st.warning('Akademik korpusa yalnız dört sabit kaynak ailesi alınır. Dışlanan: '+', '.join(sorted(set(rejected))))
+        except Exception:
+            pass
+    if out_of_sample:
+        try:
+            st.info(f'{len(out_of_sample)} kayıt planlı milat/yapılandırılmış hafta takvimi dışında; sepette tutuldu ancak “Örneklem Dışı” olarak işaretlendi.')
+        except Exception:
+            pass
+    _v187_log_action('Akademik Sepete Ekle',added_count=added,
+                     note=f'Reddedilen aile kaydı: {len(rejected)}; örneklem dışı: {len(out_of_sample)}',records=added_records)
+    return added
+
+
+def _v174_package_df(records=None):
+    records=records if records is not None else _v174_academic_basket()
+    rows=[]
+    for r0 in records or []:
+        r=_v174_academic_normalize_record(r0)
+        rows.append({
+            'Haber_ID':r.get('Haber_ID',''),'Tarih':_v174_clean_scalar(r.get('Tarih','')),
+            'Hedef_Tarih':r.get('Hedef_Tarih',''),'Örneklem_Türü':r.get('Örneklem_Türü',''),
+            'Örneklem_Kodu':r.get('Örneklem_Kodu',''),'Dönem_Kodu':r.get('Dönem_Kodu',''),
+            'Kaynak Ailesi':_v174_source_family(r),
+            'Kaynak':_v174_clean_scalar(r.get('Kaynak','') or r.get('Yayıncı','') or r.get('Domain','')),
+            'Başlık':_v174_clean_scalar(r.get('Başlık','')),
+            'Haber Metni veya Özet':_v174_content_text(r),'URL':_v174_url(r),
+            'Kodlama_Kitabı_Sürümü':V187_CODEBOOK_VERSION,
+        })
+    cols=['Haber_ID','Tarih','Hedef_Tarih','Örneklem_Türü','Örneklem_Kodu','Dönem_Kodu',
+          'Kaynak Ailesi','Kaynak','Başlık','Haber Metni veya Özet','URL','Kodlama_Kitabı_Sürümü']
+    return pd.DataFrame(rows,columns=cols)
+
+
+def _v174_chatgpt_instructions():
+    lines=[]
+    for code,(name,definition,include,boundary) in V187_FRAME_RULES.items():
+        lines.append(f"{code} — {name}\n  Tanım: {definition}\n  Dahil et: {include}\n  Sınır/dışlama: {boundary}")
+    frame_text='\n'.join(lines)
+    return f"""TERÖRSÜZ TÜRKİYE — AKADEMİK KODLAMA YÖNERGESİ (KODLAMA KİTABI v{V187_CODEBOOK_VERSION})\n\nBu dosyadaki haberler araştırmacı tarafından manuel olarak akademik korpusa alınmıştır.\nİlgili/ilgisiz elemesi yapma; yalnızca her haberin BASKIN çerçevesini kodla.\nÖrneklem_Türü, Örneklem_Kodu, Dönem_Kodu ve Kaynak Ailesi alanları kodlama kararını yönlendiren ipuçları değildir; baskın çerçeveyi haber metninin ana iddiasına göre belirle.\n\nSABİT F01–F12 KODLAMA KİTABI:\n{frame_text}\n\nBAĞLAYICI KARAR KURALLARI:\n1) Anahtar kelime sayma; başlık + giriş + metnin genel ana iddiasını değerlendir.\n2) Her habere yalnız bir baskın F01–F12 kodu ver.\n3) F01/F03/F11: “Ne oldu?” silah bırakma/fesih ise F01; “Öcalan’ın rolü/statüsü ne?” ise F03; “örgüt/hareket ne düşünüyor/stratejisi ne?” ise F11.\n4) F02/F06: Somut yasa/komisyon/infaz/hukuki mekanizma F02; genel süreç aşaması/takvimi/izleme F06.\n5) F04/F05/F08: Coğrafi-siyasi merkez Suriye/SDG ise F04; Irak/IKBY/Kandil ise F05; temel mantık operasyon/çatışma/tehdit ise F08.\n6) F09/F10: toplum/kamuoyu/mağduriyet F09; normatif barış/demokratik çözüm/hak talebi F10.\n7) Bir siyasetçinin açıklaması otomatik F07 değildir; somut konu hangi özel çerçeveyse onu seç.\n8) Ekonomi ancak haberin ana sonuç mantığıysa F12.\n9) Gerçekten iki çerçeve arasında ayrım yapılamıyorsa AI_Çerçeve_Kodu=BELIRSIZ ve Manuel_İnceleme_Gerekli=Evet.\n10) Kanıt_Cümlesi gerçek haber metninden kısa bir pasaj olmalı; metin yoksa başlıktan kısa bir bölüm kullanılabilir.\n11) Haber_ID değerini ASLA değiştirme.\n\nSADECE ŞU SÜTUNLARLA CSV DÖNDÜR:\nHaber_ID,AI_Çerçeve_Kodu,AI_Çerçeve,Kanıt_Cümlesi,Kısa_Gerekçe,Güven,Manuel_İnceleme_Gerekli\n\nGüven: Yüksek / Orta / Düşük\nManuel_İnceleme_Gerekli: Evet / Hayır\n"""
+
+
+def _v174_import_ai_result(uploaded):
+    try:
+        df=_v174_read_result_file(uploaded)
+    except Exception as e:
+        return {'ok':False,'message':f'Dosya okunamadı: {e}','updated':0,'unmatched':0,'invalid':0}
+    if df is None or df.empty:
+        return {'ok':False,'message':'Dosyada kodlama satırı bulunamadı.','updated':0,'unmatched':0,'invalid':0}
+    if 'Haber_ID' not in df.columns:
+        return {'ok':False,'message':'Sonuç dosyasında Haber_ID sütunu zorunludur.','updated':0,'unmatched':0,'invalid':0}
+    basket=[_v174_academic_normalize_record(r) for r in _v174_academic_basket()]
+    by_id={r['Haber_ID']:r for r in basket}
+    updated=unmatched=invalid=0
+    for _,row in df.fillna('').iterrows():
+        hid=_v174_clean_scalar(row.get('Haber_ID',''))
+        if not hid or hid not in by_id:
+            unmatched+=1; continue
+        code=_v174_extract_frame_code(row.get('AI_Çerçeve_Kodu','')) or _v174_extract_frame_code(row.get('AI_Çerçeve',''))
+        if code not in V174_FRAME_CODE_TO_LABEL and code!='BELIRSIZ':
+            invalid+=1; continue
+        rec=by_id[hid]
+        rec['AI_Çerçeve_Kodu']=code
+        rec['AI_Çerçeve']=V174_FRAME_CODE_TO_LABEL.get(code,'BELİRSİZ — Manuel Kodlama')
+        rec['Kanıt_Cümlesi']=_v174_clean_scalar(row.get('Kanıt_Cümlesi',''))
+        rec['Kısa_Gerekçe']=_v174_clean_scalar(row.get('Kısa_Gerekçe',''))
+        rec['Güven']=_v174_clean_scalar(row.get('Güven',''))
+        rec['Manuel_İnceleme_Gerekli']=_v174_clean_scalar(row.get('Manuel_İnceleme_Gerekli',''))
+        if code=='BELIRSIZ':
+            rec['Manuel_İnceleme_Gerekli']='Evet'
+        # V187: AI sonucu Nihai Çerçeve alanına ASLA otomatik yazılmaz.
+        # V186'dan kalma nihai değer varsa da açık araştırmacı onayı olmadan Gephi'ye giremez.
+        if rec.get('Nihai_Onay_Durumu')!='Araştırmacı Onaylı':
+            rec['Nihai_Onay_Durumu']='Onay Bekliyor'
+        _v174_persist_record(rec); updated+=1
+    st.session_state[V174_ACADEMIC_SESSION]=basket
+    st.session_state.pop('v174_academic_gephi',None)
+    _v187_log_action('AI Kodlama Sonucu İçe Aktar',updated,note=f'Eşleşmeyen: {unmatched}; geçersiz: {invalid}')
+    return {'ok':True,'message':f'{updated} kayıt AI önerisiyle eşleştirildi; Nihai Çerçeveler otomatik onaylanmadı.',
+            'updated':updated,'unmatched':unmatched,'invalid':invalid}
+
+
+def _v174_save_manual_final(edited):
+    basket=[_v174_academic_normalize_record(r) for r in _v174_academic_basket()]
+    by_id={r['Haber_ID']:r for r in basket}
+    changed=approved=0
+    for _,row in edited.fillna('').iterrows():
+        hid=_v174_clean_scalar(row.get('Haber_ID',''))
+        if hid not in by_id:
+            continue
+        rec=by_id[hid]
+        old_label=_v174_clean_scalar(rec.get('Nihai_Çerçeve',''))
+        selected_label=_v174_clean_scalar(row.get('Nihai Çerçeve',''))
+        approve_ai=bool(row.get('AI Önerisini Onayla',False))
+        approve_final=bool(row.get('Nihaiyi Onayla',False))
+        touched=False
+        if approve_ai:
+            ai_code=_v174_clean_scalar(rec.get('AI_Çerçeve_Kodu','')).upper()
+            if ai_code in V174_FRAME_CODE_TO_LABEL:
+                rec['Nihai_Çerçeve_Kodu']=ai_code
+                rec['Nihai_Çerçeve']=V174_FRAME_CODE_TO_LABEL[ai_code]
+                rec['Nihai_Onay_Durumu']='Araştırmacı Onaylı'
+                rec['Nihai_Onay_Zamanı']=datetime.now(timezone.utc).isoformat()
+                touched=True; approved+=1
+        else:
+            if selected_label != old_label:
+                code=V174_FRAME_LABEL_TO_CODE.get(selected_label,'')
+                rec['Nihai_Çerçeve_Kodu']=code
+                rec['Nihai_Çerçeve']=selected_label if code else ''
+                rec['Nihai_Onay_Durumu']='Onay Bekliyor' if code else 'Onay Bekliyor'
+                rec['Nihai_Onay_Zamanı']=''
+                touched=True
+            if approve_final:
+                code=V174_FRAME_LABEL_TO_CODE.get(_v174_clean_scalar(rec.get('Nihai_Çerçeve','')),'')
+                if code:
+                    rec['Nihai_Çerçeve_Kodu']=code
+                    rec['Nihai_Onay_Durumu']='Araştırmacı Onaylı'
+                    rec['Nihai_Onay_Zamanı']=datetime.now(timezone.utc).isoformat()
+                    touched=True; approved+=1
+        if touched:
+            _v174_persist_record(rec); changed+=1
+    st.session_state[V174_ACADEMIC_SESSION]=basket
+    if changed:
+        st.session_state.pop('v174_academic_gephi',None)
+        _v187_log_action('Nihai Çerçeve / Araştırmacı Onayı',changed,note=f'Onaylanan: {approved}')
+    return changed
+
+
+def _v174_make_gephi_tables(records,node_kind='source'):
+    valid=[]
+    for r0 in records or []:
+        r=_v174_academic_normalize_record(r0)
+        code=_v174_clean_scalar(r.get('Nihai_Çerçeve_Kodu','')).upper()
+        if code not in V174_FRAME_CODE_TO_LABEL or r.get('Nihai_Onay_Durumu')!='Araştırmacı Onaylı':
+            continue
+        fam=_v174_source_family(r)
+        if fam not in V187_ALLOWED_ACADEMIC_FAMILIES:
+            continue
+        source=_v174_clean_scalar(r.get('Kaynak','') or r.get('Yayıncı','') or r.get('Domain','')) or 'Bilinmeyen Kaynak'
+        label=source if node_kind=='source' else fam
+        valid.append((r,code,fam,label))
+    if not valid:
+        return pd.DataFrame(),pd.DataFrame(),pd.DataFrame()
+    edge_bucket={}; node_articles={}
+    for r,code,fam,label in valid:
+        hid=_v174_clean_scalar(r.get('Haber_ID','')) or _v174_haber_id(r)
+        src_key=f'{node_kind}:{label}'; frame_key=f'frame:{code}'
+        node_articles.setdefault(src_key,set()).add(hid)
+        node_articles.setdefault(frame_key,set()).add(hid)
+        k=(src_key,frame_key,label,fam,code)
+        b=edge_bucket.setdefault(k,{'ids':set(),'titles':[],'urls':[]})
+        b['ids'].add(hid)
+        t=_v174_clean_scalar(r.get('Başlık','')); u=_v174_url(r)
+        if t and t not in b['titles']: b['titles'].append(t)
+        if u and u not in b['urls']: b['urls'].append(u)
+    def nid(raw): return hashlib.sha1(raw.encode('utf-8','ignore')).hexdigest()[:16]
+    nodes=[]; seen=set()
+    for r,code,fam,label in valid:
+        raw=f'{node_kind}:{label}'
+        if raw in seen: continue
+        seen.add(raw)
+        nodes.append({'Id':nid(raw),'Label':label,'NodeType':'Source' if node_kind=='source' else 'SourceFamily',
+                      'ColorGroup':fam,'SourceFamily':fam,'ArticleCount':len(node_articles.get(raw,set())),
+                      'EventCount':len(node_articles.get(raw,set())),'DominantTone':'','Frame':''})
+    for code,label in V174_FRAME_CODE_TO_LABEL.items():
+        raw=f'frame:{code}'
+        if raw not in node_articles: continue
+        nodes.append({'Id':nid(raw),'Label':label,'NodeType':'Frame','ColorGroup':'ÇERÇEVE','SourceFamily':'ÇERÇEVE',
+                      'ArticleCount':len(node_articles.get(raw,set())),'EventCount':len(node_articles.get(raw,set())),
+                      'DominantTone':'','Frame':label})
+    totals={}
+    for (src_raw,frame_raw,label,fam,code),b in edge_bucket.items():
+        totals[src_raw]=totals.get(src_raw,0)+len(b['ids'])
+    edges=[]
+    for eid,((src_raw,frame_raw,label,fam,code),b) in enumerate(sorted(edge_bucket.items())):
+        weight=max(1,len(b['ids'])); total=max(1,totals.get(src_raw,weight)); frame_label=V174_FRAME_CODE_TO_LABEL[code]
+        edges.append({'Id':str(eid),'Source':nid(src_raw),'Target':nid(frame_raw),'Weight':weight,'ArticleCount':weight,
+                      'EventCount':weight,'ShareOfSourceFrameLinksPct':round(100*weight/total,2),'DominantTone':'',
+                      'SourceLabel':label,'SourceFamily':fam,'Frame':frame_label,'MeanFrameScore':0.0,'MaxFrameScore':0,
+                      'EvidenceTerms':'Araştırmacı onaylı nihai çerçeve',
+                      'SampleTitles':' | '.join(b['titles'][:5]),'SampleURLs':' | '.join(b['urls'][:5])})
+    edf=pd.DataFrame(edges); summary_rows=[]
+    if not edf.empty:
+        for label,g in edf.groupby('SourceLabel'):
+            top=g.sort_values('Weight',ascending=False).iloc[0]
+            summary_rows.append({'Kaynak / Aile':label,'Toplam Haber':int(g['Weight'].sum()),
+                                 'Baskın Çerçeve':top['Frame'],'Baskın Çerçeve Haberi':int(top['Weight'])})
+    return pd.DataFrame(nodes),edf,pd.DataFrame(summary_rows)
+
+
+def _v187_attach_network_metrics(nodes,edges):
+    if nodes is None or nodes.empty:
+        return pd.DataFrame()
+    out=nodes.copy()
+    try:
+        import networkx as nx
+        G=nx.Graph()
+        for _,r in out.iterrows(): G.add_node(str(r['Id']))
+        for _,r in edges.iterrows():
+            G.add_edge(str(r['Source']),str(r['Target']),weight=float(r.get('Weight',1) or 1))
+        wd=dict(G.degree(weight='weight'))
+        bc=nx.betweenness_centrality(G,normalized=True,weight=None)
+        out['WeightedDegree']=out['Id'].astype(str).map(lambda x:float(wd.get(x,0.0)))
+        out['NormalizedBetweenness']=out['Id'].astype(str).map(lambda x:float(bc.get(x,0.0)))
+        out['NormalizedWeightedDegree']=0.0
+        for typ,g in out.groupby('NodeType'):
+            den=float(g['WeightedDegree'].sum()) or 1.0
+            out.loc[g.index,'NormalizedWeightedDegree']=g['WeightedDegree']/den
+    except Exception:
+        out['WeightedDegree']=0.0; out['NormalizedWeightedDegree']=0.0; out['NormalizedBetweenness']=0.0
+    return out
+
+
+def _v187_dynamic_gexf(nodes,edges,description):
+    root=ET.Element('gexf',{'xmlns':'http://www.gexf.net/1.2draft','version':'1.2'})
+    meta=ET.SubElement(root,'meta',{'lastmodifieddate':datetime.now().strftime('%Y-%m-%d')})
+    ET.SubElement(meta,'creator').text='Terörsüz Türkiye OSINT V187 — Akademik Metodoloji'
+    ET.SubElement(meta,'description').text=description
+    graph=ET.SubElement(root,'graph',{'mode':'static','defaultedgetype':'undirected'})
+    node_cols=['NodeType','ColorGroup','SourceFamily','ArticleCount','EventCount','DominantTone','Frame',
+               'WeightedDegree','NormalizedWeightedDegree','NormalizedBetweenness']
+    edge_cols=['ArticleCount','EventCount','ShareOfSourceFrameLinksPct','DominantTone','SourceLabel','SourceFamily','Frame']
+    na=ET.SubElement(graph,'attributes',{'class':'node'}); nmap={}
+    for i,c in enumerate(node_cols):
+        typ='double' if c in {'WeightedDegree','NormalizedWeightedDegree','NormalizedBetweenness'} else ('integer' if c in {'ArticleCount','EventCount'} else 'string')
+        nmap[c]=str(i); ET.SubElement(na,'attribute',{'id':str(i),'title':c,'type':typ})
+    ea=ET.SubElement(graph,'attributes',{'class':'edge'}); emap={}
+    for i,c in enumerate(edge_cols):
+        typ='double' if c=='ShareOfSourceFrameLinksPct' else ('integer' if c in {'ArticleCount','EventCount'} else 'string')
+        emap[c]=str(i); ET.SubElement(ea,'attribute',{'id':str(i),'title':c,'type':typ})
+    ns=ET.SubElement(graph,'nodes')
+    for _,r in nodes.iterrows():
+        n=ET.SubElement(ns,'node',{'id':str(r['Id']),'label':str(r['Label'])}); av=ET.SubElement(n,'attvalues')
+        for c in node_cols:
+            v=r.get(c,''); v='' if pd.isna(v) else v
+            ET.SubElement(av,'attvalue',{'for':nmap[c],'value':str(v)})
+    es=ET.SubElement(graph,'edges')
+    for _,r in edges.iterrows():
+        e=ET.SubElement(es,'edge',{'id':str(r['Id']),'source':str(r['Source']),'target':str(r['Target']),
+                                   'weight':str(float(r.get('Weight',1) or 1))}); av=ET.SubElement(e,'attvalues')
+        for c in edge_cols:
+            v=r.get(c,''); v='' if pd.isna(v) else v
+            ET.SubElement(av,'attvalue',{'for':emap[c],'value':str(v)})
+    return ET.tostring(root,encoding='utf-8',xml_declaration=True)
+
+
+def _v187_normalized_tables(records,source_nodes=None):
+    rows=[]
+    for r0 in records or []:
+        r=_v174_academic_normalize_record(r0)
+        if r.get('Nihai_Onay_Durumu')!='Araştırmacı Onaylı': continue
+        code=_v174_clean_scalar(r.get('Nihai_Çerçeve_Kodu','')).upper()
+        fam=_v174_source_family(r)
+        if code in V174_FRAME_CODE_TO_LABEL and fam in V187_ALLOWED_ACADEMIC_FAMILIES:
+            rows.append({'Haber_ID':r.get('Haber_ID',''),'FrameCode':code,'Frame':V174_FRAME_CODE_TO_LABEL[code],'Family':fam})
+    df=pd.DataFrame(rows)
+    if df.empty:
+        return pd.DataFrame(),pd.DataFrame()
+    total=len(df)
+    frame=df.groupby(['FrameCode','Frame']).size().reset_index(name='Haber Sayısı')
+    frame['Çerçeve Payı %']=(100*frame['Haber Sayısı']/max(1,total)).round(2)
+    frame['Normalize Weighted Degree']=frame['Haber Sayısı']/max(1,total)
+    frame['Normalize Betweenness']=0.0
+    if source_nodes is not None and not source_nodes.empty:
+        fmap={str(r.get('Frame','')):float(r.get('NormalizedBetweenness',0) or 0)
+              for _,r in source_nodes[source_nodes['NodeType'].eq('Frame')].iterrows()}
+        frame['Normalize Betweenness']=frame['Frame'].map(lambda x:round(fmap.get(x,0.0),6))
+    frame=frame.sort_values(['Haber Sayısı','FrameCode'],ascending=[False,True]).reset_index(drop=True)
+    fam=df.groupby(['Family','FrameCode','Frame']).size().reset_index(name='Haber Sayısı')
+    fam_tot=df.groupby('Family').size().to_dict()
+    fam['Aile-İçi Çerçeve Payı %']=fam.apply(lambda r:round(100*r['Haber Sayısı']/max(1,fam_tot.get(r['Family'],1)),2),axis=1)
+    fam=fam.sort_values(['Family','Haber Sayısı'],ascending=[True,False]).reset_index(drop=True)
+    return frame,fam
+
+
+def _v174_academic_gephi_package(records=None):
+    records=records if records is not None else _v174_academic_basket()
+    source_nodes,source_edges,source_summary=_v174_make_gephi_tables(records,'source')
+    family_nodes,family_edges,family_summary=_v174_make_gephi_tables(records,'family')
+    source_nodes=_v187_attach_network_metrics(source_nodes,source_edges)
+    family_nodes=_v187_attach_network_metrics(family_nodes,family_edges)
+    sg=_v187_dynamic_gexf(source_nodes,source_edges,'Terörsüz Türkiye — Akademik Kaynak-Çerçeve Ağı (V187)') if not source_nodes.empty and not source_edges.empty else b''
+    fg=_v187_dynamic_gexf(family_nodes,family_edges,'Terörsüz Türkiye — Akademik Kaynak Ailesi-Çerçeve Ağı (V187)') if not family_nodes.empty and not family_edges.empty else b''
+    final_rows=[]
+    for r0 in records or []:
+        r=_v174_academic_normalize_record(r0)
+        code=r.get('Nihai_Çerçeve_Kodu','')
+        if code not in V174_FRAME_CODE_TO_LABEL or r.get('Nihai_Onay_Durumu')!='Araştırmacı Onaylı': continue
+        final_rows.append({
+            'Haber_ID':r.get('Haber_ID',''),'Tarih':r.get('Tarih',''),'Hedef_Tarih':r.get('Hedef_Tarih',''),
+            'Örneklem_Türü':r.get('Örneklem_Türü',''),'Örneklem_Kodu':r.get('Örneklem_Kodu',''),'Dönem_Kodu':r.get('Dönem_Kodu',''),
+            'Kaynak Ailesi':_v174_source_family(r),'Kaynak':r.get('Kaynak',''),'Başlık':r.get('Başlık',''),
+            'AI Çerçevesi':r.get('AI_Çerçeve',''),'Nihai Çerçeve':r.get('Nihai_Çerçeve',''),
+            'Nihai Onay':r.get('Nihai_Onay_Durumu',''),'Kanıt Cümlesi':r.get('Kanıt_Cümlesi',''),
+            'Kısa Gerekçe':r.get('Kısa_Gerekçe',''),'Güven':r.get('Güven',''),'Metin_Hash':r.get('Metin_Hash',''),
+            'Sendikasyon_Grubu':r.get('Sendikasyon_Grubu',''),'URL':_v174_url(r)
+        })
+    final_df=pd.DataFrame(final_rows)
+    frame_summary,family_frame_summary=_v187_normalized_tables(records,source_nodes)
+    unique_text_df=final_df.drop_duplicates(subset=['Metin_Hash'],keep='first').copy() if not final_df.empty and 'Metin_Hash' in final_df.columns else final_df.copy()
+    return {
+        'source_nodes':source_nodes,'source_edges':source_edges,'source_summary':source_summary,'source_gexf':sg,
+        'family_nodes':family_nodes,'family_edges':family_edges,'family_summary':family_summary,'family_gexf':fg,
+        'final_df':final_df,'frame_summary':frame_summary,'family_frame_summary':family_frame_summary,
+        'unique_text_df':unique_text_df
+    }
+
+
+def _v187_scope_filter(records,scope):
+    xs=[_v174_academic_normalize_record(r) for r in (records or [])]
+    if scope=='Tüm Akademik Sepet': return xs
+    if scope=='Planlı örneklemin tamamı': return [r for r in xs if r.get('Planlı_Örneklem')=='Evet']
+    if scope=='Milat pencereleri — tümü': return [r for r in xs if r.get('Örneklem_Türü')=='Milat Penceresi']
+    if scope=='Yapılandırılmış haftalar — tümü': return [r for r in xs if r.get('Örneklem_Türü')=='Yapılandırılmış Hafta']
+    if scope.startswith('Dönem '):
+        code=scope.split(' ')[1].split(' — ')[0].strip(); return [r for r in xs if r.get('Dönem_Kodu')==code]
+    if scope.startswith('Örneklem '):
+        code=scope.replace('Örneklem ','',1).split(' — ')[0].strip(); return [r for r in xs if r.get('Örneklem_Kodu')==code]
+    return xs
+
+
+def _v187_milestone_comparison(records,milestone_code):
+    if milestone_code not in V187_MILESTONES: return pd.DataFrame()
+    day=pd.Timestamp(V187_MILESTONES[milestone_code][0]).date()
+    rows=[]
+    for r0 in records or []:
+        r=_v174_academic_normalize_record(r0); rd=_v187_record_day(r)
+        if not rd or r.get('Nihai_Onay_Durumu')!='Araştırmacı Onaylı': continue
+        delta=(rd-day).days
+        if -7 <= delta <= 7:
+            code=r.get('Nihai_Çerçeve_Kodu','')
+            if code in V174_FRAME_CODE_TO_LABEL:
+                rows.append({'FrameCode':code,'Frame':V174_FRAME_CODE_TO_LABEL[code],
+                             'Taraf':'Önce (T-7…T-1)' if delta<0 else 'Olay+Sonrası (T0…T+7)'})
+    df=pd.DataFrame(rows)
+    if df.empty: return pd.DataFrame()
+    out=[]; pre_total=int((df['Taraf']=='Önce (T-7…T-1)').sum()); post_total=len(df)-pre_total
+    for code,label in V174_FRAME_CODE_TO_LABEL.items():
+        pre=int(((df.FrameCode==code)&(df.Taraf=='Önce (T-7…T-1)')).sum())
+        post=int(((df.FrameCode==code)&(df.Taraf=='Olay+Sonrası (T0…T+7)')).sum())
+        if pre or post:
+            pre_pct=100*pre/max(1,pre_total); post_pct=100*post/max(1,post_total)
+            out.append({'Kod':code,'Çerçeve':label,'Önce Haber':pre,'Önce %':round(pre_pct,2),
+                        'Olay+Sonrası Haber':post,'Olay+Sonrası %':round(post_pct,2),'Değişim (yp)':round(post_pct-pre_pct,2)})
+    return pd.DataFrame(out).sort_values('Değişim (yp)',ascending=False).reset_index(drop=True)
+
+
+def _v187_reliability_sample(records,pct=15):
+    rows=[]
+    for r0 in records or []:
+        r=_v174_academic_normalize_record(r0)
+        if r.get('Nihai_Onay_Durumu')!='Araştırmacı Onaylı' or r.get('Planlı_Örneklem')!='Evet': continue
+        rows.append({
+            'Haber_ID':r.get('Haber_ID',''),'Tarih':r.get('Tarih',''),'Dönem_Kodu':r.get('Dönem_Kodu',''),
+            'Kaynak Ailesi':_v174_source_family(r),'Kaynak':r.get('Kaynak',''),'Başlık':r.get('Başlık',''),
+            'Haber Metni veya Özet':_v174_content_text(r),'Araştırmacı_Nihai_Kodu':r.get('Nihai_Çerçeve_Kodu',''),
+            'İkinci_Kodlayıcı_Çerçeve':'','Kodlama_Kitabı_Sürümü':V187_CODEBOOK_VERSION
+        })
+    df=pd.DataFrame(rows)
+    if df.empty: return df
+    parts=[]
+    for _,g in df.groupby(['Dönem_Kodu','Kaynak Ailesi'],dropna=False):
+        n=max(1,int(round(len(g)*float(pct)/100.0)))
+        n=min(n,len(g)); parts.append(g.sample(n=n,random_state=20241022))
+    return pd.concat(parts,ignore_index=True).drop_duplicates('Haber_ID').reset_index(drop=True)
+
+
+def _v187_kappa_from_upload(uploaded,records):
+    try: df=_v174_read_result_file(uploaded)
+    except Exception as e: return {'ok':False,'message':str(e)}
+    if 'Haber_ID' not in df.columns: return {'ok':False,'message':'Haber_ID sütunu bulunamadı.'}
+    coder_col=None
+    for c in ['İkinci_Kodlayıcı_Çerçeve','Ikinci_Kodlayici_Cerceve','Kod','Çerçeve','Cerceve']:
+        if c in df.columns: coder_col=c; break
+    if not coder_col: return {'ok':False,'message':'İkinci kodlayıcı çerçeve sütunu bulunamadı.'}
+    by_id={_v174_academic_normalize_record(r).get('Haber_ID'):_v174_academic_normalize_record(r) for r in records or []}
+    pairs=[]
+    for _,row in df.fillna('').iterrows():
+        hid=_v174_clean_scalar(row.get('Haber_ID','')); rec=by_id.get(hid)
+        if not rec or rec.get('Nihai_Onay_Durumu')!='Araştırmacı Onaylı': continue
+        a=_v174_clean_scalar(rec.get('Nihai_Çerçeve_Kodu','')).upper()
+        b=_v174_extract_frame_code(row.get(coder_col,''))
+        if not b:
+            b=V174_FRAME_LABEL_TO_CODE.get(_v174_clean_scalar(row.get(coder_col,'')),'')
+        if a in V174_FRAME_CODE_TO_LABEL and b in V174_FRAME_CODE_TO_LABEL: pairs.append((a,b))
+    if not pairs: return {'ok':False,'message':'Eşleşen geçerli kod çifti bulunamadı.'}
+    n=len(pairs); po=sum(1 for a,b in pairs if a==b)/n
+    ca=pd.Series([a for a,b in pairs]).value_counts(normalize=True); cb=pd.Series([b for a,b in pairs]).value_counts(normalize=True)
+    pe=sum(float(ca.get(k,0))*float(cb.get(k,0)) for k in V174_FRAME_CODE_TO_LABEL)
+    kappa=(po-pe)/(1-pe) if (1-pe)>1e-12 else 1.0
+    return {'ok':True,'n':n,'agreement':po,'kappa':kappa}
+
+
+def _v174_render_academic_tab():
+    acad=[_v174_academic_normalize_record(r) for r in _v174_academic_basket()]
+    # Normalize edilmiş meta alanlarını kalıcılaştır; eski V186 kayıtları da V187 metodoloji etiketlerini alır.
+    for r in acad:
+        _v174_persist_record(r)
+    st.session_state[V174_ACADEMIC_SESSION]=acad
+
+    st.markdown('#### 🎓 Akademik Kodlama Sepeti — Metodoloji v1.0')
+    st.caption(
+        'V186 kararlı arama motoru aynen korunur. Akademik katman yalnız dört sabit kaynak ailesini kabul eder; '
+        'milat/yapılandırılmış hafta etiketlerini ekler; ChatGPT yalnız AI önerisi üretir ve Gephi yalnız açıkça Araştırmacı Onaylı Nihai Çerçeveleri kullanır.'
+    )
+    if not acad:
+        st.info('Akademik Kodlama Sepeti boş. Ana tarama tablolarından 🎓 Akademik Kodlama Sepetine Ekle düğmesini kullanın.')
+        return
+
+    total=len(acad); allowed=sum(_v174_source_family(r) in V187_ALLOWED_ACADEMIC_FAMILIES for r in acad)
+    planned=sum(r.get('Planlı_Örneklem')=='Evet' for r in acad)
+    ai=sum(bool(r.get('AI_Çerçeve_Kodu')) for r in acad)
+    approved=sum(r.get('Nihai_Onay_Durumu')=='Araştırmacı Onaylı' for r in acad)
+    c1,c2,c3,c4,c5=st.columns(5)
+    c1.metric('Akademik Kayıt',total); c2.metric('Dört Aile',allowed); c3.metric('Planlı Örneklem',planned)
+    c4.metric('AI Kodlu',ai); c5.metric('Araştırmacı Onaylı',approved)
+
+    meta_df=pd.DataFrame([{
+        'Haber_ID':r.get('Haber_ID',''),'Tarih':r.get('Tarih',''),'Örneklem Türü':r.get('Örneklem_Türü',''),
+        'Örneklem Kodu':r.get('Örneklem_Kodu',''),'Dönem':r.get('Dönem_Kodu',''),'Kaynak Ailesi':_v174_source_family(r),
+        'Kaynak':r.get('Kaynak',''),'Başlık':r.get('Başlık',''),'Planlı':r.get('Planlı_Örneklem',''),
+        'AI':r.get('AI_Çerçeve',''),'Nihai':r.get('Nihai_Çerçeve',''),'Onay':r.get('Nihai_Onay_Durumu','')
+    } for r in acad])
+    with st.expander('🧭 Örneklem ve dönem görünümü',expanded=False):
+        st.dataframe(meta_df,hide_index=True,use_container_width=True,height=min(520,120+30*len(meta_df)))
+        st.download_button('⬇️ Akademik Örneklem Envanteri CSV',meta_df.to_csv(index=False).encode('utf-8-sig'),
+                           'Akademik_Orneklem_Envanteri_V187.csv','text/csv',use_container_width=True,key='v187_inventory')
+
+    st.markdown('##### 1️⃣ ChatGPT Kodlama Paketi')
+    pkg=_v174_package_df(acad); p1,p2,p3=st.columns(3)
+    p1.download_button('🤖 ChatGPT Paketi (CSV)',pkg.to_csv(index=False).encode('utf-8-sig'),
+                       file_name=f'Akademik_Kodlama_Paketi_V187_{date.today()}.csv',mime='text/csv',use_container_width=True,key='v187_pkg_csv')
+    p2.download_button('🤖 ChatGPT Paketi (JSON)',json.dumps(pkg.to_dict('records'),ensure_ascii=False,indent=2).encode('utf-8'),
+                       file_name=f'Akademik_Kodlama_Paketi_V187_{date.today()}.json',mime='application/json',use_container_width=True,key='v187_pkg_json')
+    p3.download_button('📘 Kodlama Kitabı v1.0',_v174_chatgpt_instructions().encode('utf-8-sig'),
+                       file_name='ChatGPT_Akademik_Kodlama_Kitabi_V187.txt',mime='text/plain',use_container_width=True,key='v187_instructions')
+    st.caption('Kodlama paketi bu sohbete yüklenir. AI yalnız öneri üretir; Nihai Çerçeve otomatik onaylanmaz.')
+
+    st.markdown('##### 2️⃣ AI Kodlama Sonucunu İçe Aktar')
+    upl=st.file_uploader('ChatGPT kodlama sonucu (.csv veya .json)',type=['csv','json'],key='v187_ai_result_upload')
+    if upl is not None and st.button('📥 AI ÖNERİLERİNİ İÇE AKTAR',type='primary',use_container_width=True,key='v187_import_ai'):
+        res=_v174_import_ai_result(upl)
+        if res.get('ok'):
+            st.success('✅ '+res.get('message',''))
+            if res.get('unmatched') or res.get('invalid'):
+                st.warning(f"Eşleşmeyen Haber_ID: {res.get('unmatched',0)} • Geçersiz kod: {res.get('invalid',0)}")
+            st.rerun()
+        else: st.error(res.get('message','İçe aktarma başarısız.'))
+
+    st.markdown('##### 3️⃣ Araştırmacı Kontrolü ve Açık Nihai Onay')
+    table=[]
+    for r in acad:
+        table.append({
+            'Çıkar':False,'AI Önerisini Onayla':False,'Nihaiyi Onayla':r.get('Nihai_Onay_Durumu')=='Araştırmacı Onaylı',
+            'Haber_ID':r.get('Haber_ID',''),'Tarih':r.get('Tarih',''),'Örneklem':r.get('Örneklem_Kodu',''),'Dönem':r.get('Dönem_Kodu',''),
+            'Kaynak Ailesi':_v174_source_family(r),'Kaynak':r.get('Kaynak',''),'Başlık':r.get('Başlık',''),
+            'AI Çerçevesi':r.get('AI_Çerçeve',''),'Nihai Çerçeve':r.get('Nihai_Çerçeve',''),'Onay Durumu':r.get('Nihai_Onay_Durumu',''),
+            'Güven':r.get('Güven',''),'İnceleme':r.get('Manuel_İnceleme_Gerekli',''),'Kanıt Cümlesi':r.get('Kanıt_Cümlesi',''),
+            'Kısa Gerekçe':r.get('Kısa_Gerekçe',''),'URL':_v174_url(r)
+        })
+    adf=pd.DataFrame(table)
+    aedit=st.data_editor(adf,hide_index=True,use_container_width=True,height=min(740,130+34*len(adf)),
+        column_config={
+            'Çıkar':st.column_config.CheckboxColumn('Çıkar'),
+            'AI Önerisini Onayla':st.column_config.CheckboxColumn('AI Önerisini Onayla'),
+            'Nihaiyi Onayla':st.column_config.CheckboxColumn('Nihaiyi Onayla'),
+            'Nihai Çerçeve':st.column_config.SelectboxColumn('Nihai Çerçeve',options=['']+list(V174_FRAME_CODE_TO_LABEL.values()),required=False,width='large'),
+            'Başlık':st.column_config.TextColumn('Başlık',width='large'),'AI Çerçevesi':st.column_config.TextColumn('AI Önerisi',width='large'),
+            'Kanıt Cümlesi':st.column_config.TextColumn('Kanıt',width='large'),'Kısa Gerekçe':st.column_config.TextColumn('Gerekçe',width='large'),
+            'URL':st.column_config.LinkColumn('Haber',display_text='Aç')},
+        disabled=[c for c in adf.columns if c not in {'Çıkar','AI Önerisini Onayla','Nihaiyi Onayla','Nihai Çerçeve'}],
+        key='v187_academic_final_editor')
+    q1,q2=st.columns(2)
+    if q1.button('💾 NİHAİ ÇERÇEVE / ONAY DEĞİŞİKLİKLERİNİ KAYDET',use_container_width=True,key='v187_save_final'):
+        n=_v174_save_manual_final(aedit)
+        st.success(f'✅ {n} kayıt güncellendi.' if n else 'Kaydedilecek yeni bir değişiklik yok.')
+        if n: st.rerun()
+    if q2.button('🗑️ SEÇİLENLERİ AKADEMİK SEPETTEN ÇIKAR',use_container_width=True,key='v187_remove_academic'):
+        idx=aedit.index[aedit['Çıkar'].fillna(False).astype(bool)].tolist()
+        if not idx: st.warning('Önce çıkarılacak kayıtları seçin.')
+        else:
+            n=_v174_academic_remove(idx); st.session_state.pop('v174_academic_gephi',None)
+            _v187_log_action('Akademik Sepetten Çıkar',n); st.success(f'{n} kayıt çıkarıldı.'); st.rerun()
+
+    st.markdown('##### 4️⃣ Dönemsel Akademik Gephi + Normalizasyon')
+    period_options=['Planlı örneklemin tamamı','Tüm Akademik Sepet','Milat pencereleri — tümü','Yapılandırılmış haftalar — tümü']
+    for code,(s,e,label) in V187_PERIODS.items(): period_options.append(f'Dönem {code} — {label}')
+    for code in sorted(set(V187_CONSTRUCTED_WEEK_DATES.values())): period_options.append(f'Örneklem {code} — yapılandırılmış hafta')
+    scope=st.selectbox('Analiz kapsamı',period_options,index=0,key='v187_gephi_scope')
+    scope_records=_v187_scope_filter(acad,scope)
+    scope_approved=sum(r.get('Nihai_Onay_Durumu')=='Araştırmacı Onaylı' for r in scope_records)
+    st.caption(f'Seçili kapsam: {len(scope_records)} kayıt • Araştırmacı onaylı: {scope_approved}. Gephi yalnız onaylı kayıtlarla oluşturulur.')
+    if st.button('🕸️ SEÇİLİ DÖNEMDEN AKADEMİK GEPHI OLUŞTUR',type='primary',use_container_width=True,key='v187_build_gephi',disabled=(scope_approved==0)):
+        st.session_state['v174_academic_gephi']=_v174_academic_gephi_package(scope_records)
+        st.session_state['v187_gephi_scope_name']=scope
+        st.success('✅ Dönemsel akademik Gephi ve normalize tablolar oluşturuldu.')
+    gp=st.session_state.get('v174_academic_gephi')
+    if gp:
+        fs=gp.get('frame_summary',pd.DataFrame()); ffs=gp.get('family_frame_summary',pd.DataFrame())
+        if not fs.empty:
+            st.markdown('**Normalize Çerçeve Özeti**'); st.dataframe(fs,hide_index=True,use_container_width=True)
+        if not ffs.empty:
+            with st.expander('Kaynak ailesi içi çerçeve payları',False): st.dataframe(ffs,hide_index=True,use_container_width=True)
+        g1,g2,g3,g4=st.columns(4)
+        if gp.get('source_gexf'): g1.download_button('⬇️ Kaynak-Çerçeve GEXF',gp['source_gexf'],'Akademik_Kaynak_Cerceve_V187.gexf','application/xml',use_container_width=True,key='v187_dl_source_gexf')
+        if gp.get('family_gexf'): g2.download_button('⬇️ Aile-Çerçeve GEXF',gp['family_gexf'],'Akademik_Aile_Cerceve_V187.gexf','application/xml',use_container_width=True,key='v187_dl_family_gexf')
+        if not fs.empty: g3.download_button('⬇️ Normalize Çerçeve CSV',fs.to_csv(index=False).encode('utf-8-sig'),'Akademik_Normalize_Cerceve_V187.csv','text/csv',use_container_width=True,key='v187_dl_frame_norm')
+        if not ffs.empty: g4.download_button('⬇️ Aile-İçi Paylar CSV',ffs.to_csv(index=False).encode('utf-8-sig'),'Akademik_Aile_Ici_Paylar_V187.csv','text/csv',use_container_width=True,key='v187_dl_family_norm')
+        e1,e2,e3,e4=st.columns(4)
+        if not gp.get('source_nodes',pd.DataFrame()).empty: e1.download_button('⬇️ Source Nodes + NWD/NBC',gp['source_nodes'].to_csv(index=False).encode('utf-8-sig'),'Akademik_Source_Nodes_Metrics_V187.csv','text/csv',use_container_width=True,key='v187_dl_source_nodes')
+        if not gp.get('source_edges',pd.DataFrame()).empty: e2.download_button('⬇️ Source Edges',gp['source_edges'].to_csv(index=False).encode('utf-8-sig'),'Akademik_Source_Edges_V187.csv','text/csv',use_container_width=True,key='v187_dl_source_edges')
+        final_df=gp.get('final_df',pd.DataFrame())
+        if not final_df.empty: e3.download_button('⬇️ Nihai Kodlanmış Veri',final_df.to_csv(index=False).encode('utf-8-sig'),'Akademik_Nihai_Kodlanmis_Veri_V187.csv','text/csv',use_container_width=True,key='v187_dl_final')
+        unique_df=gp.get('unique_text_df',pd.DataFrame())
+        if not unique_df.empty: e4.download_button('⬇️ Benzersiz Metin Sağlamlık CSV',unique_df.to_csv(index=False).encode('utf-8-sig'),'Akademik_Benzersiz_Metin_Saglamlik_V187.csv','text/csv',use_container_width=True,key='v187_dl_unique_text')
+
+    st.markdown('##### 5️⃣ Milat Öncesi / Sonrası Çerçeve Değişimi')
+    mcode=st.selectbox('Milat',list(V187_MILESTONES.keys()),format_func=lambda x:f"{x} — {V187_MILESTONES[x][1]}",key='v187_milestone_cmp')
+    mdf=_v187_milestone_comparison(acad,mcode)
+    if mdf.empty: st.info('Bu milat için yeterli araştırmacı onaylı kayıt henüz yok.')
+    else:
+        st.dataframe(mdf,hide_index=True,use_container_width=True)
+        st.download_button('⬇️ Milat Öncesi-Sonrası CSV',mdf.to_csv(index=False).encode('utf-8-sig'),f'{mcode}_Oncesi_Sonrasi_V187.csv','text/csv',use_container_width=True,key='v187_dl_milestone_cmp')
+
+    st.markdown('##### 6️⃣ Kodlayıcı Güvenilirliği')
+    rel_pct=st.slider('İkinci insan kodlayıcı alt örneklem oranı (%)',10,20,15,1,key='v187_rel_pct')
+    rel_df=_v187_reliability_sample(acad,rel_pct)
+    if rel_df.empty:
+        st.info('Güvenilirlik örneklemi için önce planlı örneklemde araştırmacı onaylı kayıtlar gerekir.')
+    else:
+        st.download_button('⬇️ İkinci Kodlayıcı Paketi',rel_df.to_csv(index=False).encode('utf-8-sig'),
+                           f'Ikinci_Kodlayici_Orneklemi_{rel_pct}pct_V187.csv','text/csv',use_container_width=True,key='v187_rel_download')
+        rel_up=st.file_uploader('İkinci kodlayıcı sonucu (.csv/.json)',type=['csv','json'],key='v187_rel_upload')
+        if rel_up is not None:
+            kres=_v187_kappa_from_upload(rel_up,acad)
+            if kres.get('ok'):
+                rc1,rc2,rc3=st.columns(3); rc1.metric('Eşleşen Çift',kres['n']); rc2.metric('Ham Uyum',f"%{100*kres['agreement']:.1f}"); rc3.metric('Cohen Kappa',f"{kres['kappa']:.3f}")
+            else: st.warning(kres.get('message','Güvenilirlik sonucu hesaplanamadı.'))
+
+    st.markdown('##### 7️⃣ Araştırma Günlüğü')
+    note=st.text_input('Yöntem/teknik not (opsiyonel)',key='v187_log_note')
+    if st.button('📝 Araştırma Günlüğüne Not Ekle',use_container_width=True,key='v187_add_log_note'):
+        _v187_log_action('Manuel Araştırma Notu',0,note=note); st.success('Not günlüğe eklendi.')
+    ldf=_v187_research_log_df()
+    if not ldf.empty:
+        st.dataframe(ldf.head(100),hide_index=True,use_container_width=True,height=320)
+        st.download_button('⬇️ Araştırma Günlüğü CSV',ldf.to_csv(index=False).encode('utf-8-sig'),'Akademik_Arastirma_Gunlugu_V187.csv','text/csv',use_container_width=True,key='v187_log_download')
+
+    with st.expander('🧹 Akademik Sepeti tamamen temizle',expanded=False):
+        yes=st.checkbox('Akademik Sepetteki tüm kayıtları silmeyi onaylıyorum.',key='v187_academic_clear_confirm')
+        if st.button('AKADEMİK SEPETİ TEMİZLE',disabled=not yes,use_container_width=True,key='v187_academic_clear'):
+            _v187_log_action('Akademik Sepeti Temizle',len(acad)); _v174_academic_clear(); st.rerun()
+
+# ============================================================
+# /V187
+# ============================================================
+
+
+# ============================================================
 # V186 — DOĞRUDAN AKADEMİK KODLAMA SEPETİ
 # - V185 tarama/tarih aralığı mantığı korunur.
 # - Kaynak Bazlı İzleme ve aynı ortak tablo rendererını kullanan tüm bölümlerde
@@ -45214,7 +46054,7 @@ Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bi
     st.subheader('🧺 Analiz Sepetleri')
     st.caption(
         'V173 kararlı tarama/raporlama akışı korunur. Manuel Link Havuzu, Günlük Analiz Sepeti ve Günlük Rapor Arşivi aynen çalışır. '
-        'V174 Akademik Kodlama akışı korunur. V186 ile Kaynak Bazlı İzleme ve diğer haber tablolarında seçilen kayıtlar Günlük Sepete uğramadan doğrudan Akademik Kodlama Sepetine de aktarılabilir. Geçmiş tarih taraması soldaki Haber dönemi alanından yapılır; '
+        'V187 akademik metodoloji katmanı; dört kaynak ailesi, örneklem/dönem etiketleri, açık araştırmacı onayı, dönemsel Gephi ve normalize karşılaştırmaları uygular. V186 ile Kaynak Bazlı İzleme ve diğer haber tablolarında seçilen kayıtlar Günlük Sepete uğramadan doğrudan Akademik Kodlama Sepetine de aktarılabilir. Geçmiş tarih taraması soldaki Haber dönemi alanından yapılır; '
         'AI sonucu geri yüklenir ve Gephi yalnız araştırmacının kontrol ettiği Nihai Çerçeve alanından üretilir.'
     )
 
