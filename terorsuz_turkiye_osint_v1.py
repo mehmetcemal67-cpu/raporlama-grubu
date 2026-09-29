@@ -629,7 +629,7 @@ def _official_radar_rows(df):
 st.set_page_config(page_title='Terörsüz Türkiye OSINT Radarı', page_icon='🛡️', layout='wide')
 _v166_apply_background()
 # V177 görünür sürüm teyidi: yanlış dosya çalıştırılıyorsa kullanıcı hemen fark eder.
-st.sidebar.success('✅ AKTİF SÜRÜM: V182 — Arşiv Tarama + ChatGPT Akademik Kodlama')
+st.sidebar.success('✅ AKTİF SÜRÜM: V183 — Arşiv Tarama + ChatGPT Akademik Kodlama')
 
 # ============================================================
 # V55 — ŞİFRE KORUMASI
@@ -43761,6 +43761,391 @@ def _v175_render_archive_scan():
             else:
                 st.info('Yeni kayıt eklenmedi; seçilen haberler akademik sepette zaten bulunuyor olabilir.')
 
+
+
+# ============================================================
+# V183 — ARŞİV TARAMASI: GÜNLÜK TARAMA HAVUZUNU GÜN GÜN GÖSTER
+#
+# KARARLI TABAN: V178/V182 günlük raporlama motoru korunur.
+# Kullanıcı talebi:
+# - Arşivde "ham / tekil / çoğul / normalize elemesi" gibi ikinci bir
+#   değerlendirme katmanı gösterilmez.
+# - Seçilen tarih aralığındaki HER GÜN ayrı günlük arama gibi çalışır.
+# - Günlük V22 sorguları ve motor seçimleri aynen kullanılır.
+# - Tek zorunlu tarihsel uyarlama after:/before: tarih aralığıdır.
+# - Arşive özgü konu/zaman/source post-filtresi YOKTUR. Arama motorlarının o
+#   gün için döndürdüğü haber havuzu kullanıcıya doğrudan gösterilir.
+# - Aynı gün içinde aynı URL+başlığın motor tekrarları yalnız görüntü
+#   kalabalığını önlemek için bir kez gösterilir. Günler birbirine karıştırılmaz.
+# - Son akademik dahil etme kararı yine kullanıcıya aittir.
+# ============================================================
+
+
+def _v183_mode_fallback_family(mode):
+    return {
+        'turkish':'Yerli Basın',
+        'foreign':'Yabancı Basın',
+        'kurdish':'Kürt Bölgesel Medyası',
+        'movement':'PKK/KCK Açık Kaynak',
+    }.get(str(mode or ''),'')
+
+
+def _v183_source_family_from_raw(raw,mode=''):
+    """Günlük kaynak çözümleyicisini kullan; çözülemezse sorgu ailesini koru."""
+    r=dict(raw or {})
+    url=str(r.get('url') or r.get('link') or r.get('URL') or '').strip()
+    src=str(r.get('source') or r.get('Yayıncı') or r.get('Kaynak') or '').strip()
+    src_url=str(r.get('source_url') or r.get('Yayıncı_URL') or '').strip()
+    try:
+        d=infer_source(src,src_url,url)
+        d=_tt_norm_domain(d or url)
+    except Exception:
+        d=''
+    try:
+        grp=source_group(d)
+    except Exception:
+        grp=''
+    probe={'Kaynak_Grubu':grp,'Kaynak':src,'Domain':d,'URL':url}
+    fam=_v182_archive_family(probe)
+    if fam in {'Yerli Basın','Yabancı Basın','Kürt Bölgesel Medyası','PKK/KCK Açık Kaynak'}:
+        return fam,d,grp
+    return _v183_mode_fallback_family(mode) or 'Diğer',d,grp
+
+
+def _v183_raw_to_record(raw,mode,day,query_text='',engine=''):
+    r=dict(raw or {})
+    url=str(r.get('url') or r.get('link') or r.get('URL') or '').strip()
+    title=html.unescape(str(r.get('title') or r.get('Başlık') or '').strip())
+    if not url or not title:
+        return None
+    snippet=html.unescape(str(
+        r.get('snippet') or r.get('body') or r.get('description') or
+        r.get('content') or r.get('İçerik_Özeti') or ''
+    ).strip())
+    src=str(r.get('source') or r.get('Yayıncı') or r.get('Kaynak') or '').strip()
+    fam,domain,grp=_v183_source_family_from_raw(r,mode)
+    dt=parse_dt(r.get('date') or r.get('publishedAt') or r.get('seendate') or r.get('Tarih'))
+    if dt:
+        try:
+            if dt.tzinfo is None:
+                dt=dt.replace(tzinfo=timezone.utc)
+            else:
+                dt=dt.astimezone(timezone.utc)
+            tarih=dt.astimezone().strftime('%d.%m.%Y %H:%M')
+            tarih_dt=dt.isoformat()
+        except Exception:
+            tarih=str(r.get('date') or '')
+            tarih_dt=''
+    else:
+        # Arama günü ayrı alanda saklanır; yayın tarihi uydurulmaz.
+        tarih='Tarih/saat bilinmiyor'
+        tarih_dt=''
+
+    rec={
+        'Tarih':tarih,
+        'Tarih_dt':tarih_dt,
+        'Kaynak Ailesi':fam,
+        'Kaynak_Grubu':grp,
+        'Kaynak':src or domain or 'Açık Kaynak',
+        'Domain':domain,
+        'Başlık':title,
+        'İçerik_Özeti':snippet[:2400],
+        'URL':url,
+        'Gerçek Bağlantı':url,
+        'Arşiv Tarama Günü':pd.Timestamp(day).strftime('%d.%m.%Y'),
+        '_origin_query':str(query_text or ''),
+        '_v183_engine':str(engine or ''),
+        '_v183_mode':str(mode or ''),
+    }
+    try:
+        rec=_v154_enrich_record(rec)
+    except Exception:
+        try:
+            rec=_v137_fix_record(rec)
+        except Exception:
+            pass
+    # Akademik seçime taşınırken aile adı sabit kalsın.
+    rec['Kaynak Ailesi']=fam
+    return rec
+
+
+def _v183_day_dedupe(rows):
+    """Yalnız aynı günlük görünümde birebir motor tekrarlarını kaldırır."""
+    out=[]; seen=set()
+    for r in rows or []:
+        u=str((r or {}).get('URL','') or '').strip().lower().rstrip('/')
+        t=title_key((r or {}).get('Başlık',''))
+        k=(u,t)
+        if k in seen:
+            continue
+        seen.add(k); out.append(r)
+    return out
+
+
+def _v175_scan_archive(start_day,end_day,user_query,selected_families,chunk_days=1):
+    """V183: günlük V22 arama havuzunu geçmişte her gün ayrı çalıştırır ve doğrudan gösterir."""
+    s=pd.Timestamp(start_day).date(); e=pd.Timestamp(end_day).date()
+    if e < s:
+        return [],{'error':'Bitiş tarihi başlangıç tarihinden önce olamaz.'}
+    if not selected_families:
+        return [],{'error':'En az bir kaynak ailesi seçilmelidir.'}
+
+    qsets=_v182_daily_query_sets(user_query,selected_families)
+    days=[]; cur=s
+    while cur<=e:
+        days.append(cur); cur+=timedelta(days=1)
+
+    all_rows=[]
+    diag={'days':len(days),'errors':0,'day_counts':{},'engine_jobs':0}
+    progress=st.progress(0.0,text='📚 Geçmiş günler günlük tarama mantığıyla hazırlanıyor...')
+    status=st.status('📚 Günlük tarama motoru geçmiş günlerde çalışıyor...',expanded=True)
+
+    for di,day in enumerate(days,1):
+        jobs=[]
+        for mode,queries in qsets.items():
+            for q in queries:
+                for engine in _v22_engines(mode,q):
+                    # Geçmiş sosyal public API çağrıları bugünkü akışı döndürür; akademik dört aile taramasında kullanılmaz.
+                    if engine in {'Reddit Public','Bluesky Public'}:
+                        continue
+                    jobs.append((mode,q,engine))
+        diag['engine_jobs']+=len(jobs)
+        status.write(f'🗓️ {pd.Timestamp(day).strftime("%d.%m.%Y")} taranıyor • {len(jobs)} motor işi')
+
+        day_rows=[]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(V22_WORKERS,max(1,len(jobs)))) as ex:
+            fmap={
+                ex.submit(_v182_engine_fetch,engine,q,mode,day):(mode,q,engine)
+                for mode,q,engine in jobs
+            }
+            for fut in concurrent.futures.as_completed(fmap):
+                mode,q,engine=fmap[fut]
+                try:
+                    chunk=fut.result() or []
+                except Exception:
+                    diag['errors']+=1
+                    continue
+                for item in chunk:
+                    if not isinstance(item,dict):
+                        continue
+                    rec=_v183_raw_to_record(item,mode,day,q,engine)
+                    if rec is None:
+                        continue
+                    # Kullanıcı dört akademik aileyi seçtiyse yalnız o aileler görünür.
+                    fam=str(rec.get('Kaynak Ailesi','') or '')
+                    if fam not in set(selected_families or []):
+                        continue
+                    day_rows.append(rec)
+
+        # Günlük ekrandaki gibi aynı link/başlığın motor tekrarını bir kez göster;
+        # başka günle birleştirme/dedup yapılmaz.
+        day_rows=_v183_day_dedupe(day_rows)
+        diag['day_counts'][pd.Timestamp(day).strftime('%d.%m.%Y')]=len(day_rows)
+        all_rows.extend(day_rows)
+        progress.progress(di/len(days),text=f'📚 {di}/{len(days)} gün tamamlandı')
+
+    status.update(
+        label=f'✅ Geçmiş dönem günlük taraması tamamlandı — {len(days)} gün',
+        state='complete',expanded=False
+    )
+    return all_rows,diag
+
+
+def _v175_results_df(records):
+    rows=[]
+    for r in records or []:
+        rows.append({
+            'Tarama Günü':_v174_clean_scalar(r.get('Arşiv Tarama Günü','')),
+            'Tarih':_v174_clean_scalar(r.get('Tarih','')),
+            'Kaynak Ailesi':_v174_clean_scalar(r.get('Kaynak Ailesi','') or _v182_archive_family(r)),
+            'Kaynak':_v174_clean_scalar(r.get('Kaynak','') or r.get('Yayıncı','') or r.get('Domain','')),
+            'Başlık':_v174_clean_scalar(r.get('Başlık','')),
+            'İçerik / Özet':_v174_content_text(r)[:1600],
+            'URL':_v174_url(r),
+        })
+    return pd.DataFrame(rows)
+
+
+def _v175_render_archive_scan():
+    st.markdown('#### 📚 V183 — Arşiv / Geçmiş Dönem Taraması')
+    st.caption(
+        'Seçtiğiniz tarih aralığındaki her gün, günlük raporlama ekranındaki V22 sorgu ve motor mantığıyla ayrı ayrı taranır. '
+        'Arşive özgü ham/tekil/normalize elemesi yapılmaz ve gösterilmez; günlük arama havuzu gün gün doğrudan listelenir. '
+        'Son akademik seçim size aittir.'
+    )
+
+    today=pd.Timestamp.now(tz='Europe/Istanbul').date()
+    c1,c2=st.columns(2)
+    start_day=c1.date_input('Başlangıç tarihi',value=today-timedelta(days=7),min_value=date(2000,1,1),max_value=today,key='v175_start')
+    end_day=c2.date_input('Bitiş tarihi',value=today,min_value=date(2000,1,1),max_value=today,key='v175_end')
+
+    families=st.multiselect(
+        'Kaynak aileleri',
+        list(V175_FAMILY_TO_MODE.keys()),
+        default=list(V175_FAMILY_TO_MODE.keys()),
+        key='v175_families'
+    )
+    default_archive_query=(
+        'Terörsüz Türkiye OR PKK OR KCK OR Öcalan OR İmralı OR silah bırakma OR silahsızlanma OR '
+        'fesih OR çözüm süreci OR barış süreci OR DEM Parti OR MHP OR TBMM OR SDF OR SDG OR YPG OR Suriye OR Irak OR Kandil'
+    )
+    archive_query=st.text_area(
+        'Arşiv tarama sorgusu / ek takip terimleri',default_archive_query,height=105,key='v175_query'
+    )
+
+    day_count=((end_day-start_day).days+1) if end_day>=start_day else 0
+    st.info(
+        f'**{day_count} gün** ayrı ayrı taranacak. Her gün günlük raporlama ekranındaki aynı V22 sorgu aileleri ve '
+        'aynı Google News / Bing / DDGS / GDELT motor seçimleri kullanılacak.'
+    )
+
+    if st.button('📚 GEÇMİŞ DÖNEM TARAMASINI BAŞLAT',type='primary',use_container_width=True,key='v175_run_archive'):
+        if end_day<start_day:
+            st.error('Bitiş tarihi başlangıç tarihinden önce olamaz.')
+        elif not families:
+            st.error('En az bir kaynak ailesi seçin.')
+        else:
+            results,diag=_v175_scan_archive(start_day,end_day,archive_query,families,1)
+            if diag.get('error'):
+                st.error(diag['error'])
+            else:
+                st.session_state[V175_RESULTS_SESSION]=results
+                st.session_state[V175_DIAG_SESSION]=diag
+                st.success(f'✅ Tarama tamamlandı. {day_count} günün haber havuzu aşağıda gün gün gösteriliyor.')
+
+    records=list(st.session_state.get(V175_RESULTS_SESSION) or [])
+    if not records:
+        st.info('Henüz arşiv taraması sonucu yok.')
+        return
+
+    rdf=_v175_results_df(records)
+    if rdf.empty:
+        st.info('Gösterilecek sonuç bulunamadı.')
+        return
+
+    st.download_button(
+        '⬇️ Arşiv Tarama Sonuçlarını CSV İndir',
+        rdf.to_csv(index=False).encode('utf-8-sig'),
+        file_name=f'Arsiv_Tarama_V183_{pd.Timestamp.now().strftime("%Y-%m-%d")}.csv',
+        mime='text/csv',use_container_width=True,key='v175_download_results'
+    )
+
+    st.markdown('##### 🔎 Sonuç filtresi / toplu temizleme')
+    f1,f2=st.columns([1,2])
+    fam_options=sorted(rdf['Kaynak Ailesi'].dropna().astype(str).unique().tolist())
+    chosen_fams=f1.multiselect('Kaynak ailesi filtresi',fam_options,default=fam_options,key='v175_result_fam_filter')
+    kw=f2.text_input('Başlık/içerik içinde ara',value='',key='v175_result_kw')
+
+    keep_idx=[]
+    for i,row in rdf.fillna('').iterrows():
+        if chosen_fams and str(row.get('Kaynak Ailesi','')) not in chosen_fams:
+            continue
+        if kw.strip():
+            hay=norm(f"{row.get('Başlık','')} {row.get('İçerik / Özet','')} {row.get('Kaynak','')}")
+            if norm(kw) not in hay:
+                continue
+        keep_idx.append(i)
+
+    _del1,_del2=st.columns(2)
+    with _del1:
+        _confirm_filtered=st.checkbox(
+            f'Filtrede görünen {len(keep_idx)} kaydı topluca silmeyi onaylıyorum.',
+            key='v176_confirm_delete_filtered'
+        )
+        if st.button(
+            f'🧹 FİLTRELENEN {len(keep_idx)} SONUCU TOPLU SİL',
+            use_container_width=True,
+            disabled=(not _confirm_filtered or not keep_idx),
+            key='v176_delete_filtered'
+        ):
+            kill=set(int(i) for i in keep_idx)
+            st.session_state[V175_RESULTS_SESSION]=[r for i,r in enumerate(records) if i not in kill]
+            # Gün bazlı editor state'leri tamamen sıfırlansın.
+            for k in list(st.session_state.keys()):
+                if str(k).startswith('v183_day_editor_'):
+                    st.session_state.pop(k,None)
+            st.success(f'✅ {len(kill)} arşiv tarama sonucu silindi.')
+            st.rerun()
+    with _del2:
+        _confirm_all=st.checkbox(
+            f'Mevcut {len(records)} sonucun tamamını silmeyi onaylıyorum.',
+            key='v176_confirm_delete_all'
+        )
+        if st.button(
+            '🗑️ TÜM ARŞİV TARAMA SONUÇLARINI TEMİZLE',
+            use_container_width=True,
+            disabled=(not _confirm_all or not records),
+            key='v176_delete_all'
+        ):
+            st.session_state[V175_RESULTS_SESSION]=[]
+            st.session_state[V175_DIAG_SESSION]={}
+            for k in list(st.session_state.keys()):
+                if str(k).startswith('v183_day_editor_'):
+                    st.session_state.pop(k,None)
+            st.success('✅ Mevcut arşiv tarama sonuçlarının tamamı temizlendi.')
+            st.rerun()
+
+    if not keep_idx:
+        st.info('Bu filtrelerle gösterilecek sonuç yok.')
+        return
+
+    # Gün gün göster. Günlerin birbirine karışması ve küresel tekilleştirme yoktur.
+    visible=[(i,records[i]) for i in keep_idx]
+    day_order=[]
+    buckets={}
+    for global_i,rec in visible:
+        d=str((rec or {}).get('Arşiv Tarama Günü','') or 'Tarihsiz').strip()
+        if d not in buckets:
+            buckets[d]=[]; day_order.append(d)
+        buckets[d].append((global_i,rec))
+
+    def _day_sort(d):
+        try:
+            return pd.to_datetime(d,dayfirst=True,errors='coerce')
+        except Exception:
+            return pd.NaT
+    day_order=sorted(day_order,key=lambda d: (_day_sort(d) if pd.notna(_day_sort(d)) else pd.Timestamp.max))
+
+    st.markdown('##### 🎓 Günlük sonuçlar → manuel Akademik Sepet seçimi')
+    for day in day_order:
+        items=buckets.get(day,[])
+        day_records=[r for _,r in items]
+        ddf=_v175_results_df(day_records)
+        if ddf.empty:
+            continue
+        ddf.insert(0,'Akademik Sepete Ekle',False)
+        safe=re.sub(r'[^0-9A-Za-z]+','_',day)
+        st.markdown(f'###### 📅 {day} — {len(day_records)} haber')
+        edited=st.data_editor(
+            ddf,hide_index=True,use_container_width=True,
+            height=min(800,120+38*min(len(ddf),18)),
+            column_config={
+                'Akademik Sepete Ekle':st.column_config.CheckboxColumn('Seç'),
+                'Başlık':st.column_config.TextColumn('Başlık',width='large'),
+                'İçerik / Özet':st.column_config.TextColumn('İçerik / Özet',width='large'),
+                'URL':st.column_config.LinkColumn('Haber',display_text='Aç'),
+            },
+            disabled=[c for c in ddf.columns if c!='Akademik Sepete Ekle'],
+            key=f'v183_day_editor_{safe}'
+        )
+        if st.button(
+            f'🎓 {day} — Seçilenleri Akademik Sepete Ekle',
+            use_container_width=True,key=f'v183_day_add_{safe}'
+        ):
+            idx=edited.index[edited['Akademik Sepete Ekle'].fillna(False).astype(bool)].tolist()
+            if not idx:
+                st.warning(f'{day}: Önce akademik sepete eklenecek haberleri seçin.')
+            else:
+                selected=[day_records[i] for i in idx if 0 <= i < len(day_records)]
+                added=_v174_academic_add(selected)
+                if added:
+                    st.success(f'✅ {day}: {added} haber Akademik Kodlama Sepetine eklendi.')
+                else:
+                    st.info(f'{day}: Yeni kayıt eklenmedi; seçilen haberler akademik sepette mevcut olabilir.')
+
+# ============================================================
+# /V183
+# ============================================================
 
 # Arşiv taraması günlük tarama yapılmamışken de erişilebilir olsun.
 if st.session_state.get('rows') is None:
