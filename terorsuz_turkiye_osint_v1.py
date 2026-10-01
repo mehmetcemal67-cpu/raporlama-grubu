@@ -629,7 +629,7 @@ def _official_radar_rows(df):
 st.set_page_config(page_title='Terörsüz Türkiye OSINT Radarı', page_icon='🛡️', layout='wide')
 _v166_apply_background()
 # V177 görünür sürüm teyidi: yanlış dosya çalıştırılıyorsa kullanıcı hemen fark eder.
-st.sidebar.success('✅ AKTİF SÜRÜM: V192 — Kalıcı Akademik + Arşiv Kurtarma')
+st.sidebar.success('✅ AKTİF SÜRÜM: V195 — Kalıcı Arşiv + Akademik + Snapshot Güvencesi')
 
 # ============================================================
 # V55 — ŞİFRE KORUMASI
@@ -10989,6 +10989,11 @@ with st.sidebar.expander('💾 Akademik Tarama Çalışması',expanded=False):
         'Bu bölüm yeni arama yapmaz. Yalnız ekrandaki mevcut tarama sonucunu kalıcı olarak saklar ve sonra geri yükler. '
         'Güncel taramaya geçmeniz V188 arama mantığını değiştirmez.'
     )
+    st.info('🛡️ V195: Kaydettiğiniz çalışma; kayıtlı snapshot listesiyle birlikte yerel kalıcı akademik yedeğe, bağlantı varsa PRIVATE GitHub yedeğine de aktarılır.')
+    _v195_sidebar_note=st.session_state.pop('_v195_snapshot_sync_note',None)
+    if _v195_sidebar_note:
+        _v195_ok,_v195_msg=_v195_sidebar_note
+        (st.success if _v195_ok else st.warning)(_v195_msg)
     _v189_name=st.text_input(
         'Çalışma adı (opsiyonel)',
         value='',
@@ -11006,7 +11011,7 @@ with st.sidebar.expander('💾 Akademik Tarama Çalışması',expanded=False):
             # V194 — Sidebar bu noktada V192/V193 kalıcılık sarmalayıcılarından
             # önce çalıştığı için, yedeği aynı run'ın sonunda güvenle eşitle.
             st.session_state['_v194_snapshot_persist_pending']='save'
-            st.success('✅ '+_v189_res.get('message',''))
+            st.success('✅ '+_v189_res.get('message','')+' • Kalıcı yedekleme kuyruğuna alındı.')
         else:
             st.error(_v189_res.get('message','Çalışma saklanamadı.'))
 
@@ -11020,7 +11025,7 @@ with st.sidebar.expander('💾 Akademik Tarama Çalışması',expanded=False):
         _v189_key=st.selectbox(
             'Kayıtlı çalışmalar',
             options=[r['snapshot_key'] for r in _v189_saved],
-            format_func=lambda k:f"{_v189_map[k]['label']} • {_v189_map[k]['row_count']} haber",
+            format_func=lambda k:f"💾 {_v189_map[k]['label']} • {_v189_map[k]['row_count']} haber",
             key='v189_snapshot_select'
         )
         _v189_c1,_v189_c2=st.columns(2)
@@ -45914,7 +45919,7 @@ def _v192_restore_full_backup(data):
 
 
 def _v192_render_archive_recovery_panel():
-    with st.expander('♻️ V192 — Arşiv JSON Kurtarma',expanded=False):
+    with st.expander('♻️ V195 — Arşiv JSON Kurtarma',expanded=False):
         st.caption('V161 biçimindeki arşiv JSON dosyasını mevcut arşivle birleştirir. Mevcut kayıtları silmez; aynı kayıtları çoğaltmaz. Kalıcı GitHub arşivi bağlıysa işlem sonunda otomatik eşitlenir.')
         up=st.file_uploader('Arşiv yedeği (.json)',type=['json'],key='v192_archive_recovery_upload')
         if up is not None:
@@ -45934,7 +45939,7 @@ def _v192_render_archive_recovery_panel():
 
 
 def _v192_render_academic_recovery_panel():
-    with st.expander('♻️ V192 — Akademik Kodlama Kurtarma',expanded=False):
+    with st.expander('♻️ V195 — Akademik Kodlama Kurtarma',expanded=False):
         st.caption(
             'Kayıtlar Haber_ID üzerinden birleştirilir; mevcut akademik sepetteki kayıtlar silinmez. '
             'Önce elinizde varsa Akademik Kodlama Paketi/Envanter dosyasını, ardından araştırmacı onaylı Nihai Kodlanmış Veri Excel/CSV dosyasını yükleyebilirsiniz.'
@@ -45980,7 +45985,7 @@ def _v192_render_academic_recovery_panel():
 
 
 def _v192_render_persistence_panel():
-    with st.expander('🛡️ V192 — Kalıcı Çalışma Güvencesi',expanded=False):
+    with st.expander('🛡️ V195 — Kalıcı Çalışma Güvencesi',expanded=False):
         note=st.session_state.pop('_v192_bootstrap_note',None)
         if note: st.info(note)
         last=st.session_state.pop('_v192_last_academic_sync',None)
@@ -46011,7 +46016,7 @@ def _v192_render_persistence_panel():
         st.download_button(
             '⬇️ TAM ÇALIŞMA YEDEĞİ (Arşiv + Akademik + Snapshot)',
             json.dumps(full,ensure_ascii=False,indent=2,default=str).encode('utf-8'),
-            'Terorsuz_Turkiye_Tam_Calisma_Yedegi_V192.json','application/json',
+            'Terorsuz_Turkiye_Tam_Calisma_Yedegi_V195.json','application/json',
             use_container_width=True,key='v192_download_full_backup'
         )
         up=st.file_uploader('Tam çalışma yedeğini geri yükle (.json veya .gz)',type=['json','gz'],key='v192_full_backup_upload')
@@ -46023,12 +46028,12 @@ def _v192_render_persistence_panel():
 
 
 # ============================================================
-# V194 — SNAPSHOT KALICILIK SERTLEŞTİRMESİ
+# V195 — GÖRÜNÜR SNAPSHOT KALICILIK GÜVENCESİ
 #
 # V193'te akademik/snapshot kalıcılık motoru mevcuttur. Ancak sol sidebar'daki
 # "MEVCUT SONUÇLARI SAKLA" arayüzü dosyanın daha erken bölümünde çalıştığı
 # için o tek yol, V192'nin sonradan tanımlanan sarmalayıcısını atlayabiliyordu.
-# V194 bu yolu session-state üzerinden run sonundaki kalıcılık motoruna bağlar.
+# V195 bu yolu session-state üzerinden run sonundaki kalıcılık motoruna bağlar ve sonucu sidebar'da görünür kılar.
 # Arama, tarih taraması, akademik kodlama ve Gephi mantığı değişmez.
 # ============================================================
 
@@ -47402,14 +47407,22 @@ Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bi
         'V173 kararlı tarama/raporlama akışı korunur. Manuel Link Havuzu, Günlük Analiz Sepeti ve Günlük Rapor Arşivi aynen çalışır. '
         'V187 akademik metodoloji katmanı; dört kaynak ailesi, örneklem/dönem etiketleri, açık araştırmacı onayı, dönemsel Gephi ve normalize karşılaştırmaları uygular. V186 ile Kaynak Bazlı İzleme ve diğer haber tablolarında seçilen kayıtlar Günlük Sepete uğramadan doğrudan Akademik Kodlama Sepetine de aktarılabilir. Geçmiş tarih taraması soldaki Haber dönemi alanından yapılır; '
         'AI sonucu geri yüklenir ve Gephi yalnız araştırmacının kontrol ettiği Nihai Çerçeve alanından üretilir. '
-        'V194 ile arşiv JSON ve akademik kayıt bazlı kurtarma korunmuş; akademik tarama snapshotlarının kaydedildiği anda kalıcı yedeğe geçirilmesi ve açılışta otomatik görünmesi güçlendirilmiştir.'
+        'V195 ile arşiv JSON ve akademik kayıt bazlı kurtarma korunmuş; akademik tarama snapshotlarının kaydedildiği anda kalıcı yedeğe geçirilmesi, açılışta otomatik görünmesi ve yedek durumunun kullanıcıya görünür biçimde doğrulanması güçlendirilmiştir.'
     )
 
     # V194 — Sidebar'da kaydedilmiş bir çalışma varsa, bu run bitmeden
     # AppData + (varsa) PRIVATE GitHub akademik yedeğine mutlaka geçir.
     _v194_pending_snapshot=st.session_state.pop('_v194_snapshot_persist_pending',None)
     if _v194_pending_snapshot=='save':
-        _v192_after_academic_change('V194 akademik tarama çalışması saklama')
+        _v192_after_academic_change('V195 akademik tarama çalışması saklama')
+        _v195_last=st.session_state.get('_v192_last_academic_sync')
+        if _v195_last:
+            _v195_ok,_v195_msg=_v195_last
+            st.session_state['_v195_snapshot_sync_note']=(
+                bool(_v195_ok),
+                ('✅ ' if _v195_ok else '⚠️ ')+str(_v195_msg or 'Kalıcı akademik yedek güncellendi.')
+            )
+        st.rerun()
 
     # V192/V194 — yeni/boş container açıldığında akademik kayıtlar ve çalışma snapshot'ları
     # AppData / PRIVATE GitHub yedeğinden otomatik birleştirilir.
