@@ -629,7 +629,7 @@ def _official_radar_rows(df):
 st.set_page_config(page_title='Terörsüz Türkiye OSINT Radarı', page_icon='🛡️', layout='wide')
 _v166_apply_background()
 # V177 görünür sürüm teyidi: yanlış dosya çalıştırılıyorsa kullanıcı hemen fark eder.
-st.sidebar.success('✅ AKTİF SÜRÜM: V190 — V189 Çalışma Snapshot + Hızlı Haber Kolon Sırası')
+st.sidebar.success('✅ AKTİF SÜRÜM: V192 — Kalıcı Akademik + Arşiv Kurtarma')
 
 # ============================================================
 # V55 — ŞİFRE KORUMASI
@@ -45255,6 +45255,825 @@ def _v174_save_manual_final(edited):
     return changed
 
 
+# ============================================================
+# V191 — GÜVENLİ TOPLU AKADEMİK KARAR UYGULAMA
+#
+# TABAN: V190. Arama/tarama motoruna, sorgulara, tarih mantığına,
+# kaynak sınıflandırmasına, snapshot yapısına ve Gephi hesaplarına
+# dokunmaz. Yalnız "Araştırmacı Kontrolü" ekranındaki 538+ satırlık
+# manuel çalışma için tek tuşlu güvenli tamamlama akışı ekler.
+#
+# Öncelik sırası:
+# 1) Çıkar işaretli satır -> akademik sepetten silinir, ASLA onaylanmaz.
+# 2) Geçerli bir Nihai Çerçeve seçilmişse -> bu seçim araştırmacı kararı
+#    kabul edilir ve açıkça onaylanır.
+# 3) AI Önerisini Onayla işaretliyse -> geçerli AI kodu onaylanır.
+# 4) Geriye kalan "Onay Bekliyor" satırlarda geçerli F01-F12 AI kodu
+#    varsa AI önerisi topluca onaylanır.
+# 5) BELIRSIZ / geçersiz AI kodu otomatik onaylanmaz; manuel incelemede kalır.
+# ============================================================
+
+def _v191_apply_all_academic_decisions(edited):
+    basket=[_v174_academic_normalize_record(r) for r in _v174_academic_basket()]
+    by_id={r.get('Haber_ID',''):r for r in basket}
+    remove_ids=set()
+    changed=0
+    approved_total=0
+    approved_manual=0
+    approved_ai=0
+    skipped_ambiguous=0
+
+    df=edited.fillna('') if isinstance(edited,pd.DataFrame) else pd.DataFrame()
+    for _,row in df.iterrows():
+        hid=_v174_clean_scalar(row.get('Haber_ID',''))
+        rec=by_id.get(hid)
+        if not rec:
+            continue
+
+        # Çıkar her şeyden önce gelir: bu kayıt onaylanmayacak.
+        if bool(row.get('Çıkar',False)):
+            remove_ids.add(hid)
+            continue
+
+        status=_v174_clean_scalar(rec.get('Nihai_Onay_Durumu',''))
+        selected_label=_v174_clean_scalar(row.get('Nihai Çerçeve',''))
+        selected_code=V174_FRAME_LABEL_TO_CODE.get(selected_label,'')
+        ai_code=_v174_clean_scalar(rec.get('AI_Çerçeve_Kodu','')).upper()
+        approve_ai=bool(row.get('AI Önerisini Onayla',False))
+        approve_final=bool(row.get('Nihaiyi Onayla',False))
+
+        # Kullanıcı Nihai Çerçeve seçmiş/değiştirmişse bu, toplu butona
+        # basıldığı anda açık araştırmacı kararı sayılır. Böylece manuel
+        # değişiklik AI toplu onayı tarafından ezilemez.
+        if selected_code in V174_FRAME_CODE_TO_LABEL:
+            old_code=_v174_clean_scalar(rec.get('Nihai_Çerçeve_Kodu','')).upper()
+            needs_update=(
+                old_code!=selected_code
+                or _v174_clean_scalar(rec.get('Nihai_Çerçeve',''))!=selected_label
+                or status!='Araştırmacı Onaylı'
+            )
+            if needs_update:
+                rec['Nihai_Çerçeve_Kodu']=selected_code
+                rec['Nihai_Çerçeve']=selected_label
+                rec['Nihai_Onay_Durumu']='Araştırmacı Onaylı'
+                rec['Nihai_Onay_Zamanı']=datetime.now(timezone.utc).isoformat()
+                _v174_persist_record(rec)
+                changed+=1; approved_total+=1; approved_manual+=1
+            continue
+
+        # Zaten onaylı ve geçerli nihai kodu olan kayıtları yeniden yazma.
+        existing_code=_v174_clean_scalar(rec.get('Nihai_Çerçeve_Kodu','')).upper()
+        if status=='Araştırmacı Onaylı' and existing_code in V174_FRAME_CODE_TO_LABEL:
+            continue
+
+        # AI kutusu işaretli olsun veya olmasın, toplu tamamlama butonu
+        # kalan Onay Bekliyor kayıtların geçerli AI önerisini onaylar.
+        if ai_code in V174_FRAME_CODE_TO_LABEL:
+            rec['Nihai_Çerçeve_Kodu']=ai_code
+            rec['Nihai_Çerçeve']=V174_FRAME_CODE_TO_LABEL[ai_code]
+            rec['Nihai_Onay_Durumu']='Araştırmacı Onaylı'
+            rec['Nihai_Onay_Zamanı']=datetime.now(timezone.utc).isoformat()
+            _v174_persist_record(rec)
+            changed+=1; approved_total+=1; approved_ai+=1
+        else:
+            # BELIRSIZ veya geçersiz AI kodu hiçbir koşulda otomatik
+            # nihai karara çevrilmez.
+            if ai_code in {'BELIRSIZ','BELİRSİZ'} or not ai_code:
+                skipped_ambiguous+=1
+
+    # Çıkar işaretleri en sonda, Haber_ID üzerinden güvenli biçimde uygulanır.
+    removed=0
+    if remove_ids:
+        current=list(_v174_academic_basket())
+        idx=[i for i,r in enumerate(current) if _v174_clean_scalar((r or {}).get('Haber_ID','')) in remove_ids]
+        if idx:
+            removed=_v174_academic_remove(idx)
+
+    # Persist edilen rec nesnelerini session basket'a yeniden yükle.
+    st.session_state[V174_ACADEMIC_SESSION]=_v174_academic_load()
+    if changed or removed:
+        st.session_state.pop('v174_academic_gephi',None)
+        _v187_log_action(
+            'V191 Toplu Akademik Karar Uygulama',
+            changed+removed,
+            note=(
+                f'Onaylanan toplam: {approved_total}; manuel/nihai: {approved_manual}; '
+                f'AI toplu: {approved_ai}; çıkarılan: {removed}; '
+                f'BELIRSIZ/manuel bekleyen: {skipped_ambiguous}'
+            )
+        )
+    return {
+        'changed':changed,
+        'approved_total':approved_total,
+        'approved_manual':approved_manual,
+        'approved_ai':approved_ai,
+        'removed':removed,
+        'skipped_ambiguous':skipped_ambiguous,
+    }
+
+# ============================================================
+# /V191
+# ============================================================
+
+# ============================================================
+# V192 — KALICI AKADEMİK DURUM + ARŞİV / AKADEMİK KURTARMA
+#
+# TABAN: V191. Arama/tarama motoruna, sorgulara, tarih mantığına,
+# kaynak sınıflandırmasına ve Gephi hesaplarına DOKUNMAZ.
+#
+# Eklenenler:
+# 1) Günlük Rapor Arşivi JSON dosyasından tek tıkla güvenli geri yükleme.
+# 2) Akademik ana paket / envanter CSV-JSON-XLSX dosyasından Haber_ID bazlı
+#    akademik sepet kurtarma.
+# 3) Araştırmacı onaylı nihai CSV-JSON-XLSX dosyasından Nihai Çerçeve ve
+#    Araştırmacı Onayı geri yükleme.
+# 4) Akademik sepet + akademik tarama snapshot'ları için AppData altında
+#    otomatik yerel yedek.
+# 5) V161'deki aynı PRIVATE GitHub bağlantısı yapılandırılmışsa akademik
+#    durumun sıkıştırılmış uzak yedeği ve uygulama açılışında otomatik geri
+#    yüklenmesi. Günlük Rapor Arşivi V161'in mevcut uzak arşiv mekanizmasını
+#    kullanmaya devam eder.
+# 6) Tek dosyalık TAM ÇALIŞMA YEDEĞİ (arşiv + akademik + snapshot) indir / yükle.
+# ============================================================
+
+import gzip as _v192_gzip
+import base64 as _v192_b64
+
+V192_ACADEMIC_STATE_SCHEMA='terorsuz_turkiye_academic_state_v192'
+V192_FULL_BACKUP_SCHEMA='terorsuz_turkiye_full_backup_v192'
+V192_ACADEMIC_REMOTE_DEFAULT='terorsuz_turkiye_academic_state_v192.json.gz'
+V192_LOCAL_ACADEMIC_BACKUP=_V172_DATA_DIR/'terorsuz_turkiye_academic_state_v192.json.gz'
+
+
+def _v192_nonempty(v):
+    if v is None:
+        return False
+    try:
+        if pd.isna(v):
+            return False
+    except Exception:
+        pass
+    return bool(str(v).strip())
+
+
+def _v192_pick(row,*names):
+    for name in names:
+        try:
+            if name in row and _v192_nonempty(row.get(name)):
+                return row.get(name)
+        except Exception:
+            pass
+    return ''
+
+
+def _v192_frame_code_any(value):
+    code=_v174_extract_frame_code(value)
+    if code in V174_FRAME_CODE_TO_LABEL or code=='BELIRSIZ':
+        return code
+    txt=_v174_clean_scalar(value).lower()
+    if not txt:
+        return ''
+    for code,label in V174_FRAME_CODE_TO_LABEL.items():
+        name=label.split('—',1)[-1].strip().lower()
+        if txt==name or name in txt:
+            return code
+    return ''
+
+
+def _v192_read_uploaded_table(uploaded):
+    data=uploaded.getvalue() if hasattr(uploaded,'getvalue') else uploaded.read()
+    name=str(getattr(uploaded,'name','') or '').lower()
+    if name.endswith('.json'):
+        obj=json.loads(data.decode('utf-8-sig'))
+        if isinstance(obj,dict):
+            obj=obj.get('records') or obj.get('data') or obj.get('academic_records') or [obj]
+        return pd.DataFrame(obj)
+    if name.endswith(('.xlsx','.xls')):
+        try:
+            return pd.read_excel(BytesIO(data))
+        except Exception as e:
+            raise RuntimeError(f'Excel dosyası okunamadı ({type(e).__name__}). Gerekirse CSV olarak kaydedip tekrar yükleyin.')
+    try:
+        return pd.read_csv(BytesIO(data),encoding='utf-8-sig')
+    except Exception:
+        return pd.read_csv(BytesIO(data),encoding='utf-8-sig',sep=None,engine='python')
+
+
+def _v192_record_from_row(row):
+    # Paket / envanter / Nihai Kodlanmış Veri sütunlarını tek akademik kayıtta birleştirir.
+    rec={}
+    try:
+        for k,v in row.items():
+            if _v192_nonempty(v):
+                rec[str(k)]=v
+    except Exception:
+        pass
+
+    aliases={
+        'Tarih':('Tarih',),
+        'Hedef_Tarih':('Hedef_Tarih','Hedef Tarih'),
+        'Örneklem_Türü':('Örneklem_Türü','Örneklem Türü'),
+        'Örneklem_Kodu':('Örneklem_Kodu','Örneklem Kodu','Örneklem'),
+        'Dönem_Kodu':('Dönem_Kodu','Dönem Kodu','Dönem'),
+        'Kaynak Ailesi':('Kaynak Ailesi','Kaynak_Ailesi','Kaynak_Grubu','Kaynak Grubu'),
+        'Kaynak':('Kaynak','Yayıncı'),
+        'Başlık':('Başlık','Baslik'),
+        'İçerik_Özeti':('Haber Metni veya Özet','İçerik_Özeti','İçerik Özeti','Haber Metni','Metin'),
+        'URL':('URL','Gerçek Bağlantı','Bağlantı','Link'),
+        'Haber_ID':('Haber_ID','Haber ID'),
+    }
+    for target,names in aliases.items():
+        val=_v192_pick(row,*names)
+        if _v192_nonempty(val):
+            rec[target]=val
+    return _v174_academic_normalize_record(rec)
+
+
+def _v192_merge_record_fields(base,incoming):
+    out=dict(base or {})
+    for k,v in (incoming or {}).items():
+        if _v192_nonempty(v):
+            out[k]=v
+    return out
+
+
+def _v192_recover_academic_upload(uploaded, researcher_approved=False):
+    try:
+        df=_v192_read_uploaded_table(uploaded)
+    except Exception as e:
+        return {'ok':False,'message':str(e),'rows':0,'inserted':0,'updated':0,'approved':0,'invalid':0}
+    if df is None or df.empty:
+        return {'ok':False,'message':'Dosyada akademik kayıt bulunamadı.','rows':0,'inserted':0,'updated':0,'approved':0,'invalid':0}
+    df=df.copy(); df.columns=[str(c).strip() for c in df.columns]
+    hid_col='Haber_ID' if 'Haber_ID' in df.columns else ('Haber ID' if 'Haber ID' in df.columns else None)
+    if not hid_col:
+        return {
+            'ok':False,
+            'message':'Bu dosyada Haber_ID sütunu yok. Özet/dağılım tablosu akademik sepeti geri kuramaz; kayıt bazlı akademik paket veya Nihai Kodlanmış Veri dosyası gerekir.',
+            'rows':len(df),'inserted':0,'updated':0,'approved':0,'invalid':len(df)
+        }
+
+    existing=[_v174_academic_normalize_record(r) for r in _v174_academic_load()]
+    by_id={r.get('Haber_ID',''):r for r in existing if r.get('Haber_ID')}
+    inserted=updated=approved=invalid=0
+
+    for _,row in df.fillna('').iterrows():
+        hid=_v174_clean_scalar(row.get(hid_col,''))
+        if not hid:
+            invalid+=1; continue
+        incoming=_v192_record_from_row(row)
+        incoming['Haber_ID']=hid
+        old=by_id.get(hid)
+        rec=_v192_merge_record_fields(old or {},incoming)
+
+        ai_raw=_v192_pick(row,'AI_Çerçeve_Kodu','AI Çerçeve Kodu','AI_Çerçeve','AI Çerçevesi','AI Çerçeve')
+        ai_code=_v192_frame_code_any(ai_raw)
+        if ai_code:
+            rec['AI_Çerçeve_Kodu']=ai_code
+            rec['AI_Çerçeve']=V174_FRAME_CODE_TO_LABEL.get(ai_code,'BELİRSİZ — Manuel Kodlama')
+        evidence=_v192_pick(row,'Kanıt_Cümlesi','Kanıt Cümlesi')
+        reason=_v192_pick(row,'Kısa_Gerekçe','Kısa Gerekçe')
+        confidence=_v192_pick(row,'Güven')
+        review=_v192_pick(row,'Manuel_İnceleme_Gerekli','Manuel İnceleme Gerekli','İnceleme')
+        if _v192_nonempty(evidence): rec['Kanıt_Cümlesi']=_v174_clean_scalar(evidence)
+        if _v192_nonempty(reason): rec['Kısa_Gerekçe']=_v174_clean_scalar(reason)
+        if _v192_nonempty(confidence): rec['Güven']=_v174_clean_scalar(confidence)
+        if _v192_nonempty(review): rec['Manuel_İnceleme_Gerekli']=_v174_clean_scalar(review)
+
+        final_raw=_v192_pick(
+            row,'Nihai_Çerçeve_Kodu','Nihai Çerçeve Kodu','Nihai_Çerçeve','Nihai Çerçeve',
+            'Araştırmacı_Nihai_Kodu','Araştırmacı Nihai Kodu'
+        )
+        if researcher_approved and not _v192_nonempty(final_raw):
+            final_raw=_v192_pick(row,'Akademik Çerçeve','Akademik_Çerçeve','Çerçeve','Cerceve')
+        final_code=_v192_frame_code_any(final_raw)
+        status=_v174_clean_scalar(_v192_pick(row,'Nihai_Onay_Durumu','Nihai Onay','Onay Durumu','Onay'))
+        explicit_approved=('araştırmacı onaylı' in status.lower()) if status else False
+        if final_code in V174_FRAME_CODE_TO_LABEL:
+            rec['Nihai_Çerçeve_Kodu']=final_code
+            rec['Nihai_Çerçeve']=V174_FRAME_CODE_TO_LABEL[final_code]
+            if researcher_approved or explicit_approved:
+                rec['Nihai_Onay_Durumu']='Araştırmacı Onaylı'
+                rec['Nihai_Onay_Zamanı']=_v174_clean_scalar(_v192_pick(row,'Nihai_Onay_Zamanı','Nihai Onay Zamanı')) or datetime.now(timezone.utc).isoformat()
+                approved+=1
+            elif not _v174_clean_scalar(rec.get('Nihai_Onay_Durumu','')):
+                rec['Nihai_Onay_Durumu']='Onay Bekliyor'
+        elif explicit_approved:
+            invalid+=1
+
+        rec=_v174_academic_normalize_record(rec)
+        if _v174_persist_record(rec):
+            if old is None: inserted+=1
+            else: updated+=1
+            by_id[hid]=rec
+        else:
+            invalid+=1
+
+    st.session_state[V174_ACADEMIC_SESSION]=_v174_academic_load()
+    st.session_state.pop('v174_academic_gephi',None)
+    _v187_log_action(
+        'V192 Akademik Kurtarma',inserted+updated,
+        note=f'Araştırmacı onaylı dosya: {researcher_approved}; yeni: {inserted}; güncellenen: {updated}; onay: {approved}; geçersiz: {invalid}'
+    )
+    _v192_after_academic_change('Akademik kurtarma')
+    return {
+        'ok':True,'message':f'{inserted} yeni + {updated} mevcut kayıt işlendi; {approved} kayıt araştırmacı onaylı olarak geri yüklendi.',
+        'rows':len(df),'inserted':inserted,'updated':updated,'approved':approved,'invalid':invalid
+    }
+
+
+def _v192_snapshot_dump():
+    if not _v189_snapshot_ensure():
+        return []
+    try:
+        with _history_connect() as conn:
+            rows=conn.execute(
+                f'''SELECT snapshot_key,label,start_date,end_date,updated_at,row_count,rows_json,meta_json,ui_json
+                    FROM {V189_SNAPSHOT_TABLE} ORDER BY updated_at ASC'''
+            ).fetchall()
+        return [{
+            'snapshot_key':r[0],'label':r[1],'start_date':r[2] or '','end_date':r[3] or '',
+            'updated_at':r[4] or '','row_count':int(r[5] or 0),'rows_json':r[6] or '[]',
+            'meta_json':r[7] or '{}','ui_json':r[8] or '{}'
+        } for r in rows]
+    except Exception:
+        return []
+
+
+def _v192_snapshot_restore(items):
+    if not _v189_snapshot_ensure():
+        return 0
+    n=0
+    try:
+        with _history_connect() as conn:
+            for r in items or []:
+                key=str((r or {}).get('snapshot_key','') or '').strip()
+                label=str((r or {}).get('label','') or '').strip()
+                if not key or not label:
+                    continue
+                conn.execute(
+                    f'''INSERT OR REPLACE INTO {V189_SNAPSHOT_TABLE}
+                        (snapshot_key,label,start_date,end_date,updated_at,row_count,rows_json,meta_json,ui_json)
+                        VALUES(?,?,?,?,?,?,?,?,?)''',
+                    (
+                        key,label,str(r.get('start_date','') or ''),str(r.get('end_date','') or ''),
+                        str(r.get('updated_at','') or datetime.now(timezone.utc).isoformat()),int(r.get('row_count',0) or 0),
+                        str(r.get('rows_json','[]') or '[]'),str(r.get('meta_json','{}') or '{}'),str(r.get('ui_json','{}') or '{}')
+                    )
+                ); n+=1
+            conn.commit()
+    except Exception:
+        return 0
+    return n
+
+
+def _v192_academic_state_payload():
+    return {
+        'schema':V192_ACADEMIC_STATE_SCHEMA,
+        'updated_at':datetime.now(timezone.utc).isoformat(),
+        'academic_records':[_v174_academic_normalize_record(r) for r in _v174_academic_load()],
+        'snapshots':_v192_snapshot_dump(),
+    }
+
+
+def _v192_academic_state_bytes(payload=None):
+    payload=payload or _v192_academic_state_payload()
+    raw=json.dumps(payload,ensure_ascii=False,indent=2,default=str).encode('utf-8')
+    return _v192_gzip.compress(raw,compresslevel=9)
+
+
+def _v192_academic_state_from_bytes(data):
+    raw=bytes(data or b'')
+    if raw[:2]==b'\x1f\x8b':
+        raw=_v192_gzip.decompress(raw)
+    obj=json.loads(raw.decode('utf-8-sig'))
+    if not isinstance(obj,dict):
+        raise ValueError('Akademik yedek yapısı geçersiz.')
+    return obj
+
+
+def _v192_write_local_academic_backup(payload=None):
+    try:
+        data=_v192_academic_state_bytes(payload)
+        V192_LOCAL_ACADEMIC_BACKUP.parent.mkdir(parents=True,exist_ok=True)
+        tmp=V192_LOCAL_ACADEMIC_BACKUP.with_suffix(V192_LOCAL_ACADEMIC_BACKUP.suffix+'.tmp')
+        tmp.write_bytes(data)
+        tmp.replace(V192_LOCAL_ACADEMIC_BACKUP)
+        return True,''
+    except Exception as e:
+        return False,f'Yerel akademik yedek yazılamadı: {type(e).__name__}'
+
+
+def _v192_remote_cfg():
+    base=_v161_remote_cfg()
+    if not base.get('ok'):
+        return {**base,'academic_path':V192_ACADEMIC_REMOTE_DEFAULT}
+    custom=''
+    try:
+        sec=st.secrets.get('archive',{})
+        custom=str(sec.get('github_academic_path','') or '').strip().lstrip('/')
+    except Exception:
+        custom=''
+    if not custom:
+        p=str(base.get('path','') or '')
+        folder=p.rsplit('/',1)[0]+'/' if '/' in p else ''
+        custom=folder+V192_ACADEMIC_REMOTE_DEFAULT
+    return {**base,'academic_path':custom}
+
+
+def _v192_remote_get():
+    cfg=_v192_remote_cfg()
+    if not cfg.get('ok'):
+        return None,None,'Kalıcı GitHub bağlantısı yapılandırılmamış.',False
+    try:
+        from urllib.parse import quote as _v192_quote
+        api=f"https://api.github.com/repos/{cfg['repo']}/contents/{_v192_quote(cfg['academic_path'],safe='/')}"
+        headers={
+            'Authorization':f"Bearer {cfg['token']}",
+            'Accept':'application/vnd.github+json',
+            'X-GitHub-Api-Version':'2022-11-28',
+            'User-Agent':'terorsuz-turkiye-osint-v192'
+        }
+        r=requests.get(api,headers=headers,params={'ref':cfg['branch']},timeout=20)
+        if r.status_code==404:
+            return None,None,'Kalıcı akademik yedek henüz oluşturulmamış.',True
+        if r.status_code!=200:
+            return None,None,f'Akademik yedek okunamadı (HTTP {r.status_code}).',False
+        meta=r.json(); sha=meta.get('sha')
+        content=str(meta.get('content','') or '').replace('\n','').strip()
+        if content:
+            blob=_v192_b64.b64decode(content)
+        else:
+            dl=str(meta.get('download_url','') or '').strip()
+            if not dl:
+                return None,sha,'Akademik yedek içeriği alınamadı.',False
+            rr=requests.get(dl,headers={'Authorization':f"Bearer {cfg['token']}",'User-Agent':'terorsuz-turkiye-osint-v192'},timeout=30)
+            if rr.status_code!=200:
+                return None,sha,f'Akademik yedek ham içeriği okunamadı (HTTP {rr.status_code}).',False
+            blob=rr.content
+        return _v192_academic_state_from_bytes(blob),sha,'',True
+    except Exception as e:
+        return None,None,f'Akademik yedek okunamadı: {type(e).__name__}',False
+
+
+def _v192_remote_put(payload,sha=None):
+    cfg=_v192_remote_cfg()
+    if not cfg.get('ok'):
+        return False,'Kalıcı GitHub bağlantısı yapılandırılmamış.'
+    try:
+        from urllib.parse import quote as _v192_quote
+        api=f"https://api.github.com/repos/{cfg['repo']}/contents/{_v192_quote(cfg['academic_path'],safe='/')}"
+        headers={
+            'Authorization':f"Bearer {cfg['token']}",
+            'Accept':'application/vnd.github+json',
+            'X-GitHub-Api-Version':'2022-11-28',
+            'User-Agent':'terorsuz-turkiye-osint-v192'
+        }
+        blob=_v192_academic_state_bytes(payload)
+        body={
+            'message':'Terorsuz Turkiye akademik durum yedegi V192',
+            'content':_v192_b64.b64encode(blob).decode('ascii'),
+            'branch':cfg['branch'],
+        }
+        if sha: body['sha']=sha
+        r=requests.put(api,headers=headers,json=body,timeout=30)
+        if r.status_code not in {200,201}:
+            msg=''
+            try: msg=str(r.json().get('message',''))
+            except Exception: pass
+            return False,f'Akademik yedek yazılamadı (HTTP {r.status_code})'+(f': {msg}' if msg else '')
+        return True,f'Akademik durum kalıcı GitHub yedeğine yazıldı ({len(blob):,} bayt sıkıştırılmış).'
+    except Exception as e:
+        return False,f'Akademik yedek yazılamadı: {type(e).__name__}'
+
+
+def _v192_merge_academic_pair(remote_rec,local_rec):
+    r=_v174_academic_normalize_record(remote_rec or {})
+    l=_v174_academic_normalize_record(local_rec or {})
+    out=_v192_merge_record_fields(r,l)
+    rs=_v174_clean_scalar(r.get('Nihai_Onay_Durumu',''))
+    ls=_v174_clean_scalar(l.get('Nihai_Onay_Durumu',''))
+    if rs=='Araştırmacı Onaylı' and ls!='Araştırmacı Onaylı':
+        for k in ('Nihai_Çerçeve_Kodu','Nihai_Çerçeve','Nihai_Onay_Durumu','Nihai_Onay_Zamanı'):
+            if _v192_nonempty(r.get(k)): out[k]=r.get(k)
+    elif rs=='Araştırmacı Onaylı' and ls=='Araştırmacı Onaylı':
+        rt=str(r.get('Nihai_Onay_Zamanı','') or ''); lt=str(l.get('Nihai_Onay_Zamanı','') or '')
+        if rt>lt:
+            for k in ('Nihai_Çerçeve_Kodu','Nihai_Çerçeve','Nihai_Onay_Durumu','Nihai_Onay_Zamanı'):
+                if _v192_nonempty(r.get(k)): out[k]=r.get(k)
+    return _v174_academic_normalize_record(out)
+
+
+def _v192_merge_academic_payloads(remote,local):
+    remote=remote if isinstance(remote,dict) else {}
+    local=local if isinstance(local,dict) else {}
+    by_id={}
+    for rec in remote.get('academic_records',[]) or []:
+        rr=_v174_academic_normalize_record(rec)
+        if rr.get('Haber_ID'): by_id[rr['Haber_ID']]=rr
+    for rec in local.get('academic_records',[]) or []:
+        rr=_v174_academic_normalize_record(rec); hid=rr.get('Haber_ID','')
+        if not hid: continue
+        by_id[hid]=_v192_merge_academic_pair(by_id.get(hid,{}),rr)
+
+    snaps={}
+    for r in (remote.get('snapshots',[]) or [])+(local.get('snapshots',[]) or []):
+        key=str((r or {}).get('snapshot_key','') or '').strip()
+        if not key: continue
+        old=snaps.get(key)
+        if old is None or str(r.get('updated_at','') or '')>=str(old.get('updated_at','') or ''):
+            snaps[key]=dict(r)
+    return {
+        'schema':V192_ACADEMIC_STATE_SCHEMA,
+        'updated_at':datetime.now(timezone.utc).isoformat(),
+        'academic_records':list(by_id.values()),
+        'snapshots':list(snaps.values()),
+    }
+
+
+def _v192_apply_academic_state(payload):
+    if not isinstance(payload,dict):
+        return 0,0,'Akademik yedek yapısı geçersiz.'
+    st.session_state['_v192_restoring']=True
+    try:
+        local=_v192_academic_state_payload()
+        merged=_v192_merge_academic_payloads(payload,local)
+        n=0
+        for rec in merged.get('academic_records',[]) or []:
+            if _v174_persist_record(rec): n+=1
+        sn=_v192_snapshot_restore(merged.get('snapshots',[]) or [])
+        st.session_state[V174_ACADEMIC_SESSION]=_v174_academic_load()
+        st.session_state.pop('v174_academic_gephi',None)
+        _v192_write_local_academic_backup(merged)
+        return n,sn,''
+    except Exception as e:
+        return 0,0,f'Akademik durum geri yüklenemedi: {type(e).__name__}'
+    finally:
+        st.session_state['_v192_restoring']=False
+
+
+def _v192_sync_academic_remote():
+    local=_v192_academic_state_payload()
+    _v192_write_local_academic_backup(local)
+    cfg=_v192_remote_cfg()
+    if not cfg.get('ok'):
+        return False,'Yerel akademik yedek güncellendi; PRIVATE GitHub bağlantısı yapılandırılmadığı için uzak yedek oluşturulmadı.'
+    remote,sha,msg,reachable=_v192_remote_get()
+    if not reachable:
+        return False,msg
+    merged=_v192_merge_academic_payloads(remote or {},local)
+    ok,put_msg=_v192_remote_put(merged,sha=sha)
+    if ok:
+        _v192_apply_academic_state(merged)
+    return ok,put_msg
+
+
+def _v192_after_academic_change(note=''):
+    if st.session_state.get('_v192_restoring'):
+        return
+    ok,msg=_v192_sync_academic_remote()
+    st.session_state['_v192_last_academic_sync']=(ok,(str(note)+': ' if note else '')+str(msg or ''))
+
+
+def _v192_bootstrap_academic_once():
+    if st.session_state.get('_v192_bootstrap_done'):
+        return
+    st.session_state['_v192_bootstrap_done']=True
+    local_note=''
+    try:
+        if V192_LOCAL_ACADEMIC_BACKUP.exists():
+            payload=_v192_academic_state_from_bytes(V192_LOCAL_ACADEMIC_BACKUP.read_bytes())
+            n,sn,err=_v192_apply_academic_state(payload)
+            if not err and (n or sn):
+                local_note=f'Yerel akademik yedek okundu: {n} kayıt, {sn} snapshot.'
+    except Exception:
+        pass
+    cfg=_v192_remote_cfg()
+    if cfg.get('ok'):
+        remote,sha,msg,reachable=_v192_remote_get()
+        if remote:
+            n,sn,err=_v192_apply_academic_state(remote)
+            if not err:
+                st.session_state['_v192_bootstrap_note']=(local_note+' ' if local_note else '')+f'Kalıcı akademik yedek eşitlendi: {n} kayıt, {sn} snapshot.'
+            else:
+                st.session_state['_v192_bootstrap_note']=err
+        elif local_note:
+            st.session_state['_v192_bootstrap_note']=local_note
+        elif msg and not reachable:
+            st.session_state['_v192_bootstrap_note']=msg
+    elif local_note:
+        st.session_state['_v192_bootstrap_note']=local_note
+
+
+def _v192_full_backup_payload():
+    try:
+        archive=_v161_full_payload()
+    except Exception:
+        archive={'schema':'terorsuz_turkiye_archive_v161','archive_days':[],'records':[]}
+    return {
+        'schema':V192_FULL_BACKUP_SCHEMA,
+        'updated_at':datetime.now(timezone.utc).isoformat(),
+        'archive':archive,
+        'academic':_v192_academic_state_payload(),
+    }
+
+
+def _v192_restore_full_backup(data):
+    try:
+        raw=bytes(data or b'')
+        if raw[:2]==b'\x1f\x8b': raw=_v192_gzip.decompress(raw)
+        obj=json.loads(raw.decode('utf-8-sig'))
+        if not isinstance(obj,dict): return 0,0,0,'Tam çalışma yedeği geçersiz.'
+        archive=obj.get('archive') or {}
+        academic=obj.get('academic') or {}
+        a_added=a_skipped=0
+        if archive:
+            ar=json.dumps(archive,ensure_ascii=False,default=str).encode('utf-8')
+            a_added,a_skipped,a_err=_v159_restore_archive_payload(ar)
+            if a_err: return a_added,a_skipped,0,a_err
+        ac,sn,err=_v192_apply_academic_state(academic)
+        if err: return a_added,a_skipped,0,err
+        _v192_after_academic_change('Tam çalışma yedeği geri yükleme')
+        return a_added,a_skipped,ac,''
+    except Exception as e:
+        return 0,0,0,f'Tam çalışma yedeği okunamadı: {type(e).__name__}'
+
+
+def _v192_render_archive_recovery_panel():
+    with st.expander('♻️ V192 — Arşiv JSON Kurtarma',expanded=False):
+        st.caption('V161 biçimindeki arşiv JSON dosyasını mevcut arşivle birleştirir. Mevcut kayıtları silmez; aynı kayıtları çoğaltmaz. Kalıcı GitHub arşivi bağlıysa işlem sonunda otomatik eşitlenir.')
+        up=st.file_uploader('Arşiv yedeği (.json)',type=['json'],key='v192_archive_recovery_upload')
+        if up is not None:
+            try:
+                data=up.getvalue(); obj=json.loads(data.decode('utf-8-sig'))
+                recs=obj.get('records',[]) if isinstance(obj,dict) else []
+                days=obj.get('archive_days',[]) if isinstance(obj,dict) else []
+                st.info(f'Yedek önizleme: {len(recs)} kayıt • {len(days)} arşiv günü.')
+            except Exception:
+                st.warning('JSON önizlemesi okunamadı.')
+            if st.button('♻️ ARŞİV JSON YEDEĞİNİ GERİ YÜKLE',type='primary',use_container_width=True,key='v192_restore_archive_json'):
+                added,skipped,err=_v159_restore_archive_payload(up.getvalue())
+                if err: st.error(err)
+                else:
+                    st.success(f'✅ Arşiv geri yüklendi: {added} yeni kayıt • {skipped} zaten mevcut kayıt.')
+                    st.rerun()
+
+
+def _v192_render_academic_recovery_panel():
+    with st.expander('♻️ V192 — Akademik Kodlama Kurtarma',expanded=False):
+        st.caption(
+            'Kayıtlar Haber_ID üzerinden birleştirilir; mevcut akademik sepetteki kayıtlar silinmez. '
+            'Önce elinizde varsa Akademik Kodlama Paketi/Envanter dosyasını, ardından araştırmacı onaylı Nihai Kodlanmış Veri Excel/CSV dosyasını yükleyebilirsiniz.'
+        )
+        base=st.file_uploader(
+            'A) Akademik ana paket / envanter (.csv, .json, .xlsx)',
+            type=['csv','json','xlsx','xls'],key='v192_academic_base_upload'
+        )
+        if base is not None:
+            try:
+                _df=_v192_read_uploaded_table(base)
+                st.info(f'Ana paket: {len(_df)} satır • {len(_df.columns)} sütun.')
+            except Exception as e:
+                st.warning(str(e))
+            if st.button('📥 AKADEMİK ANA PAKETİ GERİ YÜKLE / BİRLEŞTİR',use_container_width=True,key='v192_restore_academic_base'):
+                res=_v192_recover_academic_upload(base,researcher_approved=False)
+                (st.success if res.get('ok') else st.error)(('✅ ' if res.get('ok') else '')+res.get('message',''))
+                if res.get('ok'): st.rerun()
+
+        final=st.file_uploader(
+            'B) Araştırmacı onaylı nihai veri (.csv, .json, .xlsx)',
+            type=['csv','json','xlsx','xls'],key='v192_academic_final_upload'
+        )
+        approve=st.checkbox(
+            'Bu dosyadaki geçerli Nihai/Akademik Çerçeve değerlerini “Araştırmacı Onaylı” kabul et.',
+            value=True,key='v192_academic_final_confirm'
+        )
+        if final is not None:
+            try:
+                _df2=_v192_read_uploaded_table(final)
+                has_id=('Haber_ID' in _df2.columns or 'Haber ID' in _df2.columns)
+                st.info(f'Nihai dosya: {len(_df2)} satır • Haber_ID: {"var" if has_id else "yok"}.')
+                if not has_id:
+                    st.warning('Bu dosya yalnız özet/dağılım tablosuysa geri yükleme için kullanılamaz; kayıt bazlı dosya gerekir.')
+            except Exception as e:
+                st.warning(str(e))
+            if st.button('✅ ARAŞTIRMACI ONAYLI VERİYİ GERİ YÜKLE / BİRLEŞTİR',type='primary',use_container_width=True,key='v192_restore_academic_final',disabled=not approve):
+                res=_v192_recover_academic_upload(final,researcher_approved=True)
+                (st.success if res.get('ok') else st.error)(('✅ ' if res.get('ok') else '')+res.get('message',''))
+                if res.get('invalid'):
+                    st.warning(f"Geçersiz/eşlenemeyen satır: {res.get('invalid',0)}")
+                if res.get('ok'): st.rerun()
+
+
+def _v192_render_persistence_panel():
+    with st.expander('🛡️ V192 — Kalıcı Çalışma Güvencesi',expanded=False):
+        note=st.session_state.pop('_v192_bootstrap_note',None)
+        if note: st.info(note)
+        last=st.session_state.pop('_v192_last_academic_sync',None)
+        if last:
+            ok,msg=last; (st.success if ok else st.warning)(msg)
+        cfg=_v192_remote_cfg()
+        if cfg.get('ok'):
+            st.success(f"🔒 Arşiv + akademik kalıcı bağlantısı hazır: {cfg['repo']}")
+            st.caption(f"Arşiv: {cfg.get('path','')} • Akademik/snapshot: {cfg.get('academic_path','')}")
+        else:
+            st.warning(
+                'Şu anda AppData yerel yedek çalışır; ancak Streamlit Cloud yeniden deploy/container değişiminde kalıcı güvence için PRIVATE GitHub bağlantısı gerekir. '
+                'Mevcut V161 [archive] secrets ayarı akademik yedek için de otomatik kullanılır.'
+            )
+        c1,c2=st.columns(2)
+        if c1.button('☁️ AKADEMİK DURUMU ŞİMDİ KALICI YEDEKLE',use_container_width=True,key='v192_force_academic_sync'):
+            ok,msg=_v192_sync_academic_remote(); (st.success if ok else st.warning)(msg)
+        if c2.button('☁️ KALICI AKADEMİK YEDEKTEN GERİ YÜKLE',use_container_width=True,key='v192_force_academic_pull',disabled=not cfg.get('ok')):
+            remote,sha,msg,reachable=_v192_remote_get()
+            if remote:
+                n,sn,err=_v192_apply_academic_state(remote)
+                if err: st.error(err)
+                else:
+                    st.success(f'✅ {n} akademik kayıt ve {sn} çalışma snapshotı geri yüklendi.'); st.rerun()
+            else: st.warning(msg or 'Uzak akademik yedek bulunamadı.')
+
+        full=_v192_full_backup_payload()
+        st.download_button(
+            '⬇️ TAM ÇALIŞMA YEDEĞİ (Arşiv + Akademik + Snapshot)',
+            json.dumps(full,ensure_ascii=False,indent=2,default=str).encode('utf-8'),
+            'Terorsuz_Turkiye_Tam_Calisma_Yedegi_V192.json','application/json',
+            use_container_width=True,key='v192_download_full_backup'
+        )
+        up=st.file_uploader('Tam çalışma yedeğini geri yükle (.json veya .gz)',type=['json','gz'],key='v192_full_backup_upload')
+        if up is not None and st.button('♻️ TAM ÇALIŞMA YEDEĞİNİ GERİ YÜKLE',use_container_width=True,key='v192_restore_full_backup'):
+            a,sk,ac,err=_v192_restore_full_backup(up.getvalue())
+            if err: st.error(err)
+            else:
+                st.success(f'✅ Tam çalışma geri yüklendi: arşiv +{a} (atlanan {sk}) • akademik {ac} kayıt işlendi.'); st.rerun()
+
+
+# -------- V192 otomatik akademik/snapshot kalıcılık sarmalayıcıları --------
+_V192_BASE_ACAD_ADD=_v174_academic_add
+_V192_BASE_ACAD_REMOVE=_v174_academic_remove
+_V192_BASE_ACAD_CLEAR=_v174_academic_clear
+_V192_BASE_IMPORT_AI=_v174_import_ai_result
+_V192_BASE_SAVE_FINAL=_v174_save_manual_final
+_V192_BASE_BULK_APPLY=_v191_apply_all_academic_decisions
+_V192_BASE_SNAPSHOT_SAVE=_v189_snapshot_save
+_V192_BASE_SNAPSHOT_DELETE=_v189_snapshot_delete
+
+
+def _v174_academic_add(rows):
+    n=_V192_BASE_ACAD_ADD(rows)
+    if n: _v192_after_academic_change('Akademik sepete ekleme')
+    return n
+
+
+def _v174_academic_remove(indices):
+    n=_V192_BASE_ACAD_REMOVE(indices)
+    if n: _v192_after_academic_change('Akademik sepetten çıkarma')
+    return n
+
+
+def _v174_academic_clear():
+    out=_V192_BASE_ACAD_CLEAR()
+    _v192_after_academic_change('Akademik sepeti temizleme')
+    return out
+
+
+def _v174_import_ai_result(uploaded):
+    res=_V192_BASE_IMPORT_AI(uploaded)
+    if isinstance(res,dict) and res.get('ok') and res.get('updated',0):
+        _v192_after_academic_change('AI kodlama sonucu')
+    return res
+
+
+def _v174_save_manual_final(edited):
+    n=_V192_BASE_SAVE_FINAL(edited)
+    if n: _v192_after_academic_change('Araştırmacı nihai onayı')
+    return n
+
+
+def _v191_apply_all_academic_decisions(edited):
+    res=_V192_BASE_BULK_APPLY(edited)
+    if isinstance(res,dict) and (res.get('changed',0) or res.get('removed',0)):
+        _v192_after_academic_change('V191 toplu akademik karar')
+    return res
+
+
+def _v189_snapshot_save(custom_label=''):
+    res=_V192_BASE_SNAPSHOT_SAVE(custom_label)
+    if isinstance(res,dict) and res.get('ok'):
+        _v192_after_academic_change('Akademik tarama çalışması saklama')
+    return res
+
+
+def _v189_snapshot_delete(snapshot_key):
+    ok=_V192_BASE_SNAPSHOT_DELETE(snapshot_key)
+    if ok: _v192_after_academic_change('Akademik tarama çalışması silme')
+    return ok
+
+# ============================================================
+# /V192
+# ============================================================
+
+
 def _v174_make_gephi_tables(records,node_kind='source'):
     valid=[]
     for r0 in records or []:
@@ -45532,6 +46351,7 @@ def _v174_render_academic_tab():
         'V186 kararlı arama motoru aynen korunur. Akademik katman yalnız dört sabit kaynak ailesini kabul eder; '
         'milat/yapılandırılmış hafta etiketlerini ekler; ChatGPT yalnız AI önerisi üretir ve Gephi yalnız açıkça Araştırmacı Onaylı Nihai Çerçeveleri kullanır.'
     )
+    _v192_render_academic_recovery_panel()
     if not acad:
         st.info('Akademik Kodlama Sepeti boş. Ana tarama tablolarından 🎓 Akademik Kodlama Sepetine Ekle düğmesini kullanın.')
         return
@@ -45577,6 +46397,17 @@ def _v174_render_academic_tab():
         else: st.error(res.get('message','İçe aktarma başarısız.'))
 
     st.markdown('##### 3️⃣ Araştırmacı Kontrolü ve Açık Nihai Onay')
+    _v191_flash=st.session_state.pop('v191_bulk_result',None)
+    if isinstance(_v191_flash,dict):
+        st.success(
+            f"✅ Toplu işlem tamamlandı: {_v191_flash.get('approved_total',0)} kayıt onaylandı, "
+            f"{_v191_flash.get('removed',0)} kayıt akademik sepetten çıkarıldı."
+        )
+        if _v191_flash.get('skipped_ambiguous',0):
+            st.warning(
+                f"⚠️ {_v191_flash.get('skipped_ambiguous',0)} BELIRSIZ/AI kodu olmayan kayıt otomatik onaylanmadı; "
+                'bunlar manuel nihai çerçeve bekliyor.'
+            )
     table=[]
     for r in acad:
         table.append({
@@ -45599,12 +46430,24 @@ def _v174_render_academic_tab():
             'URL':st.column_config.LinkColumn('Haber',display_text='Aç')},
         disabled=[c for c in adf.columns if c not in {'Çıkar','AI Önerisini Onayla','Nihaiyi Onayla','Nihai Çerçeve'}],
         key='v187_academic_final_editor')
+    st.caption(
+        'V191 toplu tamamlama: Çıkar işaretlileri siler; seçilmiş Nihai Çerçeveleri araştırmacı kararı olarak onaylar; '
+        'kalan Onay Bekliyor kayıtların geçerli F01–F12 AI önerilerini topluca onaylar. BELIRSIZ kayıtlar otomatik onaylanmaz.'
+    )
+    if st.button(
+        '✅ TÜM KARARLARI UYGULA + KALAN AI ÖNERİLERİNİ TOPLU ONAYLA',
+        type='primary',use_container_width=True,key='v191_apply_all_academic'
+    ):
+        res=_v191_apply_all_academic_decisions(aedit)
+        st.session_state['v191_bulk_result']=res
+        st.rerun()
+
     q1,q2=st.columns(2)
-    if q1.button('💾 NİHAİ ÇERÇEVE / ONAY DEĞİŞİKLİKLERİNİ KAYDET',use_container_width=True,key='v187_save_final'):
+    if q1.button('💾 YALNIZ İŞARETLİ NİHAİ / ONAY DEĞİŞİKLİKLERİNİ KAYDET',use_container_width=True,key='v187_save_final'):
         n=_v174_save_manual_final(aedit)
         st.success(f'✅ {n} kayıt güncellendi.' if n else 'Kaydedilecek yeni bir değişiklik yok.')
         if n: st.rerun()
-    if q2.button('🗑️ SEÇİLENLERİ AKADEMİK SEPETTEN ÇIKAR',use_container_width=True,key='v187_remove_academic'):
+    if q2.button('🗑️ YALNIZ ÇIKAR İŞARETLİLERİ AKADEMİK SEPETTEN ÇIKAR',use_container_width=True,key='v187_remove_academic'):
         idx=aedit.index[aedit['Çıkar'].fillna(False).astype(bool)].tolist()
         if not idx: st.warning('Önce çıkarılacak kayıtları seçin.')
         else:
@@ -46533,8 +47376,14 @@ Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bi
     st.caption(
         'V173 kararlı tarama/raporlama akışı korunur. Manuel Link Havuzu, Günlük Analiz Sepeti ve Günlük Rapor Arşivi aynen çalışır. '
         'V187 akademik metodoloji katmanı; dört kaynak ailesi, örneklem/dönem etiketleri, açık araştırmacı onayı, dönemsel Gephi ve normalize karşılaştırmaları uygular. V186 ile Kaynak Bazlı İzleme ve diğer haber tablolarında seçilen kayıtlar Günlük Sepete uğramadan doğrudan Akademik Kodlama Sepetine de aktarılabilir. Geçmiş tarih taraması soldaki Haber dönemi alanından yapılır; '
-        'AI sonucu geri yüklenir ve Gephi yalnız araştırmacının kontrol ettiği Nihai Çerçeve alanından üretilir.'
+        'AI sonucu geri yüklenir ve Gephi yalnız araştırmacının kontrol ettiği Nihai Çerçeve alanından üretilir. '
+        'V192 ile arşiv JSON ve akademik kayıt bazlı dosyalardan kurtarma ile akademik/snapshot kalıcı yedekleme eklenmiştir.'
     )
+
+    # V192 — yeni/boş container açıldığında akademik kayıtlar ve çalışma snapshot'ları
+    # AppData / PRIVATE GitHub yedeğinden otomatik birleştirilir.
+    _v192_bootstrap_academic_once()
+    _v192_render_persistence_panel()
 
     _manual_tab,_daily_tab,_archive_tab,_academic_tab=st.tabs([
         f'🔗 Manuel Link Havuzu ({len(_v140_manual_pool())})',
@@ -46556,6 +47405,7 @@ Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bi
         )
 
     with _archive_tab:
+        _v192_render_archive_recovery_panel()
         _v136_render_basket(
             '🗂️ Eski Analiz Sepeti / Arşiv',
             'Daha önce arşivde bulunan ve Günlük Analiz Sepetinden arşive taşıdığınız içerikler burada gün gün düzenlenir. '
