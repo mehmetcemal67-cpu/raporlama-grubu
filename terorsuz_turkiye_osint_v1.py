@@ -11002,10 +11002,19 @@ with st.sidebar.expander('💾 Akademik Tarama Çalışması',expanded=False):
         key='v189_save_snapshot'
     ):
         _v189_res=_v189_snapshot_save(_v189_name)
-        if _v189_res.get('ok'): st.success('✅ '+_v189_res.get('message',''))
-        else: st.error(_v189_res.get('message','Çalışma saklanamadı.'))
+        if _v189_res.get('ok'):
+            # V194 — Sidebar bu noktada V192/V193 kalıcılık sarmalayıcılarından
+            # önce çalıştığı için, yedeği aynı run'ın sonunda güvenle eşitle.
+            st.session_state['_v194_snapshot_persist_pending']='save'
+            st.success('✅ '+_v189_res.get('message',''))
+        else:
+            st.error(_v189_res.get('message','Çalışma saklanamadı.'))
 
     _v189_saved=_v189_snapshot_list()
+    # V194 — Uzak/yerel akademik yedek run'ın ilerleyen bölümünde bootstrap
+    # edildiğinde sidebar listesinin aynı ekranda yenilenebilmesi için başlangıç
+    # sayısını tut.
+    st.session_state['_v194_sidebar_snapshot_count_before']=len(_v189_saved)
     if _v189_saved:
         _v189_map={r['snapshot_key']:r for r in _v189_saved}
         _v189_key=st.selectbox(
@@ -46013,6 +46022,17 @@ def _v192_render_persistence_panel():
                 st.success(f'✅ Tam çalışma geri yüklendi: arşiv +{a} (atlanan {sk}) • akademik {ac} kayıt işlendi.'); st.rerun()
 
 
+# ============================================================
+# V194 — SNAPSHOT KALICILIK SERTLEŞTİRMESİ
+#
+# V193'te akademik/snapshot kalıcılık motoru mevcuttur. Ancak sol sidebar'daki
+# "MEVCUT SONUÇLARI SAKLA" arayüzü dosyanın daha erken bölümünde çalıştığı
+# için o tek yol, V192'nin sonradan tanımlanan sarmalayıcısını atlayabiliyordu.
+# V194 bu yolu session-state üzerinden run sonundaki kalıcılık motoruna bağlar.
+# Arama, tarih taraması, akademik kodlama ve Gephi mantığı değişmez.
+# ============================================================
+
+
 # -------- V192 otomatik akademik/snapshot kalıcılık sarmalayıcıları --------
 _V192_BASE_ACAD_ADD=_v174_academic_add
 _V192_BASE_ACAD_REMOVE=_v174_academic_remove
@@ -47382,12 +47402,34 @@ Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bi
         'V173 kararlı tarama/raporlama akışı korunur. Manuel Link Havuzu, Günlük Analiz Sepeti ve Günlük Rapor Arşivi aynen çalışır. '
         'V187 akademik metodoloji katmanı; dört kaynak ailesi, örneklem/dönem etiketleri, açık araştırmacı onayı, dönemsel Gephi ve normalize karşılaştırmaları uygular. V186 ile Kaynak Bazlı İzleme ve diğer haber tablolarında seçilen kayıtlar Günlük Sepete uğramadan doğrudan Akademik Kodlama Sepetine de aktarılabilir. Geçmiş tarih taraması soldaki Haber dönemi alanından yapılır; '
         'AI sonucu geri yüklenir ve Gephi yalnız araştırmacının kontrol ettiği Nihai Çerçeve alanından üretilir. '
-        'V192 ile arşiv JSON ve akademik kayıt bazlı dosyalardan kurtarma ile akademik/snapshot kalıcı yedekleme eklenmiştir.'
+        'V194 ile arşiv JSON ve akademik kayıt bazlı kurtarma korunmuş; akademik tarama snapshotlarının kaydedildiği anda kalıcı yedeğe geçirilmesi ve açılışta otomatik görünmesi güçlendirilmiştir.'
     )
 
-    # V192 — yeni/boş container açıldığında akademik kayıtlar ve çalışma snapshot'ları
+    # V194 — Sidebar'da kaydedilmiş bir çalışma varsa, bu run bitmeden
+    # AppData + (varsa) PRIVATE GitHub akademik yedeğine mutlaka geçir.
+    _v194_pending_snapshot=st.session_state.pop('_v194_snapshot_persist_pending',None)
+    if _v194_pending_snapshot=='save':
+        _v192_after_academic_change('V194 akademik tarama çalışması saklama')
+
+    # V192/V194 — yeni/boş container açıldığında akademik kayıtlar ve çalışma snapshot'ları
     # AppData / PRIVATE GitHub yedeğinden otomatik birleştirilir.
     _v192_bootstrap_academic_once()
+
+    # Bootstrap sidebar çizildikten sonra gerçekleştiği için, yedekten çalışma
+    # snapshot'ı geldiyse bir kez rerun ederek "Kayıtlı çalışmalar" listesini
+    # aynı açılışta görünür hale getir.
+    _v194_before=st.session_state.get('_v194_sidebar_snapshot_count_before',None)
+    try:
+        _v194_after=len(_v189_snapshot_list())
+    except Exception:
+        _v194_after=_v194_before
+    if (_v194_before is not None and _v194_after is not None
+            and int(_v194_after)!=int(_v194_before)
+            and not st.session_state.get('_v194_sidebar_refresh_done')):
+        st.session_state['_v194_sidebar_refresh_done']=True
+        st.rerun()
+    st.session_state.pop('_v194_sidebar_refresh_done',None)
+
     _v192_render_persistence_panel()
 
     _manual_tab,_daily_tab,_archive_tab,_academic_tab=st.tabs([
