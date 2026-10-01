@@ -45440,6 +45440,10 @@ def _v192_frame_code_any(value):
     return ''
 
 
+# V193 — Akademik Örneklem Envanteri uyumluluğu
+# V187 envanter dışa aktarımındaki kısa sütun adları (AI / Nihai / Onay / Planlı)
+# V192 kurtarma motorunda doğrudan tanınır. Arama, Gephi ve kodlama kuralları değişmez.
+
 def _v192_read_uploaded_table(uploaded):
     data=uploaded.getvalue() if hasattr(uploaded,'getvalue') else uploaded.read()
     name=str(getattr(uploaded,'name','') or '').lower()
@@ -45475,6 +45479,7 @@ def _v192_record_from_row(row):
         'Örneklem_Türü':('Örneklem_Türü','Örneklem Türü'),
         'Örneklem_Kodu':('Örneklem_Kodu','Örneklem Kodu','Örneklem'),
         'Dönem_Kodu':('Dönem_Kodu','Dönem Kodu','Dönem'),
+        'Planlı_Örneklem':('Planlı_Örneklem','Planlı Örneklem','Planlı'),
         'Kaynak Ailesi':('Kaynak Ailesi','Kaynak_Ailesi','Kaynak_Grubu','Kaynak Grubu'),
         'Kaynak':('Kaynak','Yayıncı'),
         'Başlık':('Başlık','Baslik'),
@@ -45526,7 +45531,7 @@ def _v192_recover_academic_upload(uploaded, researcher_approved=False):
         old=by_id.get(hid)
         rec=_v192_merge_record_fields(old or {},incoming)
 
-        ai_raw=_v192_pick(row,'AI_Çerçeve_Kodu','AI Çerçeve Kodu','AI_Çerçeve','AI Çerçevesi','AI Çerçeve')
+        ai_raw=_v192_pick(row,'AI_Çerçeve_Kodu','AI Çerçeve Kodu','AI_Çerçeve','AI Çerçevesi','AI Çerçeve','AI')
         ai_code=_v192_frame_code_any(ai_raw)
         if ai_code:
             rec['AI_Çerçeve_Kodu']=ai_code
@@ -45541,7 +45546,7 @@ def _v192_recover_academic_upload(uploaded, researcher_approved=False):
         if _v192_nonempty(review): rec['Manuel_İnceleme_Gerekli']=_v174_clean_scalar(review)
 
         final_raw=_v192_pick(
-            row,'Nihai_Çerçeve_Kodu','Nihai Çerçeve Kodu','Nihai_Çerçeve','Nihai Çerçeve',
+            row,'Nihai_Çerçeve_Kodu','Nihai Çerçeve Kodu','Nihai_Çerçeve','Nihai Çerçeve','Nihai',
             'Araştırmacı_Nihai_Kodu','Araştırmacı Nihai Kodu'
         )
         if researcher_approved and not _v192_nonempty(final_raw):
