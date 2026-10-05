@@ -19896,6 +19896,338 @@ def _v216_social_platform(row):
 # /V216 TELEGRAM + BLUESKY SAĞLAMLAŞTIRMA
 # ============================================================
 
+
+# ============================================================
+# V217 — GENİŞ SOSYAL MEDYA KAPSAMI / TELEGRAM + X + BLUESKY
+#
+# Kullanıcı tercihi: sosyal medya tarafında daraltma yerine yüksek recall.
+# - Telegram public kanalları seed + dinamik keşif + 24 saat derin sayfalama.
+# - X için ayrı doğrudan açık-web indeks turu; mevcut tekil site:x sorguları da kalır.
+# - Bluesky kısa sorgu havuzu genişletilir ve API sonucu olsa bile web fallback ile birleştirilir.
+# - Konu filtresi, süreçle ilişkili aktör/kurum/yer/eylem sözlüğüyle genişletilir.
+# - NSFW/pornografik içerik filtresi aynen korunur.
+# - Kalıcı yedek, analiz sepetleri ve Gephi katmanlarına dokunulmaz.
+# ============================================================
+
+V217_SOCIAL_STRONG_TERMS = (
+    'terorsuz turkiye','terörsüz türkiye','pkk','kck','ocalan','öcalan','imrali','imralı',
+    'silah birak','silah bırak','silahsizlan','silahsızlan','fesih','tasfiye',
+    'umut hakki','umut hakkı','demokratik entegrasyon','baris ve demokratik toplum',
+    'barış ve demokratik toplum','cozum sureci','çözüm süreci','baris sureci','barış süreci',
+    'milli dayanisma','milli dayanışma','kardeslik ve demokrasi komisyonu',
+    'kardeşlik ve demokrasi komisyonu','meclis komisyonu'
+)
+
+V217_SOCIAL_CONTEXT_TERMS = (
+    'dem parti','tuncer bakirhan','tuncer bakırhan','pervin buldan','mithat sancar',
+    'devlet bahceli','devlet bahçeli','numan kurtulmus','numan kurtulmuş',
+    'kandil','qandil','sdg','sdf','ypg','rojava','suriye','irak','erbil','suleymaniye','süleymaniye',
+    'kurt meselesi','kürt meselesi','kurt sorunu','kürt sorunu','kurt siyaseti','kürt siyaseti',
+    'kayyum','aihm','aİhm','infaz','tahliye','eve donus','eve dönüş','teslim ol','geri donus','geri dönüş',
+    'orgut mensubu','örgüt mensubu','silahli yapi','silahlı yapı','siyasi entegrasyon','hukuki duzenleme',
+    'hukuki düzenleme','yasal duzenleme','yasal düzenleme','toplumsal butunlesme','toplumsal bütünleşme'
+)
+
+V217_CONTEXT_ANCHORS = (
+    'turkiye','türkiye','pkk','kck','ocalan','öcalan','imrali','imralı','dem parti','kandil',
+    'kurt','kürt','teror','terör','silah','baris','barış','cozum','çözüm','süreç','surec'
+)
+
+
+def _v213_social_topic_match(row):
+    """V217: yüksek recall; açıkça süreçle ilişkili tek güçlü sinyal yeterlidir."""
+    r=row or {}
+    txt=norm(' '.join([
+        str(r.get('Başlık') or r.get('title') or ''),
+        str(r.get('İçerik_Özeti') or r.get('snippet') or r.get('body') or ''),
+        str(r.get('_origin_query') or '')
+    ]))
+    if not txt:
+        return False
+    if any(norm(t) in txt for t in V217_SOCIAL_STRONG_TERMS):
+        return True
+    # Bağlamsal aktör/yer/eylem terimlerinde ikinci bir süreç/Türkiye çıpası yeterlidir.
+    if any(norm(t) in txt for t in V217_SOCIAL_CONTEXT_TERMS):
+        if any(norm(a) in txt for a in V217_CONTEXT_ANCHORS):
+            return True
+    # Bölgesel güvenlik bağlantıları tek başına değil, Türkiye/PKK/Kürt süreci bağlamıyla alınır.
+    if any(x in txt for x in ('sdg','sdf','ypg','rojava')) and any(
+        x in txt for x in ('turkiye','türkiye','pkk','kck','ocalan','öcalan','kurt','kürt','süreç','surec')
+    ):
+        return True
+    return False
+
+
+# Genel keşif sözlüğünü de büyüt; Telegram/YouTube/Mastodon web keşfi bundan faydalanır.
+V215_DISCOVERY_TOPICS = list(dict.fromkeys([
+    '"Terörsüz Türkiye"',
+    'Öcalan İmralı Türkiye',
+    'PKK Türkiye',
+    'KCK Türkiye',
+    'PKK "silah bırakma"',
+    'PKK silahsızlanma',
+    'PKK fesih',
+    '"umut hakkı" Öcalan',
+    '"demokratik entegrasyon" Öcalan',
+    '"Barış ve Demokratik Toplum" Öcalan',
+    '"Meclis komisyonu" PKK Öcalan',
+    '"DEM Parti" Öcalan',
+    '"DEM Parti" PKK',
+    'Tuncer Bakırhan Öcalan',
+    'Pervin Buldan İmralı',
+    'Bahçeli Öcalan',
+    'Kandil Öcalan',
+    'SDG YPG PKK Türkiye',
+    'Suriye Kürt PKK Türkiye',
+    'Irak Kürt PKK Türkiye',
+    '"çözüm süreci" PKK',
+    '"barış süreci" Öcalan'
+]))
+
+
+# Telegram — doğrulanmış/çalışan public kanallardan başlangıç havuzunu genişlet.
+V216_TELEGRAM_SEED_CHANNELS = list(dict.fromkeys(V216_TELEGRAM_SEED_CHANNELS + [
+    'Haber_Panosu','ibrahimhaskologlu','medyahabertv1'
+]))
+
+
+def _v217_fetch_telegram_channel_deep(channel,hours,max_pages=3):
+    """Public t.me/s görünümünü 24 saat penceresi dolana kadar birkaç sayfa geriye tarar."""
+    cutoff=_v215_cutoff(hours)
+    out=[]; before=None; seen_urls=set(); seen_before=set()
+    for _page in range(max(1,int(max_pages))):
+        base=f'https://t.me/s/{channel}'
+        url=(base+f'?before={before}') if before else base
+        try:
+            rr=requests.get(
+                url,
+                headers={**HEADERS,'Accept-Language':'tr-TR,tr;q=0.9,en;q=0.7'},
+                timeout=9
+            )
+            if rr.status_code>=400 or not rr.text:
+                break
+            soup=BeautifulSoup(rr.text,'html.parser')
+        except Exception:
+            break
+
+        boxes=soup.select('div.tgme_widget_message_wrap') or soup.select('div.tgme_widget_message')
+        if not boxes:
+            break
+        page_ids=[]; oldest=None; any_fresh=False
+        for box in boxes:
+            try:
+                post,msg,dt,msg_url=_v216_telegram_message_parts(box)
+                if post:
+                    m=re.search(r'/(\d+)$',post)
+                    if m: page_ids.append(int(m.group(1)))
+                if not post or not msg or not msg_url or not dt:
+                    continue
+                if oldest is None or dt < oldest:
+                    oldest=dt
+                if dt < cutoff:
+                    continue
+                any_fresh=True
+                title=msg[:260]
+                probe={'title':title,'snippet':msg,'url':msg_url}
+                if _v212_social_adult_noise(title,msg,msg_url):
+                    continue
+                if not _v213_social_topic_match(probe):
+                    continue
+                if msg_url in seen_urls:
+                    continue
+                seen_urls.add(msg_url)
+                out.append({
+                    'title':title,'url':msg_url,'date':dt.isoformat(),'snippet':msg[:3000],
+                    'source':f'Telegram / {channel}','source_url':f'https://t.me/{channel}'
+                })
+            except Exception:
+                continue
+
+        # Sayfanın en eski mesajı pencerenin dışındaysa daha geriye gitmeye gerek yok.
+        if oldest is not None and oldest < cutoff:
+            break
+        if not page_ids:
+            break
+        nxt=min(page_ids)
+        if nxt in seen_before or nxt<=1:
+            break
+        seen_before.add(nxt); before=nxt
+        if not any_fresh and oldest is not None:
+            break
+    return dedupe(out)
+
+
+def _v215_fetch_telegram_channel(channel,hours):
+    # 24 saat için hızlı kanallarda tek sayfa yetersiz kalabildiğinden 3 sayfa;
+    # daha geniş pencerelerde 4 sayfa üst sınırı kullanılır.
+    try:
+        h=int(hours or 24)
+    except Exception:
+        h=24
+    return _v217_fetch_telegram_channel_deep(channel,hours,max_pages=(3 if h<=24 else 4))
+
+
+def _v215_telegram_public_raw(query,hours):
+    # Seed kanallar + çok daha geniş dinamik kanal keşfi birlikte çalışır.
+    channels=list(V216_TELEGRAM_SEED_CHANNELS)
+    raw=[]
+    # Yüksek recall için ilk 16 konu; DDGS+Bing birlikte.
+    for topic in V215_DISCOVERY_TOPICS[:16]:
+        q=f'{topic} (site:t.me/s OR site:t.me OR site:telegram.me)'
+        try:
+            raw.extend(_v6_ddgs_raw(q,65) or [])
+        except Exception:
+            pass
+        try:
+            raw.extend(_v19_bing_web_rss(q,timeout=7) or [])
+        except Exception:
+            pass
+
+    for r in raw:
+        ch=_v215_telegram_channel_from_url(r.get('url') or r.get('link'))
+        if ch and ch not in channels:
+            channels.append(ch)
+        if len(channels)>=36:
+            break
+
+    out=[]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(12,max(1,len(channels)))) as ex:
+        fmap={ex.submit(_v215_fetch_telegram_channel,ch,hours):ch for ch in channels}
+        for fut in concurrent.futures.as_completed(fmap):
+            try:
+                out.extend(fut.result() or [])
+            except Exception:
+                pass
+    return dedupe(out)
+
+
+# Bluesky — konu havuzu geniş; API sonucu gelse bile açık web fallback'i de birleştir.
+V216_BLUESKY_TERMS = [
+    'Terörsüz Türkiye','PKK','Öcalan','Ocalan','İmralı','Imrali','KCK','DEM Parti',
+    'silah bırakma','silahsızlanma','PKK fesih','umut hakkı','demokratik entegrasyon',
+    'Barış ve Demokratik Toplum','Tuncer Bakırhan','Pervin Buldan','Kandil',
+    'SDG PKK','YPG PKK','SDF Turkey','Turkey PKK peace process','PKK disarmament',
+    'Kurdish peace process Turkey','Ocalan Turkey'
+]
+
+
+def _v20_bluesky_raw(query,hours):
+    terms=[]
+    core=_v20_social_core_query(query)
+    if core and len(core)<=100:
+        # Büyük OR sorgusu olsa bile ilk anlamlı parçaları kaybetme.
+        parts=[x.strip(' "()') for x in re.split(r'\s+(?:OR|AND)\s+',core,flags=re.I) if x.strip(' "()')]
+        terms.extend(parts[:3] if parts else [core.strip(' "')])
+    terms.extend(V216_BLUESKY_TERMS)
+    terms=list(dict.fromkeys([t for t in terms if str(t).strip()]))[:20]
+
+    out=[]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8,max(1,len(terms)))) as ex:
+        futs=[ex.submit(_v216_bsky_search_api,t,hours) for t in terms]
+        for fut in concurrent.futures.as_completed(futs):
+            try:
+                out.extend(fut.result() or [])
+            except Exception:
+                pass
+
+    # API'nin bulduklarıyla yetinme; indekslenmiş postları da ekle.
+    try:
+        out.extend(_v216_bsky_web_fallback(hours) or [])
+    except Exception:
+        pass
+    return dedupe([r for r in out if _v212_social_record_allowed(r) and _v213_social_topic_match(r)])
+
+
+# X — TR ve dünya DDGS indekslerini birlikte tara; ilk bölgede sonuç bulundu diye durma.
+def _v214_ddgs_unbounded(query,max_results=80):
+    q=_v6_clean_query(query)
+    try:
+        from ddgs import DDGS
+    except Exception:
+        try:
+            from duckduckgo_search import DDGS
+        except Exception:
+            return []
+    out=[]; seen=set()
+    for region in ('tr-tr','wt-wt'):
+        try:
+            with DDGS() as engine:
+                try:
+                    items=list(engine.text(q,region=region,safesearch='moderate',max_results=max_results))
+                except TypeError:
+                    items=list(engine.text(q,region=region,max_results=max_results))
+        except Exception:
+            items=[]
+        for item in items or []:
+            url=str(item.get('href') or item.get('url') or '').strip()
+            title=str(item.get('title') or '').strip()
+            if not url or not title or url in seen:
+                continue
+            seen.add(url)
+            out.append({
+                'title':title,'url':url,
+                'date':item.get('date') or item.get('published') or '',
+                'snippet':str(item.get('body') or item.get('snippet') or item.get('description') or ''),
+                'source':'x.com','source_url':'https://x.com'
+            })
+    return out
+
+
+def _v217_x_direct_queries():
+    terms=[
+        '"Terörsüz Türkiye"','Öcalan','İmralı','PKK Türkiye','KCK Türkiye',
+        'PKK silah bırakma','PKK silahsızlanma','PKK fesih','"umut hakkı" Öcalan',
+        '"DEM Parti" Öcalan','Tuncer Bakırhan Öcalan','Pervin Buldan İmralı',
+        'Bahçeli Öcalan','Kandil Öcalan','SDG PKK Türkiye','YPG PKK Türkiye',
+        '"Barış ve Demokratik Toplum"','"çözüm süreci" PKK','"barış süreci" Öcalan'
+    ]
+    return [f'{t} site:x.com' for t in terms]
+
+
+def _v217_x_direct_raw(query,hours):
+    queries=_v217_x_direct_queries()
+    out=[]
+    # Her alt sorgu kendi DDGS+Bing + snowflake doğrulamasını yapar.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex:
+        futs=[ex.submit(_v214_x_public_raw,q,hours) for q in queries]
+        for fut in concurrent.futures.as_completed(futs):
+            try:
+                out.extend(fut.result() or [])
+            except Exception:
+                pass
+    return dedupe([r for r in out if _v212_social_record_allowed(r)])
+
+
+_V217_BASE_V22_SOCIAL_QUERIES=_v22_social_queries
+
+def _v22_social_queries():
+    base=list(_V217_BASE_V22_SOCIAL_QUERIES() or [])
+    # Doğrudan X turu ve Telegram turu listenin başında olsun; mevcut tüm
+    # platform sorguları aynen devam eder.
+    return list(dict.fromkeys(['__V217_X_DIRECT__','__V215_TELEGRAM_DIRECT__']+base))
+
+
+_V217_BASE_V22_ENGINES=_v22_engines
+
+def _v22_engines(mode,q):
+    if mode=='social' and str(q or '').strip()=='__V217_X_DIRECT__':
+        return ['X Public Index Direct']
+    return _V217_BASE_V22_ENGINES(mode,q)
+
+
+_V217_BASE_V22_ENGINE_CALL=_v22_engine_call
+
+def _v22_engine_call(engine,q,mode,timespan,hours,cache_snapshot):
+    if engine=='X Public Index Direct':
+        return _v215_direct_engine_result(
+            engine,q,mode,hours,cache_snapshot,_v217_x_direct_raw,8
+        )
+    return _V217_BASE_V22_ENGINE_CALL(engine,q,mode,timespan,hours,cache_snapshot)
+
+# ============================================================
+# /V217 GENİŞ SOSYAL MEDYA KAPSAMI
+# ============================================================
+
 if run and not custom_date_mode:
     st.session_state.pop('_v20_frame_cmp_rows',None)
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
