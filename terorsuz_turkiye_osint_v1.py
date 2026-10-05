@@ -10973,79 +10973,9 @@ if 'history_status' not in st.session_state: st.session_state.history_status=_in
 if 'basket_docx_bytes' not in st.session_state: st.session_state.basket_docx_bytes=None
 if 'section_selections' not in st.session_state: st.session_state.section_selections={}
 
-# V189 — yalnız mevcut sonuçları saklayan/geri yükleyen çalışma katmanı.
-with st.sidebar.expander('💾 Akademik Tarama Çalışması',expanded=False):
-    _v189_current_count=len(_v189_rows_as_records())
-    _v189_default_label=_v189_suggest_label() if _v189_current_count else ''
-    if st.session_state.get('_v189_active_snapshot_label'):
-        st.info(f"📚 Açık çalışma: {st.session_state.get('_v189_active_snapshot_label')}")
-    st.caption(
-        'Bu bölüm yeni arama yapmaz. Yalnız ekrandaki mevcut tarama sonucunu kalıcı olarak saklar ve sonra geri yükler. '
-        'Güncel taramaya geçmeniz V188 arama mantığını değiştirmez.'
-    )
-    st.info('🛡️ V195: Kaydettiğiniz çalışma; kayıtlı snapshot listesiyle birlikte yerel kalıcı akademik yedeğe, bağlantı varsa PRIVATE GitHub yedeğine de aktarılır.')
-    _v195_sidebar_note=st.session_state.pop('_v195_snapshot_sync_note',None)
-    if _v195_sidebar_note:
-        _v195_ok,_v195_msg=_v195_sidebar_note
-        (st.success if _v195_ok else st.warning)(_v195_msg)
-    _v189_name=st.text_input(
-        'Çalışma adı (opsiyonel)',
-        value='',
-        placeholder=_v189_default_label or 'Örn. M1 — 15.10.2024–29.10.2024',
-        key='v189_snapshot_name'
-    )
-    if st.button(
-        f'💾 MEVCUT SONUÇLARI SAKLA ({_v189_current_count})',
-        use_container_width=True,
-        disabled=(_v189_current_count==0),
-        key='v189_save_snapshot'
-    ):
-        _v189_res=_v189_snapshot_save(_v189_name)
-        if _v189_res.get('ok'):
-            # V194 — Sidebar bu noktada V192/V193 kalıcılık sarmalayıcılarından
-            # önce çalıştığı için, yedeği aynı run'ın sonunda güvenle eşitle.
-            st.session_state['_v194_snapshot_persist_pending']='save'
-            st.success('✅ '+_v189_res.get('message','')+' • Kalıcı yedekleme kuyruğuna alındı.')
-        else:
-            st.error(_v189_res.get('message','Çalışma saklanamadı.'))
-
-    _v189_saved=_v189_snapshot_list()
-    # V194 — Uzak/yerel akademik yedek run'ın ilerleyen bölümünde bootstrap
-    # edildiğinde sidebar listesinin aynı ekranda yenilenebilmesi için başlangıç
-    # sayısını tut.
-    st.session_state['_v194_sidebar_snapshot_count_before']=len(_v189_saved)
-    if _v189_saved:
-        _v189_map={r['snapshot_key']:r for r in _v189_saved}
-        _v189_key=st.selectbox(
-            'Kayıtlı çalışmalar',
-            options=[r['snapshot_key'] for r in _v189_saved],
-            format_func=lambda k:f"💾 {_v189_map[k]['label']} • {_v189_map[k]['row_count']} haber",
-            key='v189_snapshot_select'
-        )
-        _v189_c1,_v189_c2=st.columns(2)
-        if _v189_c1.button('↩️ ÇALIŞMAYA DÖN',use_container_width=True,key='v189_restore_snapshot'):
-            _v189_res=_v189_snapshot_restore(_v189_key)
-            if _v189_res.get('ok'):
-                st.session_state['_v189_flash']='✅ '+_v189_res.get('message','')
-                st.rerun()
-            else:
-                st.error(_v189_res.get('message','Çalışma geri yüklenemedi.'))
-        if _v189_c2.button('🗑️ KAYDI SİL',use_container_width=True,key='v189_delete_snapshot'):
-            if _v189_snapshot_delete(_v189_key):
-                st.session_state['_v189_flash']='🗑️ Kayıtlı çalışma silindi.'
-                st.rerun()
-            else:
-                st.error('Kayıt silinemedi.')
-    else:
-        st.caption('Henüz kayıtlı çalışma yok.')
-
-_v189_flash=st.session_state.pop('_v189_flash',None)
-if _v189_flash:
-    st.success(_v189_flash)
-
-# Yeni bir tarama başlatılırsa yalnız "aktif snapshot" etiketi temizlenir; kayıtlı snapshot silinmez.
-if run:
-    st.session_state.pop('_v189_active_snapshot_label',None)
+# V213 — Akademik tarama çalışma/snapshot arayüzü kaldırıldı.
+# Arka uç tabloları eski yedek uyumluluğu için dosyada bırakılır; görünür uygulama
+# artık akademik çalışma saklama/geri yükleme akışını çağırmaz.
 
 
 # ============================================================
@@ -18692,6 +18622,108 @@ def _v185_raw_to_daily_row(item,mode,q,engine,day):
 
 # ============================================================
 # /V212 TARAMA KAPSAMI / SOSYAL GÜVENLİK
+# ============================================================
+
+
+# ============================================================
+# V213 — TÜRKÇE X / SOSYAL MEDYA KAPSAM GENİŞLETME
+#
+# Amaç: X'in herkese açık web indeksine düşen Türkçe Terörsüz Türkiye
+# paylaşımlarını olabildiğince geniş yakalamak; sosyal sonuçlarda konu dışı
+# Reddit/web gürültüsünü kesmek. X'in kapalı/indekslenmemiş içerikleri veya
+# platform API'sinin göstermediği paylaşımlar açık web aramasıyla alınamaz.
+# ============================================================
+
+_V213_BASE_SOCIAL_QUERIES=build_social_queries
+
+def _v213_x_queries():
+    # Ayrı kısa sorgular, tek bir dev OR sorgusundan daha iyi indeks kapsaması
+    # verir. Türkçe kavramlar özellikle öne çıkarılmıştır.
+    terms=[
+        '"Terörsüz Türkiye"',
+        '"Terorsuz Turkiye"',
+        '"silah bırakma" PKK',
+        '"silah bırakıyor" PKK',
+        'silahsızlanma PKK',
+        '"PKK fesih"',
+        '"PKK feshi"',
+        'Öcalan İmralı süreç',
+        'Ocalan Imrali süreç',
+        '"umut hakkı" Öcalan',
+        '"çözüm süreci" PKK',
+        '"barış süreci" PKK',
+        '"demokratik entegrasyon" Öcalan',
+        '"Milli Dayanışma Kardeşlik ve Demokrasi Komisyonu"',
+        '"Meclis komisyonu" PKK Öcalan',
+        '"DEM Parti" Öcalan süreç',
+        'MHP Öcalan süreç',
+        'Kandil Öcalan silah',
+        'SDG PKK Türkiye süreç',
+        'YPG PKK Türkiye süreç'
+    ]
+    q=[]
+    for term in terms:
+        q.append(f'{term} site:x.com')
+        # Eski twitter.com indeksleri halen sonuç döndürebildiği için koru.
+        q.append(f'{term} site:twitter.com')
+    return q
+
+
+def build_social_queries(when):
+    base=list(_V213_BASE_SOCIAL_QUERIES(when) or [])
+    # Önce Türkçe X sorguları: motorların ilk işlerinde X kapsaması oluşsun.
+    return list(dict.fromkeys(_v213_x_queries()+base))
+
+
+V213_SOCIAL_CORE_TERMS=(
+    'terorsuz turkiye','pkk','kck','ocalan','öcalan','imrali','imralı',
+    'silah birak','silah bırak','silahsizlan','silahsızlan','fesih',
+    'umut hakki','umut hakkı','cozum sureci','çözüm süreci','baris sureci',
+    'barış süreci','demokratik entegrasyon','milli dayanisma','milli dayanışma',
+    'kardeslik ve demokrasi komisyonu','kardeşlik ve demokrasi komisyonu'
+)
+
+def _v213_social_topic_match(row):
+    r=row or {}
+    txt=norm(' '.join([
+        str(r.get('Başlık') or r.get('title') or ''),
+        str(r.get('İçerik_Özeti') or r.get('snippet') or r.get('body') or ''),
+    ]))
+    if any(norm(t) in txt for t in V213_SOCIAL_CORE_TERMS):
+        return True
+    # SDF/YPG tek başına çok geniştir; Türkiye/PKK/Öcalan bağlamı ister.
+    if any(x in txt for x in ('sdf','sdg','ypg')) and any(x in txt for x in ('turkiye','türkiye','pkk','ocalan','öcalan')):
+        return True
+    return False
+
+_V213_BASE_NORMALIZE_ROWS=normalize_rows
+
+def normalize_rows(raw,cutoff,mode,user_query):
+    rows,reasons=_V213_BASE_NORMALIZE_ROWS(raw,cutoff,mode,user_query)
+    if mode!='social':
+        return rows,reasons
+    kept=[]
+    for r in rows or []:
+        if not _v212_social_record_allowed(r):
+            reasons['kaynak']=int(reasons.get('kaynak',0) or 0)+1
+            continue
+        if not _v213_social_topic_match(r):
+            reasons['konu']=int(reasons.get('konu',0) or 0)+1
+            continue
+        kept.append(r)
+    return kept,reasons
+
+# Kurtarma turunda da Türkçe X sorgularına öncelik ver.
+_V213_BASE_RESCUE_QUERIES=_v35_rescue_queries
+
+def _v35_rescue_queries(mode):
+    q=list(_V213_BASE_RESCUE_QUERIES(mode) or [])
+    if mode=='social':
+        q=_v213_x_queries()[:20]+q
+    return list(dict.fromkeys(q))
+
+# ============================================================
+# /V213 TÜRKÇE X / SOSYAL MEDYA
 # ============================================================
 
 if run and not custom_date_mode:
@@ -46289,47 +46321,135 @@ def _v192_render_academic_recovery_panel():
                 if res.get('ok'): st.rerun()
 
 
-def _v192_render_persistence_panel():
-    with st.expander('🛡️ V195 — Kalıcı Çalışma Güvencesi',expanded=False):
-        note=st.session_state.pop('_v192_bootstrap_note',None)
-        if note: st.info(note)
-        last=st.session_state.pop('_v192_last_academic_sync',None)
-        if last:
-            ok,msg=last; (st.success if ok else st.warning)(msg)
-        cfg=_v192_remote_cfg()
-        if cfg.get('ok'):
-            st.success(f"🔒 Arşiv + akademik kalıcı bağlantısı hazır: {cfg['repo']}")
-            st.caption(f"Arşiv: {cfg.get('path','')} • Akademik/snapshot: {cfg.get('academic_path','')}")
-        else:
-            st.warning(
-                'Şu anda AppData yerel yedek çalışır; ancak Streamlit Cloud yeniden deploy/container değişiminde kalıcı güvence için PRIVATE GitHub bağlantısı gerekir. '
-                'Mevcut V161 [archive] secrets ayarı akademik yedek için de otomatik kullanılır.'
-            )
-        c1,c2=st.columns(2)
-        if c1.button('☁️ AKADEMİK DURUMU ŞİMDİ KALICI YEDEKLE',use_container_width=True,key='v192_force_academic_sync'):
-            ok,msg=_v192_sync_academic_remote(); (st.success if ok else st.warning)(msg)
-        if c2.button('☁️ KALICI AKADEMİK YEDEKTEN GERİ YÜKLE',use_container_width=True,key='v192_force_academic_pull',disabled=not cfg.get('ok')):
-            remote,sha,msg,reachable=_v192_remote_get()
-            if remote:
-                n,sn,err=_v192_apply_academic_state(remote)
-                if err: st.error(err)
-                else:
-                    st.success(f'✅ {n} akademik kayıt ve {sn} çalışma snapshotı geri yüklendi.'); st.rerun()
-            else: st.warning(msg or 'Uzak akademik yedek bulunamadı.')
+def _v213_workspace_backup_payload():
+    """Görünür çalışma alanını tek JSON'da sakla: manuel havuz + günlük sepet + arşiv."""
+    try:
+        manual=[dict(r) for r in (_v140_manual_pool() or [])]
+    except Exception:
+        manual=[]
+    try:
+        daily=[dict(r) for r in (_v136_daily_basket() or [])]
+    except Exception:
+        daily=[]
+    try:
+        archive=[dict(r) for r in (_v136_archive_basket() or [])]
+    except Exception:
+        archive=[]
+    return {
+        'schema':'terorsuz_turkiye_workspace_backup_v213',
+        'updated_at':datetime.now(timezone.utc).isoformat(),
+        'manual_link_pool':manual,
+        'daily_analysis_basket':daily,
+        'daily_report_archive':archive,
+        'counts':{
+            'manual_link_pool':len(manual),
+            'daily_analysis_basket':len(daily),
+            'daily_report_archive':len(archive),
+        }
+    }
 
-        full=_v192_full_backup_payload()
-        st.download_button(
-            '⬇️ TAM ÇALIŞMA YEDEĞİ (Arşiv + Akademik + Snapshot)',
-            json.dumps(full,ensure_ascii=False,indent=2,default=str).encode('utf-8'),
-            'Terorsuz_Turkiye_Tam_Calisma_Yedegi_V195.json','application/json',
-            use_container_width=True,key='v192_download_full_backup'
+
+def _v213_json_bytes(obj):
+    return json.dumps(obj,ensure_ascii=False,indent=2,default=str).encode('utf-8')
+
+
+def _v213_restore_workspace_backup(data):
+    try:
+        raw=bytes(data or b'')
+        if raw[:2]==b'\x1f\x8b':
+            raw=_v192_gzip.decompress(raw)
+        obj=json.loads(raw.decode('utf-8-sig'))
+    except Exception as e:
+        return {'ok':False,'message':f'Yedek okunamadı: {type(e).__name__}'}
+    if not isinstance(obj,dict):
+        return {'ok':False,'message':'Çalışma yedeği geçersiz.'}
+
+    manual=obj.get('manual_link_pool') or []
+    daily=obj.get('daily_analysis_basket') or []
+    archive=obj.get('daily_report_archive') or []
+    if not all(isinstance(x,list) for x in (manual,daily,archive)):
+        return {'ok':False,'message':'Yedek bölümleri beklenen JSON liste biçiminde değil.'}
+
+    try:
+        m=_v140_add_manual_records(manual)
+    except Exception:
+        m=0
+    try:
+        d=_v136_daily_add(daily)
+    except Exception:
+        d=0
+    try:
+        a=_v163_archive_add_records(archive,preserve_day=True,sync_remote=True)
+    except Exception:
+        try:
+            a=_v136_archive_add(archive)
+        except Exception:
+            a=0
+    return {
+        'ok':True,
+        'manual_added':int(m or 0),
+        'daily_added':int(d or 0),
+        'archive_added':int(a or 0),
+        'message':f'Geri yükleme tamamlandı: manuel +{int(m or 0)} • günlük sepet +{int(d or 0)} • arşiv +{int(a or 0)}.'
+    }
+
+
+def _v192_render_persistence_panel():
+    with st.expander('🛡️ V213 — Kalıcı Çalışma Güvencesi',expanded=False):
+        st.caption(
+            'Tam çalışma yedeği yalnız görünür çalışma alanını içerir: Manuel Link Havuzu, '
+            'Günlük Analiz Sepeti ve Günlük Rapor Arşivi. Akademik kodlama/snapshot bu yedeğe dahil değildir.'
         )
-        up=st.file_uploader('Tam çalışma yedeğini geri yükle (.json veya .gz)',type=['json','gz'],key='v192_full_backup_upload')
-        if up is not None and st.button('♻️ TAM ÇALIŞMA YEDEĞİNİ GERİ YÜKLE',use_container_width=True,key='v192_restore_full_backup'):
-            a,sk,ac,err=_v192_restore_full_backup(up.getvalue())
-            if err: st.error(err)
-            else:
-                st.success(f'✅ Tam çalışma geri yüklendi: arşiv +{a} (atlanan {sk}) • akademik {ac} kayıt işlendi.'); st.rerun()
+        cfg=_v161_remote_cfg() if '_v161_remote_cfg' in globals() else {'ok':False}
+        if cfg.get('ok'):
+            st.success(f"🔒 Günlük Rapor Arşivi kalıcı bağlantısı hazır: {cfg.get('repo','')}")
+            st.caption(f"Arşiv uzak yolu: {cfg.get('path','')}")
+        else:
+            st.info('Manuel Link Havuzu ve Günlük Analiz Sepeti yerel SQLite içinde korunur; aşağıdaki JSON yedekleriyle ayrıca dışa aktarılabilir.')
+
+        manual=list(_v140_manual_pool() or [])
+        daily=list(_v136_daily_basket() or [])
+        archive=list(_v136_archive_basket() or [])
+
+        c1,c2,c3=st.columns(3)
+        c1.download_button(
+            f'⬇️ MANUEL LİNK JSON ({len(manual)})',
+            _v213_json_bytes({'schema':'manual_link_pool_v213','records':manual}),
+            'Manuel_Link_Havuzu_V213.json','application/json',
+            use_container_width=True,key='v213_download_manual_json'
+        )
+        c2.download_button(
+            f'⬇️ GÜNLÜK SEPET JSON ({len(daily)})',
+            _v213_json_bytes({'schema':'daily_analysis_basket_v213','records':daily}),
+            'Gunluk_Analiz_Sepeti_V213.json','application/json',
+            use_container_width=True,key='v213_download_daily_json'
+        )
+        c3.download_button(
+            f'⬇️ ARŞİV JSON ({len(archive)})',
+            _v213_json_bytes({'schema':'daily_report_archive_v213','records':archive}),
+            'Gunluk_Rapor_Arsivi_V213.json','application/json',
+            use_container_width=True,key='v213_download_archive_json'
+        )
+
+        full=_v213_workspace_backup_payload()
+        st.download_button(
+            '⬇️ TAM ÇALIŞMA YEDEĞİ (Manuel + Günlük Sepet + Arşiv)',
+            _v213_json_bytes(full),
+            'Terorsuz_Turkiye_Tam_Calisma_Yedegi_V213.json','application/json',
+            use_container_width=True,key='v213_download_full_backup'
+        )
+        up=st.file_uploader(
+            'Tam çalışma yedeğini geri yükle (.json veya .gz)',
+            type=['json','gz'],key='v213_full_backup_upload'
+        )
+        if up is not None and st.button(
+            '♻️ TAM ÇALIŞMA YEDEĞİNİ GERİ YÜKLE',
+            use_container_width=True,key='v213_restore_full_backup'
+        ):
+            res=_v213_restore_workspace_backup(up.getvalue())
+            (st.success if res.get('ok') else st.error)(res.get('message',''))
+            if res.get('ok'):
+                st.rerun()
 
 
 # ============================================================
@@ -47701,41 +47821,10 @@ Bu çıktı artık sadece “Yerli Basın ↔ Siyasi Süreç” gibi hacimsel bi
     st.caption(
         'Manuel Link Havuzu, Günlük Analiz Sepeti ve Günlük Rapor Arşivi birlikte çalışır. '
         'Seçilen içerikler günlük sepette toplanabilir, arşive aktarılabilir ve mevcut Gephi/Word analiz akışında kullanılabilir. '
-        'Kalıcı yedek, tam çalışma yedeği ve snapshot güvence mekanizmaları aynen korunmuştur.'
+        'Kalıcı arşiv yapısı korunur; tam çalışma yedeği Manuel Link Havuzu, Günlük Analiz Sepeti ve Günlük Rapor Arşivini JSON olarak içerir.'
     )
 
-    # V194 — Sidebar'da kaydedilmiş bir çalışma varsa, bu run bitmeden
-    # AppData + (varsa) PRIVATE GitHub akademik yedeğine mutlaka geçir.
-    _v194_pending_snapshot=st.session_state.pop('_v194_snapshot_persist_pending',None)
-    if _v194_pending_snapshot=='save':
-        _v192_after_academic_change('V195 akademik tarama çalışması saklama')
-        _v195_last=st.session_state.get('_v192_last_academic_sync')
-        if _v195_last:
-            _v195_ok,_v195_msg=_v195_last
-            st.session_state['_v195_snapshot_sync_note']=(
-                bool(_v195_ok),
-                ('✅ ' if _v195_ok else '⚠️ ')+str(_v195_msg or 'Kalıcı akademik yedek güncellendi.')
-            )
-        st.rerun()
-
-    # V192/V194 — yeni/boş container açıldığında akademik kayıtlar ve çalışma snapshot'ları
-    # AppData / PRIVATE GitHub yedeğinden otomatik birleştirilir.
-    _v192_bootstrap_academic_once()
-
-    # Bootstrap sidebar çizildikten sonra gerçekleştiği için, yedekten çalışma
-    # snapshot'ı geldiyse bir kez rerun ederek "Kayıtlı çalışmalar" listesini
-    # aynı açılışta görünür hale getir.
-    _v194_before=st.session_state.get('_v194_sidebar_snapshot_count_before',None)
-    try:
-        _v194_after=len(_v189_snapshot_list())
-    except Exception:
-        _v194_after=_v194_before
-    if (_v194_before is not None and _v194_after is not None
-            and int(_v194_after)!=int(_v194_before)
-            and not st.session_state.get('_v194_sidebar_refresh_done')):
-        st.session_state['_v194_sidebar_refresh_done']=True
-        st.rerun()
-    st.session_state.pop('_v194_sidebar_refresh_done',None)
+    # V213 — Akademik snapshot/kalıcılık çağrıları görünür iş akışından çıkarıldı.
 
     _v192_render_persistence_panel()
 
