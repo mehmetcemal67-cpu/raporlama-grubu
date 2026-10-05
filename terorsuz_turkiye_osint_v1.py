@@ -18726,6 +18726,348 @@ def _v35_rescue_queries(mode):
 # /V213 TÜRKÇE X / SOSYAL MEDYA
 # ============================================================
 
+
+# ============================================================
+# V214 — X AÇIK WEB İNDEKSİ / SOSYAL HAVUZ TEMİZLİĞİ
+#
+# V213'te build_social_queries genişletilmişti; ancak V22 ana tarama
+# build_social_queries() yerine _v22_social_queries() kullandığı için yeni
+# Türkçe X sorguları ana taramaya hiç girmiyordu. Bu katman doğrudan V22
+# sorgu kaynağını genişletir.
+#
+# Ayrıca 24 saat DDGS timelimit='d' filtresi X postlarını sıkça sıfıra
+# düşürdüğünden X için ayrı bir "X Public Index" motoru kullanılır:
+# - DDGS'yi recency kısıtı olmadan tarar,
+# - Bing genel web RSS ile birleştirir,
+# - yalnız /status/<snowflake> X/Twitter post URL'lerini kabul eder,
+# - tweet zamanını Twitter snowflake ID'sinden çıkarıp seçili saat penceresini
+#   uygulama içinde kesin olarak filtreler,
+# - mümkünse publish.twitter.com/oembed üzerinden gerçek tweet metni ve
+#   hesap adını zenginleştirir.
+#
+# Not: Bu yöntem yalnız web arama motorlarına açıkça indekslenmiş herkese açık
+# X postlarını toplar. X'in indekslemediği/kapalı içeriklerini API olmadan
+# eksiksiz almak mümkün değildir.
+# ============================================================
+
+_V214_BASE_V22_SOCIAL_QUERIES=_v22_social_queries
+
+def _v214_x_topic_queries():
+    # Türkçe süreç sözlüğü: kısa sorgular arama motorlarında büyük OR
+    # sorgularından daha güvenilir sonuç verir.
+    return [
+        '"Terörsüz Türkiye" site:x.com',
+        '"Terorsuz Turkiye" site:x.com',
+        'Öcalan süreç site:x.com',
+        'İmralı süreç site:x.com',
+        'PKK "silah bırakma" site:x.com',
+        'PKK silahsızlanma site:x.com',
+        'PKK fesih site:x.com',
+        '"umut hakkı" Öcalan site:x.com',
+        '"çözüm süreci" PKK site:x.com',
+        '"barış süreci" PKK site:x.com',
+        '"demokratik entegrasyon" Öcalan site:x.com',
+        '"Meclis komisyonu" PKK site:x.com',
+        '"DEM Parti" Öcalan site:x.com',
+        'MHP Öcalan süreç site:x.com',
+        'Kandil Öcalan süreç site:x.com',
+        'SDG PKK Türkiye site:x.com',
+        'YPG PKK Türkiye site:x.com',
+        'Suriye PKK Öcalan süreç site:x.com',
+        'Irak PKK silahsızlanma site:x.com',
+        'KCK Öcalan süreç site:x.com',
+    ]
+
+
+def _v22_social_queries():
+    base=list(_V214_BASE_V22_SOCIAL_QUERIES() or [])
+    # X sorgularını başa al. Eski twitter.com kopyasını burada çoğaltmıyoruz;
+    # X Public Index motoru her sorgunun twitter.com varyantını kendi içinde
+    # ayrıca dener.
+    return list(dict.fromkeys(_v214_x_topic_queries()+base))
+
+
+def _v214_x_snowflake_dt(value):
+    try:
+        sid=int(str(value).strip())
+        ms=(sid >> 22) + 1288834974657
+        dt=datetime.fromtimestamp(ms/1000.0,tz=timezone.utc)
+        now=datetime.now(timezone.utc)
+        if dt < datetime(2010,11,1,tzinfo=timezone.utc) or dt > now+timedelta(days=2):
+            return None
+        return dt
+    except Exception:
+        return None
+
+
+def _v214_x_status_parts(url):
+    u=str(url or '').strip()
+    if not u:
+        return '', '', ''
+    try:
+        p=urlparse(u)
+        host=(p.netloc or '').lower().split(':')[0]
+        host=host[4:] if host.startswith('www.') else host
+        if host not in {'x.com','twitter.com','mobile.twitter.com'}:
+            return '', '', ''
+        path=p.path or ''
+        m=re.search(r'/(?:i/web/)?(?:([^/]+)/)?status/(\d{10,25})\b',path,re.I)
+        if not m:
+            # normal biçim: /kullanici/status/123
+            m=re.search(r'/([^/]+)/status/(\d{10,25})\b',path,re.I)
+        if not m:
+            return '', '', ''
+        user=(m.group(1) or '').strip('@') if m.lastindex and m.lastindex>=2 else ''
+        sid=(m.group(2) if m.lastindex and m.lastindex>=2 else m.group(1))
+        if user.lower() in {'i','web','status'}:
+            user=''
+        canonical=(f'https://x.com/{user}/status/{sid}' if user else f'https://x.com/i/web/status/{sid}')
+        return canonical,user,sid
+    except Exception:
+        return '', '', ''
+
+
+def _v214_x_oembed(url,timeout=5):
+    try:
+        rr=requests.get(
+            'https://publish.twitter.com/oembed',
+            params={'url':url,'omit_script':'true','dnt':'true'},
+            headers=HEADERS,timeout=timeout
+        )
+        if rr.status_code>=400:
+            return '',''
+        data=rr.json() if rr.content else {}
+        raw=str(data.get('html') or '')
+        txt=BeautifulSoup(raw,'html.parser').get_text(' ',strip=True)
+        # Embed metninin sonunda çoğu zaman tarih/link bilgisi bulunur; metni
+        # gereksiz uzatmadan koru.
+        txt=re.sub(r'\s+',' ',txt).strip()
+        author=str(data.get('author_name') or '').strip()
+        return txt[:1600],author
+    except Exception:
+        return '',''
+
+
+def _v214_ddgs_unbounded(query,max_results=80):
+    q=_v6_clean_query(query)
+    try:
+        from ddgs import DDGS
+    except Exception:
+        try:
+            from duckduckgo_search import DDGS
+        except Exception:
+            return []
+    out=[]
+    # Önce Türkiye, sonra dünya indeksi. Recency filtresi BİLEREK yoktur;
+    # kesin 24 saat filtresi tweet snowflake zamanından uygulanır.
+    for region in ('tr-tr','wt-wt'):
+        try:
+            with DDGS() as engine:
+                try:
+                    items=list(engine.text(q,region=region,safesearch='moderate',max_results=max_results))
+                except TypeError:
+                    items=list(engine.text(q,region=region,max_results=max_results))
+        except Exception:
+            items=[]
+        for item in items or []:
+            url=str(item.get('href') or item.get('url') or '').strip()
+            title=str(item.get('title') or '').strip()
+            if not url or not title:
+                continue
+            out.append({
+                'title':title,'url':url,
+                'date':item.get('date') or item.get('published') or '',
+                'snippet':str(item.get('body') or item.get('snippet') or item.get('description') or ''),
+                'source':'x.com','source_url':'https://x.com'
+            })
+        if out:
+            # Aynı sorgu için Türkiye indeksinde sonuç varsa gereksiz ikinci
+            # büyük taramayı azalt; dünya indeksi fallback'tir.
+            break
+    return out
+
+
+def _v214_x_public_raw(query,hours):
+    try:
+        h=max(1,int(hours or 24))
+    except Exception:
+        h=24
+    cutoff=datetime.now(timezone.utc)-timedelta(hours=h)
+
+    queries=[str(query or '').strip()]
+    q0=queries[0]
+    if 'site:x.com' in q0.lower():
+        queries.append(re.sub(r'(?i)site:x\.com','site:twitter.com',q0))
+
+    raw=[]
+    for q in dict.fromkeys(queries):
+        if not q:
+            continue
+        try:
+            raw.extend(_v214_ddgs_unbounded(q,80))
+        except Exception:
+            pass
+        try:
+            raw.extend(_v19_bing_web_rss(q,timeout=7) or [])
+        except Exception:
+            pass
+
+    out=[]; seen=set(); oembed_budget=24
+    for item in raw:
+        canonical,user,sid=_v214_x_status_parts(item.get('url') or item.get('link'))
+        if not canonical or not sid or sid in seen:
+            continue
+        seen.add(sid)
+        dt=_v214_x_snowflake_dt(sid)
+        if not dt or dt < cutoff:
+            continue
+
+        title=html.unescape(str(item.get('title') or '').strip())
+        snippet=html.unescape(str(item.get('snippet') or item.get('body') or '').strip())
+        author=''
+        if oembed_budget>0:
+            rich,author=_v214_x_oembed(canonical)
+            oembed_budget-=1
+            if rich:
+                snippet=rich
+                # Arama sonucu başlığı yalnız "X" / hesap adı ise gerçek tweet
+                # metninden anlamlı başlık üret.
+                if len(title)<20 or norm(title) in {'x','twitter'}:
+                    title=rich[:220]
+        if not title:
+            title=(snippet[:220] if snippet else f'X paylaşımı @{user}' if user else 'X paylaşımı')
+
+        probe={
+            'title':title,'snippet':snippet,'url':canonical
+        }
+        if _v212_social_adult_noise(title,snippet,canonical):
+            continue
+        if not _v213_social_topic_match(probe):
+            continue
+
+        source=(f'{author} / X' if author else (f'@{user} / X' if user else 'X'))
+        out.append({
+            'title':title,
+            'url':canonical,
+            'date':dt.isoformat(),
+            'snippet':snippet[:1800],
+            'source':source,
+            'source_url':'https://x.com'
+        })
+    return out
+
+
+_V214_BASE_V22_ENGINES=_v22_engines
+
+def _v22_engines(mode,q):
+    if mode=='social' and re.search(r'(?i)site:(?:x\.com|twitter\.com)',str(q or '')):
+        # X için genel DDGS timelimit='d' yolu yerine snowflake tarihli özel
+        # motoru kullan. Bing/DDGS özel motorun içinde zaten iki kaynak olarak
+        # çalışır; dışarıda tekrar çağırmayarak taramayı hızlandırır.
+        return ['X Public Index']
+    return _V214_BASE_V22_ENGINES(mode,q)
+
+
+_V214_BASE_V22_ENGINE_CALL=_v22_engine_call
+
+def _v22_engine_call(engine,q,mode,timespan,hours,cache_snapshot):
+    if engine!='X Public Index':
+        return _V214_BASE_V22_ENGINE_CALL(engine,q,mode,timespan,hours,cache_snapshot)
+
+    cache_key=_v11_cache_key(mode,engine,q,hours)
+    diag={
+        'Motor':engine,'Mod':mode,'Sorgu':1,'Başarılı':0,'Boş/Başarısız':0,
+        'Retry':0,'Cache Kullanıldı':0,'Sonuç':0
+    }
+    cached=(cache_snapshot or {}).get(cache_key)
+    if cached and cached.get('rows'):
+        try:
+            age=(time.time()-float(cached.get('ts',0)))/60.0
+        except Exception:
+            age=999
+        if age<=8:
+            rows=cached.get('rows') or []
+            diag['Başarılı']=1; diag['Cache Kullanıldı']=1; diag['Sonuç']=len(rows)
+            return {'rows':rows,'diag':diag,'cache_update':None}
+    try:
+        rows=_v214_x_public_raw(q,hours) or []
+    except Exception:
+        rows=[]
+    if rows:
+        diag['Başarılı']=1; diag['Sonuç']=len(rows)
+        return {
+            'rows':rows,'diag':diag,
+            'cache_update':(cache_key,{'ts':time.time(),'rows':rows})
+        }
+    if cached and cached.get('rows'):
+        rows=cached.get('rows') or []
+        diag['Cache Kullanıldı']=1; diag['Sonuç']=len(rows)
+        return {'rows':rows,'diag':diag,'cache_update':None}
+    diag['Boş/Başarısız']=1
+    return {'rows':[],'diag':diag,'cache_update':None}
+
+
+# Eski snapshot/pool içindeki konu dışı Reddit kayıtları V213'ten önce
+# yazılmış olabileceğinden, yalnız yeni canlı sonucu değil kalıcı başlangıç
+# havuzunu da sosyal konu filtresinden geçir.
+_V214_BASE_POOL_LOAD=_v21_pool_load
+
+def _v21_pool_load(mode,cutoff):
+    rows=list(_V214_BASE_POOL_LOAD(mode,cutoff) or [])
+    if mode=='social':
+        rows=[r for r in rows if _v212_social_record_allowed(r) and _v213_social_topic_match(r)]
+    return rows
+
+
+_V214_BASE_SNAPSHOT_LOAD=_v21_snapshot_load
+
+def _v21_snapshot_load(mode,window_hours,max_age_min):
+    rows=list(_V214_BASE_SNAPSHOT_LOAD(mode,window_hours,max_age_min) or [])
+    if mode=='social':
+        rows=[r for r in rows if _v212_social_record_allowed(r) and _v213_social_topic_match(r)]
+    return rows
+
+
+# V35 kurtarma turunda da X sorgularının özel motora düşmesini sağlamak için
+# mevcut V213 sorgu seti korunur; _v22_engine_call dinamik olarak özel motoru
+# kullanır. Ayrıca X sıfırsa kurtarma sorguları ilk sırada kalır.
+_V214_BASE_RESCUE_MODE=_v35_rescue_mode
+
+def _v35_rescue_mode(mode,hours,cutoff,cache_snapshot,user_query):
+    if mode!='social':
+        return _V214_BASE_RESCUE_MODE(mode,hours,cutoff,cache_snapshot,user_query)
+
+    queries=_v35_rescue_queries(mode)
+    raw=[]; diags=[]; cache_updates=[]
+    jobs=[]
+    for q in queries:
+        for e in _v22_engines('social',q):
+            jobs.append((q,e))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(10,max(1,len(jobs)))) as ex:
+        fmap={
+            ex.submit(_v22_engine_call,e,q,'social',period_window(hours),hours,cache_snapshot):(q,e)
+            for q,e in jobs
+        }
+        for fut in concurrent.futures.as_completed(fmap):
+            q,e=fmap[fut]
+            try:
+                got=fut.result() or {}
+                chunk=got.get('rows') or []
+                for item in chunk:
+                    if isinstance(item,dict): item['_origin_query']=q
+                raw.extend(chunk)
+                if got.get('diag'): diags.append(got['diag'])
+                if got.get('cache_update'): cache_updates.append(got['cache_update'])
+            except Exception:
+                pass
+    rows,_=normalize_rows(raw,cutoff,'social',user_query) if raw else ([],{})
+    rows=[r for r in dedupe(rows) if _v212_social_record_allowed(r) and _v213_social_topic_match(r)]
+    return rows,diags,cache_updates
+
+# ============================================================
+# /V214 X AÇIK WEB İNDEKSİ
+# ============================================================
+
 if run and not custom_date_mode:
     st.session_state.pop('_v20_frame_cmp_rows',None)
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
