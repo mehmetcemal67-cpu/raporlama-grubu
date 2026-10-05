@@ -19545,6 +19545,357 @@ def normalize_rows(raw,cutoff,mode,user_query):
 # /V215 API'SİZ SOSYAL MEDYA GENİŞLETME
 # ============================================================
 
+# ============================================================
+# V216 — TELEGRAM + BLUESKY SAĞLAMLAŞTIRMA
+#
+# V215 ilk saha testinde Telegram ve Bluesky'nin sıfır kalabildiği görüldü.
+# Nedenler:
+# - Telegram genel arama API'si yok; yalnız arama motorundan kanal keşfine
+#   bağımlı kalınca o anda t.me sonucu dönmezse doğrudan tarama hiç başlamıyordu.
+# - Bluesky searchPosts bazı ağ/çıkış noktalarında 403 verebiliyor ve uzun/OR'lu
+#   sorguların kapsaması zayıf kalabiliyor.
+#
+# Çözüm:
+# 1) Telegram: doğrulanmış public Türkçe haber kanallarından sabit bir başlangıç
+#    havuzu + dinamik DDGS/Bing keşfi birlikte kullanılır.
+# 2) Telegram HTML ayrıştırıcısı farklı public preview şablonlarına toleranslıdır.
+# 3) Bluesky: public.api.bsky.app + api.bsky.app iki host denenir, kısa ayrı
+#    anahtar kelimelerle arama yapılır.
+# 4) Bluesky searchPosts çalışmazsa bsky.app post URL'leri açık webden keşfedilir;
+#    mümkünse resolveHandle + getPosts ile gerçek post/zaman bilgisi tamamlanır.
+# 5) Nihai taramada platform bazlı sosyal sonuç sayacı status kutusuna yazılır.
+# ============================================================
+
+V216_TELEGRAM_SEED_CHANNELS = [
+    # Resmî / büyük haber kanalları
+    'anadoluajansi', 'trthaberdijital', 'ihacomtr',
+    # Hızlı gündem / farklı editoryal perspektifler
+    'gundemedairhs', 'bpthaber', 'solcugazete', 'tcdefense'
+]
+
+V216_BLUESKY_TERMS = [
+    'Terörsüz Türkiye',
+    'Terorsuz Turkiye',
+    'PKK',
+    'Öcalan',
+    'Ocalan',
+    'İmralı',
+    'Imrali',
+    'silah bırakma',
+    'silahsızlanma',
+    'umut hakkı'
+]
+
+
+def _v216_telegram_message_parts(box):
+    """Telegram public preview HTML'inin eski/yeni şablonlarını tolere eder."""
+    msg=box
+    if not str(box.get('data-post') or '').strip():
+        inner=box.select_one('div.tgme_widget_message[data-post]')
+        if inner is not None:
+            msg=inner
+    post=str(msg.get('data-post') or '').strip()
+
+    text_parts=[]
+    for sel in [
+        '.tgme_widget_message_text',
+        '.tgme_widget_message_caption',
+        '.js-message_text'
+    ]:
+        el=msg.select_one(sel)
+        if el is not None:
+            val=el.get_text(' ',strip=True)
+            if val and val not in text_parts:
+                text_parts.append(val)
+    text=' '.join(text_parts).strip()
+
+    time_el=(msg.select_one('time[datetime]') or box.select_one('time[datetime]'))
+    dt=_to_utc_datetime(time_el.get('datetime') if time_el is not None else '')
+
+    link_el=(msg.select_one('a.tgme_widget_message_date[href]')
+             or box.select_one('a.tgme_widget_message_date[href]'))
+    url=(link_el.get('href','').strip() if link_el is not None else '')
+    if not url and post:
+        url=f'https://t.me/{post}'
+    return post,text,dt,url
+
+
+def _v215_fetch_telegram_channel(channel,hours):
+    cutoff=_v215_cutoff(hours)
+    try:
+        rr=requests.get(
+            f'https://t.me/s/{channel}',
+            headers={**HEADERS,'Accept-Language':'tr-TR,tr;q=0.9,en;q=0.7'},
+            timeout=9
+        )
+        if rr.status_code>=400 or not rr.text:
+            return []
+        soup=BeautifulSoup(rr.text,'html.parser')
+    except Exception:
+        return []
+
+    boxes=soup.select('div.tgme_widget_message_wrap') or soup.select('div.tgme_widget_message')
+    out=[]
+    for box in boxes:
+        try:
+            post,text,dt,url=_v216_telegram_message_parts(box)
+            if not post or not text or not url:
+                continue
+            if not dt or dt < cutoff:
+                continue
+            title=text[:220]
+            probe={'title':title,'snippet':text,'url':url}
+            if _v212_social_adult_noise(title,text,url):
+                continue
+            if not _v213_social_topic_match(probe):
+                continue
+            out.append({
+                'title':title,
+                'url':url,
+                'date':dt.isoformat(),
+                'snippet':text[:2400],
+                'source':f'Telegram / {channel}',
+                'source_url':f'https://t.me/{channel}'
+            })
+        except Exception:
+            continue
+    return dedupe(out)
+
+
+def _v215_telegram_public_raw(query,hours):
+    # Arama motoru keşfi sıfır dönse bile seed kanallar mutlaka taranır.
+    channels=list(V216_TELEGRAM_SEED_CHANNELS)
+    try:
+        discovered=_v215_web_discovery(
+            '(site:t.me OR site:telegram.me)',max_topics=8,per_query=55
+        )
+    except Exception:
+        discovered=[]
+
+    for r in discovered or []:
+        ch=_v215_telegram_channel_from_url(r.get('url') or r.get('link'))
+        if ch and ch not in channels:
+            channels.append(ch)
+        if len(channels)>=28:
+            break
+
+    out=[]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(10,max(1,len(channels)))) as ex:
+        fmap={ex.submit(_v215_fetch_telegram_channel,ch,hours):ch for ch in channels}
+        for fut in concurrent.futures.as_completed(fmap):
+            try:
+                out.extend(fut.result() or [])
+            except Exception:
+                pass
+    return dedupe(out)
+
+
+def _v216_bsky_row(post,hours):
+    try:
+        rec=post.get('record') or {}
+        text=str(rec.get('text') or '').strip()
+        if not text:
+            return None
+        author=post.get('author') or {}
+        handle=str(author.get('handle') or '').strip()
+        display=str(author.get('displayName') or '').strip()
+        uri=str(post.get('uri') or '').strip()
+        rkey=uri.rsplit('/',1)[-1] if '/' in uri else ''
+        url=(f'https://bsky.app/profile/{handle}/post/{rkey}'
+             if handle and rkey else str(post.get('url') or '').strip())
+        if not url:
+            return None
+        created=str(rec.get('createdAt') or post.get('indexedAt') or '').strip()
+        dt=_to_utc_datetime(created)
+        if dt and dt < _v215_cutoff(hours):
+            return None
+        probe={'title':text[:220],'snippet':text,'url':url}
+        if _v212_social_adult_noise(text[:220],text,url) or not _v213_social_topic_match(probe):
+            return None
+        src=((display+' (@'+handle+')') if display and handle else ('@'+handle if handle else 'Bluesky'))
+        return {
+            'title':text[:220], 'url':url,
+            'date':(dt.isoformat() if dt else created),
+            'snippet':text[:2400],
+            'source':f'{src} / Bluesky',
+            'source_url':'https://bsky.app'
+        }
+    except Exception:
+        return None
+
+
+def _v216_bsky_search_api(term,hours):
+    # Bazı ağlarda public.api hostu 403 verebildiği için iki AppView hostu denenir.
+    endpoints=[
+        'https://api.bsky.app/xrpc/app.bsky.feed.searchPosts',
+        'https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts'
+    ]
+    for endpoint in endpoints:
+        try:
+            rr=requests.get(
+                endpoint,
+                params={'q':term,'limit':100,'sort':'latest'},
+                headers={**HEADERS,'Accept':'application/json','Accept-Language':'tr-TR,tr;q=0.9,en;q=0.7'},
+                timeout=8
+            )
+            if rr.status_code>=400:
+                continue
+            data=rr.json()
+            posts=data.get('posts') or []
+            if not isinstance(posts,list):
+                continue
+            out=[]
+            for post in posts:
+                row=_v216_bsky_row(post,hours)
+                if row:
+                    out.append(row)
+            # API cevap verdi fakat ilgili sonuç yoksa diğer hostu tekrar etmeye gerek yok.
+            return dedupe(out)
+        except Exception:
+            continue
+    return []
+
+
+def _v216_bsky_url_parts(url):
+    try:
+        p=urlparse(str(url or '').strip())
+        host=(p.netloc or '').lower().replace('www.','')
+        if host!='bsky.app':
+            return '',''
+        m=re.match(r'^/profile/([^/]+)/post/([^/?#]+)',p.path or '')
+        if not m:
+            return '',''
+        return m.group(1),m.group(2)
+    except Exception:
+        return '',''
+
+
+def _v216_bsky_hydrate_url(url,hours,handle_cache=None):
+    """Web indeksinden bulunan Bluesky URL'sini AppView getPosts ile tamamlar."""
+    handle,rkey=_v216_bsky_url_parts(url)
+    if not handle or not rkey:
+        return None
+    cache=handle_cache if isinstance(handle_cache,dict) else {}
+    did=handle if handle.startswith('did:') else cache.get(handle,'')
+
+    hosts=['https://api.bsky.app','https://public.api.bsky.app']
+    if not did:
+        for host in hosts:
+            try:
+                rr=requests.get(
+                    host+'/xrpc/com.atproto.identity.resolveHandle',
+                    params={'handle':handle},headers={**HEADERS,'Accept':'application/json'},timeout=6
+                )
+                if rr.status_code<400:
+                    did=str((rr.json() or {}).get('did') or '').strip()
+                    if did:
+                        cache[handle]=did
+                        break
+            except Exception:
+                continue
+    if not did:
+        return None
+
+    uri=f'at://{did}/app.bsky.feed.post/{rkey}'
+    for host in hosts:
+        try:
+            rr=requests.get(
+                host+'/xrpc/app.bsky.feed.getPosts',
+                params=[('uris',uri)],headers={**HEADERS,'Accept':'application/json'},timeout=7
+            )
+            if rr.status_code>=400:
+                continue
+            posts=(rr.json() or {}).get('posts') or []
+            if posts:
+                return _v216_bsky_row(posts[0],hours)
+        except Exception:
+            continue
+    return None
+
+
+def _v216_bsky_web_fallback(hours):
+    # searchPosts erişilemezse DDGS+Bing üzerinden indekslenmiş bireysel postları bul.
+    raw=[]
+    for term in V216_BLUESKY_TERMS[:8]:
+        q=f'{term} site:bsky.app/profile/ post'
+        try:
+            raw.extend(_v6_ddgs_raw(q,45) or [])
+        except Exception:
+            pass
+        try:
+            raw.extend(_v19_bing_web_rss(q,timeout=7) or [])
+        except Exception:
+            pass
+
+    urls=[]
+    for r in raw:
+        u=str(r.get('url') or r.get('link') or '').strip()
+        h,k=_v216_bsky_url_parts(u)
+        if h and k and u not in urls:
+            urls.append(u)
+        if len(urls)>=32:
+            break
+
+    if not urls:
+        return []
+    cache={}
+    out=[]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8,len(urls))) as ex:
+        fmap={ex.submit(_v216_bsky_hydrate_url,u,hours,cache):u for u in urls}
+        for fut in concurrent.futures.as_completed(fmap):
+            try:
+                row=fut.result()
+                if row:
+                    out.append(row)
+            except Exception:
+                pass
+    return dedupe(out)
+
+
+def _v20_bluesky_raw(query,hours):
+    # Tek büyük sorgu yerine kısa ayrı sorgular. İlk sorgudan sonuç gelmesi diğer
+    # terimleri iptal etmez; amaç 24 saatlik kapsamı büyütmektir.
+    terms=[]
+    core=_v20_social_core_query(query)
+    if core and len(core)<=80 and ' OR ' not in core.upper():
+        terms.append(core.strip(' "'))
+    terms.extend(V216_BLUESKY_TERMS)
+    terms=list(dict.fromkeys([t for t in terms if str(t).strip()]))[:10]
+
+    out=[]
+    # Arka arkaya çok uzun beklememek için 5 worker; her çağrı iki host fallback'li.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(5,len(terms))) as ex:
+        futs=[ex.submit(_v216_bsky_search_api,t,hours) for t in terms]
+        for fut in concurrent.futures.as_completed(futs):
+            try:
+                out.extend(fut.result() or [])
+            except Exception:
+                pass
+    out=dedupe(out)
+    if out:
+        return out
+    return _v216_bsky_web_fallback(hours)
+
+
+def _v216_social_platform(row):
+    d=_tt_norm_domain((row or {}).get('Domain') or (row or {}).get('URL') or '')
+    src=norm((row or {}).get('Kaynak') or '')
+    if _tt_domain_match(d,['x.com','twitter.com']) or ' / x' in src: return 'X'
+    if _tt_domain_match(d,['t.me','telegram.me']) or 'telegram' in src: return 'Telegram'
+    if d=='bsky.app' or d.endswith('.bsky.app') or 'bluesky' in src: return 'Bluesky'
+    if d in V215_MASTODON_INSTANCES or 'mastodon' in src: return 'Mastodon'
+    if _tt_domain_match(d,['youtube.com','youtu.be']) or 'youtube' in src: return 'YouTube'
+    if _tt_domain_match(d,['reddit.com']) or 'reddit' in src: return 'Reddit'
+    if _tt_domain_match(d,['facebook.com']): return 'Facebook'
+    if _tt_domain_match(d,['instagram.com']): return 'Instagram'
+    if _tt_domain_match(d,['threads.net']): return 'Threads'
+    if _tt_domain_match(d,['tiktok.com']): return 'TikTok'
+    return 'Diğer'
+
+# ============================================================
+# /V216 TELEGRAM + BLUESKY SAĞLAMLAŞTIRMA
+# ============================================================
+
 if run and not custom_date_mode:
     st.session_state.pop('_v20_frame_cmp_rows',None)
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
@@ -19953,6 +20304,22 @@ if run and not custom_date_mode:
         live_alarm_box.warning(
             f'🔔 {len(live_alerts)} negatif/riskli içerik yakalandı. Son: {live_alerts[0]["Başlık"][:100]}'
         )
+
+    # V216 — sosyal platform görünürlüğü: tek "Sosyal" toplamının altında
+    # hangi platformun gerçekten sonuç ürettiği tarama anında görülsün.
+    _v216_platform_counts={}
+    for _sr in all_rows:
+        if str(_sr.get('Kaynak_Grubu',''))!='📱 Sosyal Medya / Açık Sosyal':
+            continue
+        _sp=_v216_social_platform(_sr)
+        _v216_platform_counts[_sp]=_v216_platform_counts.get(_sp,0)+1
+    stat['Sosyal Platform Sonuçları']=dict(sorted(_v216_platform_counts.items()))
+    if _v216_platform_counts:
+        _order=['X','Telegram','Bluesky','Mastodon','YouTube','Reddit','Facebook','Instagram','Threads','TikTok','Diğer']
+        status_box.write('📱 Platform sonuçları: '+ ' | '.join(
+            f'{_p}: {_v216_platform_counts.get(_p,0)}'
+            for _p in _order if _v216_platform_counts.get(_p,0)
+        ))
 
     status_box.update(
         label=f'✅ Tarama tamamlandı — {len(all_rows)} haber / {stat["Olay"]} olay',
