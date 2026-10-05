@@ -19068,6 +19068,483 @@ def _v35_rescue_mode(mode,hours,cutoff,cache_snapshot,user_query):
 # /V214 X AÇIK WEB İNDEKSİ
 # ============================================================
 
+
+# ============================================================
+# V215 — API'SİZ SOSYAL MEDYA GENİŞLETME
+#
+# Amaç: Sosyal taramayı tek bir platforma bağımlı olmaktan çıkarmak.
+# Ana V214 X Public Index korunur; buna ek olarak:
+# - Telegram public kanal önizlemeleri (t.me/s/<kanal>)
+# - Bluesky public search (mevcut doğrudan motor + daha geniş web sorguları)
+# - Mastodon public hashtag timeline'ları (token gerektirmeyen instance'larda)
+# - YouTube: açık web keşfi -> kanal kimliği -> resmi Atom/RSS kanal akışı
+# - Reddit public JSON/RSS
+# - DDGS + Bing Web + Google News TR açık indeks yedeği
+# birlikte kullanılır.
+#
+# Güvenlik / kalite:
+# - V212 yetişkin/NSFW filtresi aynen uygulanır.
+# - V213 konu filtresi aynen uygulanır.
+# - Doğrudan kaynaklarda gerçek yayın zamanı biliniyorsa seçilen saat penceresi
+#   kesin olarak uygulanır.
+# - Kalıcı yedek, analiz sepetleri ve Gephi katmanlarına dokunulmaz.
+# ============================================================
+
+V215_MASTODON_INSTANCES = [
+    'mastodon.social','mastodon.online','mstdn.social','mas.to','mastodon.world'
+]
+
+# Mastodon ve YouTube kısa linkleri de sosyal kaynak kabul edilsin.
+SOCIAL = list(dict.fromkeys(SOCIAL + V215_MASTODON_INSTANCES + ['youtu.be']))
+
+V215_DISCOVERY_TOPICS = [
+    '"Terörsüz Türkiye"',
+    'PKK Öcalan İmralı süreç',
+    'PKK "silah bırakma"',
+    'PKK silahsızlanma fesih',
+    '"umut hakkı" Öcalan',
+    '"demokratik entegrasyon" Öcalan',
+    '"Meclis komisyonu" PKK Öcalan',
+    'SDG YPG PKK Türkiye'
+]
+
+
+def _v215_web_discovery(site_clause, max_topics=5, per_query=45):
+    """DDGS + Bing açık web indeksinden platforma ait URL keşfeder."""
+    raw=[]
+    for topic in V215_DISCOVERY_TOPICS[:max_topics]:
+        q=f'{topic} {site_clause}'
+        try:
+            raw.extend(_v6_ddgs_raw(q,per_query) or [])
+        except Exception:
+            pass
+        try:
+            raw.extend(_v19_bing_web_rss(q,timeout=7) or [])
+        except Exception:
+            pass
+    return raw
+
+
+def _v215_cutoff(hours):
+    try:
+        h=max(1,int(hours or 24))
+    except Exception:
+        h=24
+    return datetime.now(timezone.utc)-timedelta(hours=h)
+
+
+def _v215_telegram_channel_from_url(url):
+    try:
+        p=urlparse(str(url or '').strip())
+        host=(p.netloc or '').lower().replace('www.','')
+        if host not in {'t.me','telegram.me'}:
+            return ''
+        parts=[x for x in (p.path or '').split('/') if x]
+        if not parts:
+            return ''
+        if parts[0].lower()=='s' and len(parts)>=2:
+            ch=parts[1]
+        else:
+            ch=parts[0]
+        if ch.lower() in {'share','iv','joinchat','addstickers','proxy','login'} or ch.startswith('+'):
+            return ''
+        return ch if re.fullmatch(r'[A-Za-z0-9_]{4,64}',ch or '') else ''
+    except Exception:
+        return ''
+
+
+def _v215_fetch_telegram_channel(channel,hours):
+    cutoff=_v215_cutoff(hours)
+    try:
+        rr=requests.get(
+            f'https://t.me/s/{channel}',headers=HEADERS,timeout=7
+        )
+        if rr.status_code>=400 or not rr.text:
+            return []
+        soup=BeautifulSoup(rr.text,'html.parser')
+    except Exception:
+        return []
+
+    out=[]
+    for box in soup.select('div.tgme_widget_message'):
+        post=str(box.get('data-post') or '').strip()
+        if not post:
+            continue
+        txt_el=box.select_one('.tgme_widget_message_text')
+        text=(txt_el.get_text(' ',strip=True) if txt_el else '').strip()
+        if not text:
+            continue
+        time_el=box.select_one('time[datetime]')
+        dt=_to_utc_datetime(time_el.get('datetime') if time_el else '')
+        if not dt or dt < cutoff:
+            continue
+        link_el=box.select_one('a.tgme_widget_message_date[href]')
+        url=(link_el.get('href','').strip() if link_el else '') or f'https://t.me/{post}'
+        title=text[:220]
+        probe={'title':title,'snippet':text,'url':url}
+        if _v212_social_adult_noise(title,text,url) or not _v213_social_topic_match(probe):
+            continue
+        out.append({
+            'title':title,'url':url,'date':dt.isoformat(),'snippet':text[:2200],
+            'source':f'Telegram / {channel}','source_url':f'https://t.me/{channel}'
+        })
+    return out
+
+
+def _v215_telegram_public_raw(query,hours):
+    # Önce açık web indeksinden konuya temas eden public kanalları keşfet,
+    # sonra t.me'nin herkese açık kanal önizlemesinden gerçek tarihli mesajları çek.
+    discovered=_v215_web_discovery('(site:t.me OR site:telegram.me)',max_topics=7,per_query=45)
+    channels=[]
+    for r in discovered:
+        ch=_v215_telegram_channel_from_url(r.get('url') or r.get('link'))
+        if ch and ch not in channels:
+            channels.append(ch)
+        if len(channels)>=18:
+            break
+    if not channels:
+        return []
+
+    out=[]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8,len(channels))) as ex:
+        futs=[ex.submit(_v215_fetch_telegram_channel,ch,hours) for ch in channels]
+        for fut in concurrent.futures.as_completed(futs):
+            try:
+                out.extend(fut.result() or [])
+            except Exception:
+                pass
+    return dedupe(out)
+
+
+def _v215_mastodon_status_to_row(status,hours,instance=''):
+    try:
+        dt=_to_utc_datetime(status.get('created_at'))
+        if not dt or dt < _v215_cutoff(hours):
+            return None
+        content=BeautifulSoup(str(status.get('content') or ''),'html.parser').get_text(' ',strip=True)
+        spoiler=BeautifulSoup(str(status.get('spoiler_text') or ''),'html.parser').get_text(' ',strip=True)
+        text=' '.join(x for x in [spoiler,content] if x).strip()
+        if not text:
+            return None
+        url=str(status.get('url') or status.get('uri') or '').strip()
+        if not url:
+            return None
+        acc=status.get('account') or {}
+        acct=str(acc.get('acct') or acc.get('username') or '').strip()
+        title=text[:220]
+        probe={'title':title,'snippet':text,'url':url}
+        if _v212_social_adult_noise(title,text,url) or not _v213_social_topic_match(probe):
+            return None
+        host=domain(url)
+        return {
+            'title':title,'url':url,'date':dt.isoformat(),'snippet':text[:2200],
+            'source':f'{acct} / Mastodon' if acct else 'Mastodon',
+            'source_url':('https://'+instance if instance else ('https://'+host if host else ''))
+        }
+    except Exception:
+        return None
+
+
+def _v215_mastodon_fetch(instance,tag,hours):
+    try:
+        rr=requests.get(
+            f'https://{instance}/api/v1/timelines/tag/{requests.utils.quote(tag,safe="")}',
+            params={'limit':40},headers=HEADERS,timeout=6
+        )
+        if rr.status_code>=400:
+            return []
+        data=rr.json()
+        if not isinstance(data,list):
+            return []
+    except Exception:
+        return []
+    out=[]
+    for status in data:
+        row=_v215_mastodon_status_to_row(status,hours,instance)
+        if row:
+            out.append(row)
+    return out
+
+
+def _v215_mastodon_public_raw(query,hours):
+    tags=['TerorsuzTurkiye','PKK','Ocalan','Imrali']
+    jobs=[(inst,tag) for inst in V215_MASTODON_INSTANCES for tag in tags]
+    out=[]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+        fmap={ex.submit(_v215_mastodon_fetch,inst,tag,hours):(inst,tag) for inst,tag in jobs}
+        for fut in concurrent.futures.as_completed(fmap):
+            try:
+                out.extend(fut.result() or [])
+            except Exception:
+                pass
+    return dedupe(out)
+
+
+def _v215_youtube_video_id(url):
+    try:
+        p=urlparse(str(url or '').strip())
+        host=(p.netloc or '').lower().replace('www.','')
+        if host=='youtu.be':
+            vid=(p.path or '').strip('/').split('/')[0]
+            return vid if re.fullmatch(r'[A-Za-z0-9_-]{6,20}',vid or '') else ''
+        if host not in {'youtube.com','m.youtube.com'}:
+            return ''
+        if (p.path or '').startswith('/shorts/'):
+            vid=(p.path or '').split('/shorts/',1)[1].split('/',1)[0]
+            return vid if re.fullmatch(r'[A-Za-z0-9_-]{6,20}',vid or '') else ''
+        if (p.path or '')=='/watch':
+            from urllib.parse import parse_qs
+            vid=(parse_qs(p.query).get('v') or [''])[0]
+            return vid if re.fullmatch(r'[A-Za-z0-9_-]{6,20}',vid or '') else ''
+    except Exception:
+        pass
+    return ''
+
+
+def _v215_youtube_page_meta(video_id):
+    url=f'https://www.youtube.com/watch?v={video_id}'
+    try:
+        rr=requests.get(url,headers={**HEADERS,'Accept-Language':'tr-TR,tr;q=0.9,en;q=0.7'},timeout=7)
+        if rr.status_code>=400 or not rr.text:
+            return {}
+        page=rr.text
+    except Exception:
+        return {}
+
+    def first(pattern):
+        m=re.search(pattern,page,re.I|re.S)
+        return html.unescape(m.group(1)).strip() if m else ''
+
+    channel_id=(
+        first(r'<meta[^>]+itemprop=["\']channelId["\'][^>]+content=["\']([^"\']+)["\']')
+        or first(r'["\']channelId["\']\s*:\s*["\'](UC[A-Za-z0-9_-]+)["\']')
+    )
+    date=(
+        first(r'<meta[^>]+itemprop=["\']datePublished["\'][^>]+content=["\']([^"\']+)["\']')
+        or first(r'["\']publishDate["\']\s*:\s*["\']([^"\']+)["\']')
+    )
+    title=(
+        first(r'<meta[^>]+name=["\']title["\'][^>]+content=["\']([^"\']+)["\']')
+        or first(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']')
+    )
+    desc=(
+        first(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']*)["\']')
+        or first(r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']*)["\']')
+    )
+    author=first(r'<link[^>]+itemprop=["\']name["\'][^>]+content=["\']([^"\']+)["\']')
+    return {'channel_id':channel_id,'date':date,'title':title,'snippet':desc,'author':author,'url':url}
+
+
+def _v215_youtube_feed(channel_id,hours):
+    cutoff=_v215_cutoff(hours)
+    try:
+        rr=requests.get(
+            'https://www.youtube.com/feeds/videos.xml',
+            params={'channel_id':channel_id},headers=HEADERS,timeout=7
+        )
+        if rr.status_code>=400 or not rr.content:
+            return []
+        root=ET.fromstring(rr.content)
+    except Exception:
+        return []
+    ns={
+        'a':'http://www.w3.org/2005/Atom',
+        'yt':'http://www.youtube.com/xml/schemas/2015'
+    }
+    out=[]
+    for entry in root.findall('a:entry',ns):
+        title=str(entry.findtext('a:title',default='',namespaces=ns) or '').strip()
+        published=str(entry.findtext('a:published',default='',namespaces=ns) or '').strip()
+        dt=_to_utc_datetime(published)
+        if not dt or dt < cutoff:
+            continue
+        link_el=entry.find('a:link',ns)
+        url=(link_el.get('href','') if link_el is not None else '').strip()
+        author_el=entry.find('a:author/a:name',ns)
+        author=(author_el.text.strip() if author_el is not None and author_el.text else '')
+        if not title or not url:
+            continue
+        probe={'title':title,'snippet':'','url':url}
+        if _v212_social_adult_noise(title,'',url) or not _v213_social_topic_match(probe):
+            continue
+        out.append({
+            'title':title,'url':url,'date':dt.isoformat(),'snippet':title,
+            'source':f'{author} / YouTube' if author else 'YouTube',
+            'source_url':f'https://www.youtube.com/channel/{channel_id}'
+        })
+    return out
+
+
+def _v215_youtube_rss_raw(query,hours):
+    # RSS anahtar kelime araması sunmaz. Bu nedenle önce açık web indeksinden
+    # ilgili videolar keşfedilir; sonra bulunan kanalların resmi Atom akışı okunur.
+    discovered=_v215_web_discovery('site:youtube.com/watch',max_topics=7,per_query=40)
+    video_ids=[]
+    for r in discovered:
+        vid=_v215_youtube_video_id(r.get('url') or r.get('link'))
+        if vid and vid not in video_ids:
+            video_ids.append(vid)
+        if len(video_ids)>=18:
+            break
+    if not video_ids:
+        return []
+
+    metas=[]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        futs=[ex.submit(_v215_youtube_page_meta,vid) for vid in video_ids]
+        for fut in concurrent.futures.as_completed(futs):
+            try:
+                m=fut.result() or {}
+                if m:
+                    metas.append(m)
+            except Exception:
+                pass
+
+    out=[]; cutoff=_v215_cutoff(hours); channels=[]
+    for m in metas:
+        cid=str(m.get('channel_id') or '').strip()
+        if cid and cid not in channels:
+            channels.append(cid)
+        dt=_to_utc_datetime(m.get('date'))
+        title=str(m.get('title') or '').strip()
+        snippet=str(m.get('snippet') or '').strip()
+        url=str(m.get('url') or '').strip()
+        if dt and dt>=cutoff and title and url:
+            probe={'title':title,'snippet':snippet,'url':url}
+            if (not _v212_social_adult_noise(title,snippet,url)) and _v213_social_topic_match(probe):
+                out.append({
+                    'title':title,'url':url,'date':dt.isoformat(),'snippet':snippet[:2200],
+                    'source':f'{m.get("author") or "YouTube"} / YouTube',
+                    'source_url':f'https://www.youtube.com/channel/{cid}' if cid else 'https://www.youtube.com'
+                })
+
+    # En fazla 10 keşfedilen kanalın RSS'ini kontrol et; tarama süresini sınırlı tut.
+    channels=channels[:10]
+    if channels:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8,len(channels))) as ex:
+            futs=[ex.submit(_v215_youtube_feed,cid,hours) for cid in channels]
+            for fut in concurrent.futures.as_completed(futs):
+                try:
+                    out.extend(fut.result() or [])
+                except Exception:
+                    pass
+    return dedupe(out)
+
+
+# V214'ün sorgu setini koruyup API'siz platformları daha görünür hale getir.
+_V215_BASE_V22_SOCIAL_QUERIES=_v22_social_queries
+
+def _v22_social_queries():
+    base=list(_V215_BASE_V22_SOCIAL_QUERIES() or [])
+    extra=[
+        # Doğrudan tarayıcı motorları yalnız birer kez çalıştırılır.
+        '__V215_TELEGRAM_DIRECT__',
+        '__V215_MASTODON_DIRECT__',
+        '__V215_YOUTUBE_RSS__',
+        # Açık web indeksini farklı süreç terimleriyle besle.
+        '(PKK OR Öcalan OR İmralı) ("silah bırakma" OR silahsızlanma OR fesih) (site:t.me OR site:telegram.me)',
+        '("Terörsüz Türkiye" OR "umut hakkı" OR "demokratik entegrasyon") site:bsky.app',
+        '(PKK OR Öcalan OR İmralı OR "Terörsüz Türkiye") (site:mastodon.social OR site:mastodon.online OR site:mstdn.social OR site:mas.to OR site:mastodon.world)',
+        '(PKK OR Öcalan OR İmralı) ("silah bırakma" OR silahsızlanma OR fesih) site:youtube.com',
+        '("Terörsüz Türkiye" OR "umut hakkı" OR Öcalan OR İmralı) site:reddit.com',
+    ]
+    return list(dict.fromkeys(base+extra))
+
+
+_V215_BASE_V22_ENGINES=_v22_engines
+
+def _v22_engines(mode,q):
+    marker=str(q or '').strip()
+    if mode=='social':
+        if marker=='__V215_TELEGRAM_DIRECT__':
+            return ['Telegram Public']
+        if marker=='__V215_MASTODON_DIRECT__':
+            return ['Mastodon Public']
+        if marker=='__V215_YOUTUBE_RSS__':
+            return ['YouTube RSS']
+
+    engines=list(_V215_BASE_V22_ENGINES(mode,q) or [])
+    # X özel motorunun içine DDGS+Bing zaten gömülü; ona Google News eklemiyoruz.
+    if mode=='social' and 'X Public Index' not in engines and _v9_is_site_query(q):
+        if 'Google News TR' not in engines:
+            engines.append('Google News TR')
+    return list(dict.fromkeys(engines))
+
+
+_V215_BASE_V22_ENGINE_CALL=_v22_engine_call
+
+def _v215_direct_engine_result(engine,q,mode,hours,cache_snapshot,fetcher,hot_minutes=12):
+    cache_key=_v11_cache_key(mode,engine,q,hours)
+    diag={
+        'Motor':engine,'Mod':mode,'Sorgu':1,'Başarılı':0,'Boş/Başarısız':0,
+        'Retry':0,'Cache Kullanıldı':0,'Sonuç':0
+    }
+    cached=(cache_snapshot or {}).get(cache_key)
+    if cached and cached.get('rows'):
+        try:
+            age=(time.time()-float(cached.get('ts',0)))/60.0
+        except Exception:
+            age=999
+        if age<=hot_minutes:
+            rows=[r for r in (cached.get('rows') or []) if _v212_social_record_allowed(r)]
+            diag['Başarılı']=1; diag['Cache Kullanıldı']=1; diag['Sonuç']=len(rows)
+            return {'rows':rows,'diag':diag,'cache_update':None}
+    try:
+        rows=list(fetcher(q,hours) or [])
+    except Exception:
+        rows=[]
+    rows=[r for r in rows if _v212_social_record_allowed(r) and _v213_social_topic_match(r)]
+    rows=dedupe(rows)
+    if rows:
+        diag['Başarılı']=1; diag['Sonuç']=len(rows)
+        return {'rows':rows,'diag':diag,'cache_update':(cache_key,{'ts':time.time(),'rows':rows})}
+    if cached and cached.get('rows'):
+        rows=[r for r in (cached.get('rows') or []) if _v212_social_record_allowed(r) and _v213_social_topic_match(r)]
+        diag['Cache Kullanıldı']=1; diag['Sonuç']=len(rows)
+        return {'rows':rows,'diag':diag,'cache_update':None}
+    diag['Boş/Başarısız']=1
+    return {'rows':[],'diag':diag,'cache_update':None}
+
+
+def _v22_engine_call(engine,q,mode,timespan,hours,cache_snapshot):
+    if engine=='Telegram Public':
+        return _v215_direct_engine_result(engine,q,mode,hours,cache_snapshot,_v215_telegram_public_raw,15)
+    if engine=='Mastodon Public':
+        return _v215_direct_engine_result(engine,q,mode,hours,cache_snapshot,_v215_mastodon_public_raw,20)
+    if engine=='YouTube RSS':
+        return _v215_direct_engine_result(engine,q,mode,hours,cache_snapshot,_v215_youtube_rss_raw,20)
+    return _V215_BASE_V22_ENGINE_CALL(engine,q,mode,timespan,hours,cache_snapshot)
+
+
+# Sosyal kayıtların kaynak perspektifini platform bazında anlaşılır hale getir.
+_V215_BASE_NORMALIZE_ROWS=normalize_rows
+
+def normalize_rows(raw,cutoff,mode,user_query):
+    rows,reasons=_V215_BASE_NORMALIZE_ROWS(raw,cutoff,mode,user_query)
+    if mode!='social':
+        return rows,reasons
+    for r in rows or []:
+        d=_tt_norm_domain(r.get('Domain') or r.get('URL') or '')
+        if _tt_domain_match(d,['t.me','telegram.me']):
+            r['Kaynak Perspektifi']='Telegram herkese açık kanal / açık web'
+        elif d=='bsky.app' or d.endswith('.bsky.app'):
+            r['Kaynak Perspektifi']='Bluesky public arama / açık web'
+        elif d in V215_MASTODON_INSTANCES:
+            r['Kaynak Perspektifi']='Mastodon public timeline / açık web'
+        elif _tt_domain_match(d,['youtube.com','youtu.be']):
+            r['Kaynak Perspektifi']='YouTube açık video / kanal RSS'
+        elif _tt_domain_match(d,['reddit.com']):
+            r['Kaynak Perspektifi']='Reddit public JSON/RSS / açık web'
+        elif _tt_domain_match(d,['x.com','twitter.com']):
+            r['Kaynak Perspektifi']='X açık web indeksi'
+        else:
+            r['Kaynak Perspektifi']=r.get('Kaynak Perspektifi') or 'Kamuya açık / indekslenmiş sosyal içerik'
+    return rows,reasons
+
+# ============================================================
+# /V215 API'SİZ SOSYAL MEDYA GENİŞLETME
+# ============================================================
+
 if run and not custom_date_mode:
     st.session_state.pop('_v20_frame_cmp_rows',None)
     cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).astimezone(timezone.utc)
