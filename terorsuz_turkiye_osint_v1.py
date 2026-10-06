@@ -44732,14 +44732,65 @@ def _v136_archive_remove(indices):
     return removed
 
 
+# V214 — ARŞİV YEDEĞİ GERİYE DÖNÜK UYUMLULUK / KALICI AÇILIŞ DÜZELTMESİ
+#
+# V213 görünür çalışma yedeği ``daily_report_archive`` alanını kullanırken,
+# daha önce üretilen V192/V195 tam çalışma yedeklerinde arşiv
+# ``archive -> records`` altında tutuluyordu. GitHub'a bu eski tam yedek
+# yüklenmişse V161 bootstrap yalnız kök ``records`` alanına baktığı için
+# uygulama her yeni açılışta arşivi 0 görüyordu.
+#
+# Bu yardımcı fonksiyon yalnız arşiv şemasını normalize eder; tarama, sosyal
+# medya, Gephi, günlük sepet, manuel havuz ve diğer kalıcılık katmanlarına
+# dokunmaz.
+def _v214_extract_archive_bundle(payload):
+    rows=None
+    days=[]
+
+    if isinstance(payload,list):
+        rows=payload
+
+    elif isinstance(payload,dict):
+        # V161 tek arşiv JSON'u: {records:[...], archive_days:[...]}
+        if isinstance(payload.get('records'),list):
+            rows=payload.get('records') or []
+            days=payload.get('archive_days') or []
+
+        # V192/V195 tam çalışma yedeği: {archive:{records:[...], ...}, academic:{...}}
+        elif isinstance(payload.get('archive'),dict):
+            arc=payload.get('archive') or {}
+            if isinstance(arc.get('records'),list):
+                rows=arc.get('records') or []
+                days=arc.get('archive_days') or []
+
+        # V213+ görünür çalışma yedeği
+        elif isinstance(payload.get('daily_report_archive'),list):
+            rows=payload.get('daily_report_archive') or []
+
+    if not isinstance(rows,list):
+        return None,[]
+
+    clean=[dict(r) for r in rows if isinstance(r,dict)]
+    dayset=set()
+    for d in days or []:
+        dd=_v161_day(d)
+        if dd:
+            dayset.add(dd)
+    for r in clean:
+        dd=_v163_archive_day(r)
+        if dd:
+            dayset.add(dd)
+
+    return clean,sorted(dayset,key=_v146_archive_day_sort)
+
+
 # JSON / private GitHub geri yüklemede kayıtların kendi arşiv tarihleri aynen korunur.
 def _v161_apply_remote_payload(payload):
-    if not isinstance(payload,dict):
-        return 0,0,'Uzak arşiv yapısı geçersiz.'
-    for d in payload.get('archive_days',[]) or []:
+    rows,days=_v214_extract_archive_bundle(payload)
+    if rows is None:
+        return 0,0,'Uzak arşiv yapısı geçersiz veya desteklenmiyor.'
+    for d in days:
         _v161_create_day(d)
-    rows=[r for r in (payload.get('records',[]) or []) if isinstance(r,dict)]
-    before=len(_v136_archive_basket() or [])
     added=_v163_archive_add_records(rows,sync_remote=False,preserve_day=True)
     skipped=max(0,len(rows)-added)
     return added,skipped,''
@@ -44750,12 +44801,15 @@ def _v159_restore_archive_payload(raw_bytes):
         payload=json.loads(raw_bytes.decode('utf-8-sig'))
     except Exception as e:
         return 0,0,f'JSON okunamadı: {e}'
-    rows=payload.get('records',[]) if isinstance(payload,dict) else payload if isinstance(payload,list) else None
-    if not isinstance(rows,list):
-        return 0,0,'JSON yapısı geçersiz.'
-    clean=[r for r in rows if isinstance(r,dict)]
-    added=_v163_archive_add_records(clean,sync_remote=False,preserve_day=True)
-    skipped=len(rows)-added
+
+    rows,days=_v214_extract_archive_bundle(payload)
+    if rows is None:
+        return 0,0,'JSON içinde desteklenen bir arşiv bölümü bulunamadı.'
+
+    for d in days:
+        _v161_create_day(d)
+    added=_v163_archive_add_records(rows,sync_remote=False,preserve_day=True)
+    skipped=max(0,len(rows)-added)
     try:
         ok,msg=_v161_sync_remote()
         st.session_state['_v161_last_sync']=(ok,msg or 'İçe aktarılan kayıtlar kalıcı arşive eşitlendi.')
@@ -47882,11 +47936,22 @@ def _v213_restore_workspace_backup(data):
     if not isinstance(obj,dict):
         return {'ok':False,'message':'Çalışma yedeği geçersiz.'}
 
+    # V213 çalışma yedeğinde bu iki alan vardır. Eski V192/V195 yedeklerinde
+    # bulunmamaları hata değildir; kullanıcı yalnız arşivini de geri getirebilir.
     manual=obj.get('manual_link_pool') or []
     daily=obj.get('daily_analysis_basket') or []
-    archive=obj.get('daily_report_archive') or []
-    if not all(isinstance(x,list) for x in (manual,daily,archive)):
-        return {'ok':False,'message':'Yedek bölümleri beklenen JSON liste biçiminde değil.'}
+    if not isinstance(manual,list) or not isinstance(daily,list):
+        return {'ok':False,'message':'Manuel/günlük sepet bölümleri beklenen JSON liste biçiminde değil.'}
+
+    # Yeni V213 ``daily_report_archive`` ve eski V192/V195 ``archive.records``
+    # şemalarının tamamını kabul et.
+    archive,archive_days=_v214_extract_archive_bundle(obj)
+    if archive is None:
+        archive=[]
+        archive_days=[]
+
+    for day in archive_days:
+        _v161_create_day(day)
 
     try:
         m=_v140_add_manual_records(manual)
@@ -47903,17 +47968,36 @@ def _v213_restore_workspace_backup(data):
             a=_v136_archive_add(archive)
         except Exception:
             a=0
+
+    # Kayıtların tamamı zaten yerelde mevcut olsa bile GitHub arşivini
+    # kanonik V161 şemasına eşitlemeyi dene. Böylece sonraki açılışta arşiv
+    # otomatik geri gelir ve kullanıcı yeniden JSON yüklemek zorunda kalmaz.
+    remote_note=''
+    try:
+        cfg=_v161_remote_cfg()
+        if cfg.get('ok'):
+            ok,msg=_v161_sync_remote()
+            if not ok:
+                remote_note=f' • GitHub eşitleme uyarısı: {msg}'
+    except Exception:
+        pass
+
+    current_archive=len(_v136_archive_basket() or [])
     return {
         'ok':True,
         'manual_added':int(m or 0),
         'daily_added':int(d or 0),
         'archive_added':int(a or 0),
-        'message':f'Geri yükleme tamamlandı: manuel +{int(m or 0)} • günlük sepet +{int(d or 0)} • arşiv +{int(a or 0)}.'
+        'archive_total':int(current_archive),
+        'message':(
+            f'Geri yükleme tamamlandı: manuel +{int(m or 0)} • günlük sepet +{int(d or 0)} '
+            f'• arşiv +{int(a or 0)} • arşiv toplam {int(current_archive)}.' + remote_note
+        )
     }
 
 
 def _v192_render_persistence_panel():
-    with st.expander('🛡️ V213 — Kalıcı Çalışma Güvencesi',expanded=False):
+    with st.expander('🛡️ V214 — Kalıcı Çalışma Güvencesi',expanded=False):
         st.caption(
             'Tam çalışma yedeği yalnız görünür çalışma alanını içerir: Manuel Link Havuzu, '
             'Günlük Analiz Sepeti ve Günlük Rapor Arşivi. Akademik kodlama/snapshot bu yedeğe dahil değildir.'
